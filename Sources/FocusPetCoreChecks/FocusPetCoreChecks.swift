@@ -16,6 +16,11 @@ enum FocusPetCoreChecks {
         checkLiveFallbackCanUseWorkInputWithoutPretendingVision()
         checkLowConfidenceUnknownVisualsDoNotTriggerRules()
         checkDailyReportSeparatesDemoEventsFromLiveMetrics()
+        checkFaceHeuristicsMarksMissingFace()
+        checkFaceHeuristicsMarksCenteredFaceAsScreen()
+        checkFaceHeuristicsMarksYawAsOffScreen()
+        checkFaceHeuristicsMarksPitchAsDown()
+        checkLiveObservationUsesLatestFaceDetection()
         print("FocusPetCoreChecks passed")
     }
 
@@ -299,6 +304,84 @@ enum FocusPetCoreChecks {
         expect(report.entertainmentSeconds == 0, "demo entertainment should not inflate live report metrics")
         expect(report.liveEventCount == 1, "report should count live events separately")
         expect(report.demoEventCount == 1, "report should count demo events separately")
+    }
+
+    private static func checkFaceHeuristicsMarksMissingFace() {
+        let result = FaceStateHeuristics().result(from: nil)
+
+        expect(result.facePresence == .missing, "missing face geometry should report missing face")
+        expect(result.gazeState == .unknown, "missing face geometry should keep gaze unknown")
+        expect(result.confidence >= 0.7, "missing face geometry should be a confident absence")
+    }
+
+    private static func checkFaceHeuristicsMarksCenteredFaceAsScreen() {
+        let result = FaceStateHeuristics().result(from: FaceGeometrySnapshot(
+            yawDegrees: 3,
+            pitchDegrees: 2,
+            rollDegrees: 1,
+            boundingBoxCenterY: 0.56,
+            confidence: 0.8
+        ))
+
+        expect(result.facePresence == .present, "centered face should be present")
+        expect(result.gazeState == .screen, "centered face should be coarse screen gaze")
+        expect(result.headPitchDegrees == 2, "head pitch should preserve detector pitch")
+    }
+
+    private static func checkFaceHeuristicsMarksYawAsOffScreen() {
+        let result = FaceStateHeuristics().result(from: FaceGeometrySnapshot(
+            yawDegrees: 31,
+            pitchDegrees: 4,
+            rollDegrees: 0,
+            boundingBoxCenterY: 0.55,
+            confidence: 0.84
+        ))
+
+        expect(result.facePresence == .present, "yaw face should be present")
+        expect(result.gazeState == .offScreen, "large yaw should become off-screen gaze")
+        expect(result.reason == "yaw_over_threshold", "yaw off-screen should explain threshold")
+    }
+
+    private static func checkFaceHeuristicsMarksPitchAsDown() {
+        let result = FaceStateHeuristics().result(from: FaceGeometrySnapshot(
+            yawDegrees: 4,
+            pitchDegrees: 30,
+            rollDegrees: 0,
+            boundingBoxCenterY: 0.48,
+            confidence: 0.83
+        ))
+
+        expect(result.facePresence == .present, "pitch face should be present")
+        expect(result.gazeState == .down, "large pitch should become down gaze")
+        expect(result.headPitchDegrees == 30, "head pitch should preserve downward pitch")
+    }
+
+    private static func checkLiveObservationUsesLatestFaceDetection() {
+        let builder = LiveObservationBuilder(faceDetector: ModelFreeFaceStateDetector())
+        let observation = builder.makeObservation(
+            input: LiveObservationInput(
+                timestamp: Date(timeIntervalSince1970: 4_000),
+                frontAppName: "Cursor",
+                frontAppBundleID: nil,
+                context: .work,
+                lastInputSeconds: 2,
+                cameraAuthorization: .authorized,
+                cameraRunning: true,
+                latestFrame: CameraFrameMetadata(timestamp: Date(timeIntervalSince1970: 4_000), sequenceNumber: 42),
+                latestFaceDetection: FaceDetectionResult(
+                    facePresence: .present,
+                    gazeState: .screen,
+                    headPitchDegrees: 5,
+                    confidence: 0.82,
+                    reason: "face_centered"
+                )
+            ),
+            stableDurationSeconds: 12
+        )
+
+        expect(observation.facePresence == .present, "live observation should use latest face detection")
+        expect(observation.gazeState == .screen, "live observation should use latest detected gaze")
+        expect(observation.headPitchDegrees == 5, "live observation should use latest detected pitch")
     }
 
     private static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {

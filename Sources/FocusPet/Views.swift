@@ -529,6 +529,7 @@ struct PrivacyStatusCard: View {
                 Text("运行模式：\(model.runtimeMode.title)")
                 Text("视觉检测：\(model.faceDetectorStatus)")
                 Text("最近帧：\(model.latestCameraFrameAt?.formatted(date: .omitted, time: .standard) ?? "暂无") · \(model.cameraFrameCount) 帧")
+                Text("视觉结果：\(model.latestFaceDetectionReason)")
                 Text("最近判断：\(model.recentStateDescription)")
             }
             .font(.caption)

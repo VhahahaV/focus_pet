@@ -5,9 +5,10 @@ Focus Pet 是一个本地运行的 macOS 专注桌宠原型。当前版本包含
 ## MVP 行为
 
 - 默认运行在 `真实检测` 模式。
-- 没有接入视觉模型时，live 管线不会伪造人脸、视线或 head pose；视觉字段保持 `unknown`。
+- live 管线已接入 Apple Vision `VNDetectFaceLandmarksRequest` 做本地人脸检测；无法检测时才保持 `unknown`/`missing`。
 - Demo 场景会切换到 `Demo` 模式，事件会单独标记，不计入真实日报指标。
 - 暂停检测会停止摄像头 session，并且不会继续写入状态事件。
+- 当前视觉算法只做粗粒度判断：face present、yaw 侧转、pitch 低头和 screen/off-screen/down 分类；不做人脸身份识别。
 - 本地 JSON 分开保存设置、规则、提醒和状态事件；删除数据后不会自动回填 Demo seed 数据。
 
 ## 构建

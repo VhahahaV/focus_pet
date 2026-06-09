@@ -3,6 +3,7 @@ import AppKit
 import FocusPetCore
 import Foundation
 import UserNotifications
+import Vision
 
 struct FrontApplication: Sendable {
     var name: String
@@ -60,9 +61,10 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
     private let sessionQueue = DispatchQueue(label: "FocusPet.CameraCapture.session")
     private let frameQueue = DispatchQueue(label: "FocusPet.CameraCapture.frames")
     private let videoOutput = AVCaptureVideoDataOutput()
+    private let visionDetector = VisionFrameFaceDetector()
     private let lock = NSLock()
     private var running = false
-    private var frameHandler: ((CameraFrameMetadata) -> Void)?
+    private var frameHandler: ((CameraFrameMetadata, FaceDetectionResult?) -> Void)?
     private var lastFrameEmitAt: Date?
     private var frameSequence = 0
 
@@ -70,7 +72,7 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
         lock.withLock { running }
     }
 
-    func setFrameHandler(_ handler: ((CameraFrameMetadata) -> Void)?) {
+    func setFrameHandler(_ handler: ((CameraFrameMetadata, FaceDetectionResult?) -> Void)?) {
         lock.withLock {
             frameHandler = handler
         }
@@ -117,8 +119,9 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
         frameSequence += 1
 
         let frame = CameraFrameMetadata(timestamp: now, sequenceNumber: frameSequence)
+        let detection = visionDetector.detect(sampleBuffer: sampleBuffer)
         let handler = lock.withLock { frameHandler }
-        handler?(frame)
+        handler?(frame, detection)
     }
 
     private func configureSessionIfNeeded() {
@@ -146,6 +149,44 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
         lock.withLock {
             running = value
         }
+    }
+}
+
+private final class VisionFrameFaceDetector: @unchecked Sendable {
+    private let heuristics = FaceStateHeuristics()
+
+    func detect(sampleBuffer: CMSampleBuffer) -> FaceDetectionResult {
+        let request = VNDetectFaceLandmarksRequest()
+        let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: .up, options: [:])
+
+        do {
+            try handler.perform([request])
+        } catch {
+            return FaceDetectionResult(
+                facePresence: .unknown,
+                gazeState: .unknown,
+                headPitchDegrees: 0,
+                confidence: 0.35,
+                reason: "vision_request_failed"
+            )
+        }
+
+        guard let observation = request.results?.first as? VNFaceObservation else {
+            return heuristics.result(from: nil)
+        }
+
+        return heuristics.result(from: FaceGeometrySnapshot(
+            yawDegrees: degrees(from: observation.yaw),
+            pitchDegrees: degrees(from: observation.pitch),
+            rollDegrees: degrees(from: observation.roll),
+            boundingBoxCenterY: observation.boundingBox.midY,
+            confidence: Double(observation.confidence)
+        ))
+    }
+
+    private func degrees(from number: NSNumber?) -> Double? {
+        guard let number else { return nil }
+        return Double(truncating: number) * 180 / .pi
     }
 }
 

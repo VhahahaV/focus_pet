@@ -39,6 +39,7 @@ final class FocusPetModel: ObservableObject {
     @Published var cameraIsRunning = false
     @Published var latestCameraFrameAt: Date?
     @Published var cameraFrameCount = 0
+    @Published var latestFaceDetectionReason = "no_camera_frame"
     @Published var frontAppName = "Focus Pet"
     @Published var frontAppBundleID: String?
     @Published var petOpacity = 0.94
@@ -51,7 +52,7 @@ final class FocusPetModel: ObservableObject {
     @Published var localDataBytes = 0
     @Published var localDataStatusMessage = "本地结构化数据会保存在 Application Support/FocusPetV0。"
     @Published var exportedDataURL: URL?
-    @Published var faceDetectorStatus = "未接入视觉模型，live 模式会把视觉字段标记为 unknown。"
+    @Published var faceDetectorStatus = "Apple Vision 本地检测已接入；不保存视频或图片。"
 
     private let fusionEngine = StateFusionEngine()
     private let ruleEngine = RuleEngine()
@@ -64,6 +65,7 @@ final class FocusPetModel: ObservableObject {
     private var demoStateSource = DemoStateSource()
     private var stabilityTracker = ObservationStabilityTracker()
     private var latestCameraFrame: CameraFrameMetadata?
+    private var latestFaceDetection: FaceDetectionResult?
     private var lastTriggeredAtByRuleID: [String: Date] = [:]
     private var stateTimer: Timer?
     private var hasBootstrapped = false
@@ -265,11 +267,13 @@ final class FocusPetModel: ObservableObject {
     }
 
     private func configureCameraFrameHandler() {
-        cameraService.setFrameHandler { [weak self] frame in
+        cameraService.setFrameHandler { [weak self] frame, detection in
             Task { @MainActor in
                 self?.latestCameraFrame = frame
+                self?.latestFaceDetection = detection
                 self?.latestCameraFrameAt = frame.timestamp
                 self?.cameraFrameCount = frame.sequenceNumber
+                self?.latestFaceDetectionReason = detection?.reason ?? "no_face_detection_result"
             }
         }
     }
@@ -316,7 +320,8 @@ final class FocusPetModel: ObservableObject {
             lastInputSeconds: InputActivityService.lastInputSeconds(),
             cameraAuthorization: CameraAuthorizationState(cameraAuthorization),
             cameraRunning: cameraIsRunning,
-            latestFrame: latestCameraFrame
+            latestFrame: latestCameraFrame,
+            latestFaceDetection: latestFaceDetection
         )
     }
 

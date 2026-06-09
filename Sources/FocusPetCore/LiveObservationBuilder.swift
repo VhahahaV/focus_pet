@@ -67,6 +67,7 @@ public struct LiveObservationInput: Codable, Hashable, Sendable {
     public var cameraAuthorization: CameraAuthorizationState
     public var cameraRunning: Bool
     public var latestFrame: CameraFrameMetadata?
+    public var latestFaceDetection: FaceDetectionResult?
 
     public init(
         timestamp: Date,
@@ -76,7 +77,8 @@ public struct LiveObservationInput: Codable, Hashable, Sendable {
         lastInputSeconds: TimeInterval,
         cameraAuthorization: CameraAuthorizationState,
         cameraRunning: Bool,
-        latestFrame: CameraFrameMetadata?
+        latestFrame: CameraFrameMetadata?,
+        latestFaceDetection: FaceDetectionResult? = nil
     ) {
         self.timestamp = timestamp
         self.frontAppName = frontAppName
@@ -86,6 +88,7 @@ public struct LiveObservationInput: Codable, Hashable, Sendable {
         self.cameraAuthorization = cameraAuthorization
         self.cameraRunning = cameraRunning
         self.latestFrame = latestFrame
+        self.latestFaceDetection = latestFaceDetection
     }
 }
 
@@ -100,7 +103,7 @@ public struct LiveObservationBuilder: Sendable {
         input: LiveObservationInput,
         stableDurationSeconds: TimeInterval
     ) -> StateObservation {
-        let detection = faceDetector.detect(from: input.latestFrame)
+        let detection = input.latestFaceDetection ?? faceDetector.detect(from: input.latestFrame)
 
         return StateObservation(
             timestamp: input.timestamp,

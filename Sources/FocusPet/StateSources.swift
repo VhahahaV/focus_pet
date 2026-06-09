@@ -10,6 +10,7 @@ struct RuntimeInputContext: Sendable {
     var cameraAuthorization: CameraAuthorizationState
     var cameraRunning: Bool
     var latestFrame: CameraFrameMetadata?
+    var latestFaceDetection: FaceDetectionResult?
 }
 
 struct LiveStateSource: Sendable {
@@ -29,7 +30,8 @@ struct LiveStateSource: Sendable {
                 lastInputSeconds: context.lastInputSeconds,
                 cameraAuthorization: context.cameraAuthorization,
                 cameraRunning: context.cameraRunning,
-                latestFrame: context.latestFrame
+                latestFrame: context.latestFrame,
+                latestFaceDetection: context.latestFaceDetection
             ),
             stableDurationSeconds: 0
         )
