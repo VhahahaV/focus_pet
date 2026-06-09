@@ -12,6 +12,10 @@ enum FocusPetCoreChecks {
         checkRuleDoesNotTriggerDuringCooldown()
         checkPausedDetectionSuppressesRules()
         checkDailyReportAggregatesStructuredStateEvents()
+        checkModelFreeLiveObservationMarksVisionUnknown()
+        checkLiveFallbackCanUseWorkInputWithoutPretendingVision()
+        checkLowConfidenceUnknownVisualsDoNotTriggerRules()
+        checkDailyReportSeparatesDemoEventsFromLiveMetrics()
         print("FocusPetCoreChecks passed")
     }
 
@@ -196,6 +200,105 @@ enum FocusPetCoreChecks {
         expect(report.lookingDownSeconds == 120, "looking down seconds should aggregate lookingDown events")
         expect(report.longestFocusSeconds == 1_800, "longest focus should track max continuous focus event")
         expect(report.summaryText.contains("最长连续专注 30 分钟"), "summary should mention longest focus")
+    }
+
+    private static func checkModelFreeLiveObservationMarksVisionUnknown() {
+        let builder = LiveObservationBuilder(faceDetector: ModelFreeFaceStateDetector())
+        let observation = builder.makeObservation(
+            input: LiveObservationInput(
+                timestamp: Date(timeIntervalSince1970: 3_000),
+                frontAppName: "Cursor",
+                frontAppBundleID: nil,
+                context: .work,
+                lastInputSeconds: 4,
+                cameraAuthorization: .authorized,
+                cameraRunning: true,
+                latestFrame: CameraFrameMetadata(timestamp: Date(timeIntervalSince1970: 3_000), sequenceNumber: 12)
+            ),
+            stableDurationSeconds: 9
+        )
+
+        expect(observation.sourceKind == .live, "live builder should mark observations as live")
+        expect(observation.facePresence == .unknown, "model-free detector should not claim face presence")
+        expect(observation.gazeState == .unknown, "model-free detector should not claim gaze")
+        expect(observation.headPitchDegrees == 0, "model-free detector should not claim head pose")
+    }
+
+    private static func checkLiveFallbackCanUseWorkInputWithoutPretendingVision() {
+        let engine = StateFusionEngine()
+        let observation = StateObservation(
+            timestamp: Date(timeIntervalSince1970: 3_100),
+            sourceKind: .live,
+            facePresence: .unknown,
+            gazeState: .unknown,
+            headPitchDegrees: 0,
+            frontAppName: "Cursor",
+            context: .work,
+            lastInputSeconds: 5,
+            stableDurationSeconds: 45
+        )
+
+        let state = engine.fuse(observation)
+
+        expect(state.userState == .focused, "live fallback should infer focused from active work input")
+        expect(state.reason.contains("vision_unknown"), "live fallback should disclose unknown vision")
+        expect(state.reason.contains("recent_input_in_work_context"), "live fallback should explain input-based focus")
+    }
+
+    private static func checkLowConfidenceUnknownVisualsDoNotTriggerRules() {
+        let state = FusedUserState(
+            timestamp: Date(timeIntervalSince1970: 3_200),
+            userState: .unknown,
+            context: .work,
+            confidence: 0.5,
+            reason: ["vision_unknown", "input_idle"],
+            stableDurationSeconds: 600
+        )
+
+        let decisions = RuleEngine().evaluate(
+            rules: FocusRule.defaults,
+            state: state,
+            now: Date(timeIntervalSince1970: 3_200),
+            lastTriggeredAtByRuleID: [:],
+            isPaused: false
+        )
+
+        expect(decisions.isEmpty, "low-confidence unknown visuals should not trigger reminders")
+    }
+
+    private static func checkDailyReportSeparatesDemoEventsFromLiveMetrics() {
+        let liveFocus = StateEvent(
+            id: "live-focus",
+            sourceKind: .live,
+            startTime: Date(timeIntervalSince1970: 0),
+            endTime: Date(timeIntervalSince1970: 600),
+            userState: .focused,
+            context: .work,
+            confidence: 0.72,
+            reason: ["recent_input_in_work_context", "vision_unknown"]
+        )
+        let demoEntertainment = StateEvent(
+            id: "demo-entertainment",
+            sourceKind: .demo,
+            startTime: Date(timeIntervalSince1970: 600),
+            endTime: Date(timeIntervalSince1970: 1_800),
+            userState: .entertainment,
+            context: .entertainment,
+            confidence: 0.92,
+            reason: ["manual_demo_entertainment"]
+        )
+
+        let report = ReportGenerator().makeDailySummary(
+            for: Date(timeIntervalSince1970: 0),
+            events: [liveFocus, demoEntertainment],
+            reminderCount: 0,
+            petEnergy: 3
+        )
+
+        expect(report.focusSeconds == 600, "live focus should count in daily metrics")
+        expect(report.entertainmentSeconds == 0, "demo entertainment should not inflate live report metrics")
+        expect(report.liveEventCount == 1, "report should count live events separately")
+        expect(report.demoEventCount == 1, "report should count demo events separately")
     }
 
     private static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {

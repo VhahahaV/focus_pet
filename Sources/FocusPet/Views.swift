@@ -87,6 +87,8 @@ struct TodayView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                RuntimeModeControl()
+
                 HStack(alignment: .top, spacing: 16) {
                     CurrentStatePanel()
                     ReminderPanel()
@@ -149,7 +151,8 @@ struct CurrentStatePanel: View {
             HStack {
                 StatusPill(title: "置信度 \(Int(model.currentState.confidence * 100))%", symbol: "waveform.path.ecg")
                 StatusPill(title: model.cameraStatusTitle, symbol: "camera.fill")
-                StatusPill(title: "低打扰", symbol: "bell.badge.fill")
+                StatusPill(title: model.runtimeMode.title, symbol: "switch.2")
+                StatusPill(title: model.currentObservation.sourceKind.title, symbol: "tag.fill")
             }
 
             Text(model.currentState.reason.joined(separator: " · "))
@@ -160,6 +163,35 @@ struct CurrentStatePanel: View {
         .padding(16)
         .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct RuntimeModeControl: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Picker("运行模式", selection: Binding(
+                get: { model.runtimeMode },
+                set: { model.setRuntimeMode($0) }
+            )) {
+                ForEach(RuntimeMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 240)
+
+            Text(model.runtimeMode == .live
+                ? "默认使用真实检测；没有视觉模型时，视觉字段保持 unknown。"
+                : "Demo 事件会单独标记，不计入真实日报指标。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer()
+        }
+        .padding(14)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -252,6 +284,7 @@ struct ReportCard: View {
                 Text("娱乐 \(FocusPetFormatters.duration(summary.entertainmentSeconds))")
                 Text("最长专注 \(FocusPetFormatters.duration(summary.longestFocusSeconds))")
                 Text("提醒 \(summary.reminderCount) 次")
+                Text("真实 \(summary.liveEventCount) · Demo \(summary.demoEventCount)")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -269,7 +302,11 @@ struct DemoControlsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Demo 场景", systemImage: "play.circle.fill")
                 .font(.headline)
+            Text("点击任意场景会切换到 Demo 模式；这些事件会保存在结构化日志里，但不会计入真实日报指标。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack {
+                Button("回到真实检测") { model.setRuntimeMode(.live) }
                 Button("专注") { model.simulate(.focused) }
                 Button("走神 30 秒") { model.simulate(.possiblyDistracted) }
                 Button("低头 2 分钟") { model.simulate(.lookingDown) }
@@ -298,6 +335,9 @@ struct EventTimelineView: View {
                         .frame(width: 24)
                     Text(event.userState.title)
                         .frame(width: 100, alignment: .leading)
+                    Text(event.sourceKind.title)
+                        .frame(width: 70, alignment: .leading)
+                        .foregroundStyle(event.sourceKind == .live ? .primary : .secondary)
                     Text(event.context.title)
                         .frame(width: 60, alignment: .leading)
                         .foregroundStyle(.secondary)
@@ -335,6 +375,9 @@ struct RulesView: View {
             }
             .listStyle(.inset)
             .frame(minHeight: 420)
+            .onChange(of: model.rules) { _, _ in
+                model.saveRules()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -389,7 +432,9 @@ struct PetSettingsView: View {
                     ))
 
                     Toggle("开启动画", isOn: $model.petAnimationEnabled)
+                        .onChange(of: model.petAnimationEnabled) { _, _ in model.updatePetWindowAppearance() }
                     Toggle("提醒声音", isOn: $model.soundEnabled)
+                        .onChange(of: model.soundEnabled) { _, _ in model.updatePetWindowAppearance() }
 
                     VStack(alignment: .leading) {
                         Text("透明度")
@@ -480,6 +525,14 @@ struct PrivacyStatusCard: View {
                 .font(.title3.weight(.semibold))
             Text("用于判断是否看向屏幕、是否低头、是否离开电脑。V0 不保存画面，只保存结构化状态。")
                 .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("运行模式：\(model.runtimeMode.title)")
+                Text("视觉检测：\(model.faceDetectorStatus)")
+                Text("最近帧：\(model.latestCameraFrameAt?.formatted(date: .omitted, time: .standard) ?? "暂无") · \(model.cameraFrameCount) 帧")
+                Text("最近判断：\(model.recentStateDescription)")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
             HStack {
                 Button("请求摄像头权限") {
                     model.requestCameraPermission()
@@ -505,6 +558,9 @@ struct LocalDataCard: View {
             Text("\(model.localDataBytes) bytes")
                 .font(.title3.weight(.semibold))
             Text("已保存：状态事件、默认规则、本日聚合、提醒记录。不保存视频、图片、人脸特征或屏幕内容。")
+                .foregroundStyle(.secondary)
+            Text(model.localDataStatusMessage)
+                .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
                 Button("导出数据") {

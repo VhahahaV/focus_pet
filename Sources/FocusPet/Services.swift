@@ -1,5 +1,5 @@
 import AppKit
-import AVFoundation
+@preconcurrency import AVFoundation
 import FocusPetCore
 import Foundation
 import UserNotifications
@@ -16,6 +16,23 @@ struct ForegroundAppService: Sendable {
             name: app?.localizedName ?? "Unknown",
             bundleID: app?.bundleIdentifier
         )
+    }
+}
+
+extension CameraAuthorizationState {
+    init(_ status: AVAuthorizationStatus) {
+        switch status {
+        case .authorized:
+            self = .authorized
+        case .denied:
+            self = .denied
+        case .restricted:
+            self = .restricted
+        case .notDetermined:
+            self = .notDetermined
+        @unknown default:
+            self = .unknown
+        }
     }
 }
 
@@ -38,33 +55,97 @@ enum CameraPermissionService {
     }
 }
 
-@MainActor
-final class CameraCaptureService {
+final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     private let session = AVCaptureSession()
+    private let sessionQueue = DispatchQueue(label: "FocusPet.CameraCapture.session")
+    private let frameQueue = DispatchQueue(label: "FocusPet.CameraCapture.frames")
+    private let videoOutput = AVCaptureVideoDataOutput()
+    private let lock = NSLock()
+    private var running = false
+    private var frameHandler: ((CameraFrameMetadata) -> Void)?
+    private var lastFrameEmitAt: Date?
+    private var frameSequence = 0
 
     var isRunning: Bool {
-        session.isRunning
+        lock.withLock { running }
     }
 
-    func start() {
-        guard !session.isRunning else { return }
+    func setFrameHandler(_ handler: ((CameraFrameMetadata) -> Void)?) {
+        lock.withLock {
+            frameHandler = handler
+        }
+    }
+
+    func start(completion: @escaping @MainActor (Bool) -> Void) {
+        sessionQueue.async { [self] in
+            guard !session.isRunning else {
+                setRunning(true)
+                Task { @MainActor in completion(true) }
+                return
+            }
+
+            configureSessionIfNeeded()
+            session.startRunning()
+            let didStart = session.isRunning
+            setRunning(didStart)
+
+            Task { @MainActor in completion(didStart) }
+        }
+    }
+
+    func stop(completion: (@MainActor (Bool) -> Void)? = nil) {
+        sessionQueue.async { [self] in
+            if session.isRunning {
+                session.stopRunning()
+            }
+            setRunning(false)
+            Task { @MainActor in completion?(false) }
+        }
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        let now = Date()
+        if let lastFrameEmitAt, now.timeIntervalSince(lastFrameEmitAt) < 1.0 {
+            return
+        }
+
+        lastFrameEmitAt = now
+        frameSequence += 1
+
+        let frame = CameraFrameMetadata(timestamp: now, sequenceNumber: frameSequence)
+        let handler = lock.withLock { frameHandler }
+        handler?(frame)
+    }
+
+    private func configureSessionIfNeeded() {
+        guard session.inputs.isEmpty else { return }
+
         session.beginConfiguration()
         session.sessionPreset = .low
 
-        if session.inputs.isEmpty,
-           let camera = AVCaptureDevice.default(for: .video),
+        if let camera = AVCaptureDevice.default(for: .video),
            let input = try? AVCaptureDeviceInput(device: camera),
            session.canAddInput(input) {
             session.addInput(input)
         }
 
+        if session.canAddOutput(videoOutput) {
+            videoOutput.alwaysDiscardsLateVideoFrames = true
+            videoOutput.setSampleBufferDelegate(self, queue: frameQueue)
+            session.addOutput(videoOutput)
+        }
+
         session.commitConfiguration()
-        session.startRunning()
     }
 
-    func stop() {
-        guard session.isRunning else { return }
-        session.stopRunning()
+    private func setRunning(_ value: Bool) {
+        lock.withLock {
+            running = value
+        }
     }
 }
 
@@ -96,21 +177,73 @@ struct LocalDataStore: Sendable {
         rootURL.appendingPathComponent("state-events.json")
     }
 
+    private var settingsURL: URL {
+        rootURL.appendingPathComponent("settings.json")
+    }
+
+    private var rulesURL: URL {
+        rootURL.appendingPathComponent("rules.json")
+    }
+
+    private var remindersURL: URL {
+        rootURL.appendingPathComponent("reminders.json")
+    }
+
     private var onboardingURL: URL {
         rootURL.appendingPathComponent("onboarding-complete.flag")
     }
 
     var hasCompletedOnboarding: Bool {
-        FileManager.default.fileExists(atPath: onboardingURL.path)
+        loadSettings().hasCompletedOnboarding || FileManager.default.fileExists(atPath: onboardingURL.path)
     }
 
     func saveHasCompletedOnboarding(_ value: Bool) {
-        ensureRoot()
-        if value {
-            FileManager.default.createFile(atPath: onboardingURL.path, contents: Data(), attributes: nil)
-        } else {
-            try? FileManager.default.removeItem(at: onboardingURL)
+        var settings = loadSettings()
+        settings.hasCompletedOnboarding = value
+        saveSettings(settings)
+    }
+
+    func loadSettings() -> AppSettings {
+        guard let data = try? Data(contentsOf: settingsURL),
+              var settings = try? JSONDecoder.focusPet.decode(AppSettings.self, from: data) else {
+            var defaults = AppSettings()
+            defaults.hasCompletedOnboarding = FileManager.default.fileExists(atPath: onboardingURL.path)
+            return defaults
         }
+
+        if FileManager.default.fileExists(atPath: onboardingURL.path) {
+            settings.hasCompletedOnboarding = true
+        }
+
+        return settings
+    }
+
+    func saveSettings(_ settings: AppSettings) {
+        ensureRoot()
+        guard let data = try? JSONEncoder.focusPet.encode(settings) else { return }
+        try? data.write(to: settingsURL, options: [.atomic])
+    }
+
+    func loadRules() -> [FocusRule] {
+        guard let data = try? Data(contentsOf: rulesURL) else { return FocusRule.defaults }
+        return (try? JSONDecoder.focusPet.decode([FocusRule].self, from: data)) ?? FocusRule.defaults
+    }
+
+    func saveRules(_ rules: [FocusRule]) {
+        ensureRoot()
+        guard let data = try? JSONEncoder.focusPet.encode(rules) else { return }
+        try? data.write(to: rulesURL, options: [.atomic])
+    }
+
+    func loadReminders() -> [ReminderDecision] {
+        guard let data = try? Data(contentsOf: remindersURL) else { return [] }
+        return (try? JSONDecoder.focusPet.decode([ReminderDecision].self, from: data)) ?? []
+    }
+
+    func saveReminders(_ reminders: [ReminderDecision]) {
+        ensureRoot()
+        guard let data = try? JSONEncoder.focusPet.encode(reminders) else { return }
+        try? data.write(to: remindersURL, options: [.atomic])
     }
 
     func loadStateEvents() -> [StateEvent] {
@@ -139,11 +272,19 @@ struct LocalDataStore: Sendable {
     func exportSnapshot(
         stateEvents: [StateEvent],
         reminders: [ReminderDecision],
+        rules: [FocusRule],
+        settings: AppSettings,
         summary: DailySummary
     ) -> URL? {
         ensureRoot()
         let exportURL = rootURL.appendingPathComponent("focus-pet-export-\(Int(Date().timeIntervalSince1970)).json")
-        let snapshot = ExportSnapshot(stateEvents: stateEvents, reminders: reminders, summary: summary)
+        let snapshot = ExportSnapshot(
+            stateEvents: stateEvents,
+            reminders: reminders,
+            rules: rules,
+            settings: settings,
+            summary: summary
+        )
         guard let data = try? JSONEncoder.focusPet.encode(snapshot) else { return nil }
         try? data.write(to: exportURL, options: [.atomic])
         return exportURL
@@ -162,6 +303,8 @@ struct LocalDataStore: Sendable {
 private struct ExportSnapshot: Codable {
     var stateEvents: [StateEvent]
     var reminders: [ReminderDecision]
+    var rules: [FocusRule]
+    var settings: AppSettings
     var summary: DailySummary
 }
 

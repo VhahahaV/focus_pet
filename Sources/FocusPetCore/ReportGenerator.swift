@@ -9,20 +9,22 @@ public struct ReportGenerator: Sendable {
         reminderCount: Int,
         petEnergy: Int
     ) -> DailySummary {
-        let totalActiveSeconds = events.reduce(0) { $0 + $1.durationSeconds }
-        let focusSeconds = events
+        let liveEvents = events.filter { $0.sourceKind == .live }
+        let demoEventCount = events.filter { $0.sourceKind == .demo }.count
+        let totalActiveSeconds = liveEvents.reduce(0) { $0 + $1.durationSeconds }
+        let focusSeconds = liveEvents
             .filter { $0.userState == .focused }
             .reduce(0) { $0 + $1.durationSeconds }
-        let entertainmentSeconds = events
+        let entertainmentSeconds = liveEvents
             .filter { $0.context == .entertainment || $0.userState == .entertainment }
             .reduce(0) { $0 + $1.durationSeconds }
-        let offScreenCount = events
+        let offScreenCount = liveEvents
             .filter { $0.userState == .offScreen || $0.userState == .away }
             .count
-        let lookingDownSeconds = events
+        let lookingDownSeconds = liveEvents
             .filter { $0.userState == .lookingDown }
             .reduce(0) { $0 + $1.durationSeconds }
-        let longestFocusSeconds = events
+        let longestFocusSeconds = liveEvents
             .filter { $0.userState == .focused }
             .map(\.durationSeconds)
             .max() ?? 0
@@ -45,6 +47,8 @@ public struct ReportGenerator: Sendable {
             longestFocusSeconds: longestFocusSeconds,
             reminderCount: reminderCount,
             petEnergy: petEnergy,
+            liveEventCount: liveEvents.count,
+            demoEventCount: demoEventCount,
             summaryText: summaryText
         )
     }

@@ -10,14 +10,35 @@ final class FocusPetModel: ObservableObject {
     @MainActor static let shared = FocusPetModel()
 
     @Published var isPaused = false
-    @Published var currentObservation: StateObservation
-    @Published var currentState: FusedUserState
+    @Published var runtimeMode: RuntimeMode = .live
+    @Published var currentObservation = FocusPetModel.initialObservation
+    @Published var currentState = FusedUserState(
+        timestamp: Date(),
+        userState: .unknown,
+        context: .neutral,
+        confidence: 0.4,
+        reason: ["initializing"],
+        stableDurationSeconds: 0
+    )
     @Published var rules = FocusRule.defaults
     @Published var reminderHistory: [ReminderDecision] = []
     @Published var stateEvents: [StateEvent] = []
-    @Published var todaySummary: DailySummary
+    @Published var todaySummary = DailySummary(
+        date: "today",
+        totalActiveSeconds: 0,
+        focusSeconds: 0,
+        entertainmentSeconds: 0,
+        offScreenCount: 0,
+        lookingDownSeconds: 0,
+        longestFocusSeconds: 0,
+        reminderCount: 0,
+        petEnergy: 0,
+        summaryText: "今天还没有形成稳定专注记录。桌宠会先保持安静陪伴。"
+    )
     @Published var cameraAuthorization: AVAuthorizationStatus = .notDetermined
     @Published var cameraIsRunning = false
+    @Published var latestCameraFrameAt: Date?
+    @Published var cameraFrameCount = 0
     @Published var frontAppName = "Focus Pet"
     @Published var frontAppBundleID: String?
     @Published var petOpacity = 0.94
@@ -28,7 +49,9 @@ final class FocusPetModel: ObservableObject {
     @Published var hasCompletedOnboarding = false
     @Published var lastReminderMessage = "桌宠会在需要时轻轻提醒你。"
     @Published var localDataBytes = 0
+    @Published var localDataStatusMessage = "本地结构化数据会保存在 Application Support/FocusPetV0。"
     @Published var exportedDataURL: URL?
+    @Published var faceDetectorStatus = "未接入视觉模型，live 模式会把视觉字段标记为 unknown。"
 
     private let fusionEngine = StateFusionEngine()
     private let ruleEngine = RuleEngine()
@@ -37,9 +60,13 @@ final class FocusPetModel: ObservableObject {
     private let foregroundAppService = ForegroundAppService()
     private let cameraService = CameraCaptureService()
     private let dataStore = LocalDataStore()
+    private let liveStateSource = LiveStateSource()
+    private var demoStateSource = DemoStateSource()
+    private var stabilityTracker = ObservationStabilityTracker()
+    private var latestCameraFrame: CameraFrameMetadata?
     private var lastTriggeredAtByRuleID: [String: Date] = [:]
-    private var demoTimer: Timer?
-    private var tickIndex = 0
+    private var stateTimer: Timer?
+    private var hasBootstrapped = false
 
     var menuBarTitle: String {
         isPaused ? "已暂停" : currentState.userState.title
@@ -59,6 +86,10 @@ final class FocusPetModel: ObservableObject {
         }
     }
 
+    var recentStateDescription: String {
+        "\(currentState.userState.title) · \(currentState.reason.joined(separator: " · "))"
+    }
+
     var privacyCommitments: [String] {
         [
             "摄像头画面只在本机处理",
@@ -71,70 +102,82 @@ final class FocusPetModel: ObservableObject {
     }
 
     private init() {
-        let initialObservation = StateObservation(
-            timestamp: Date(),
-            facePresent: true,
-            gazeState: .screen,
-            headPitchDegrees: 3,
-            frontAppName: "Focus Pet",
-            context: .work,
-            lastInputSeconds: 0,
-            stableDurationSeconds: 10
-        )
-        currentObservation = initialObservation
-        currentState = fusionEngine.fuse(initialObservation)
-        todaySummary = reportGenerator.makeDailySummary(
-            for: Date(),
-            events: [],
-            reminderCount: 0,
-            petEnergy: 0
-        )
-    }
-
-    func bootstrap() async {
-        cameraAuthorization = AVCaptureDevice.authorizationStatus(for: .video)
-        hasCompletedOnboarding = dataStore.hasCompletedOnboarding
+        let settings = dataStore.loadSettings()
+        hasCompletedOnboarding = settings.hasCompletedOnboarding
+        runtimeMode = settings.runtimeMode
+        isPaused = settings.isPaused
+        petOpacity = settings.petOpacity
+        petScale = settings.petScale
+        petAnimationEnabled = settings.petAnimationEnabled
+        soundEnabled = settings.soundEnabled
+        rules = dataStore.loadRules()
+        reminderHistory = dataStore.loadReminders()
         stateEvents = dataStore.loadStateEvents()
-        if stateEvents.isEmpty {
-            stateEvents = DemoFixtures.seedEvents(now: Date())
-        }
-        refreshFrontApp()
+        currentState = fusionEngine.fuse(currentObservation)
         refreshSummary()
         localDataBytes = dataStore.currentDataSize()
     }
 
-    func startDemoLoop() {
-        guard demoTimer == nil else { return }
-        demoTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.advanceDemoTick()
-            }
+    func bootstrap() async {
+        guard !hasBootstrapped else { return }
+        hasBootstrapped = true
+        cameraAuthorization = AVCaptureDevice.authorizationStatus(for: .video)
+        configureCameraFrameHandler()
+        refreshFrontApp()
+        refreshSummary()
+        updatePetWindowAppearance()
+
+        if !isPaused {
+            startCameraIfAuthorized()
         }
-        demoTimer?.tolerance = 0.8
     }
 
-    func stopDemoLoop() {
-        demoTimer?.invalidate()
-        demoTimer = nil
+    func startStateLoop() {
+        guard stateTimer == nil else { return }
+        stateTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.advanceStateTick()
+            }
+        }
+        stateTimer?.tolerance = 0.6
+    }
+
+    func stopStateLoop() {
+        stateTimer?.invalidate()
+        stateTimer = nil
+    }
+
+    func setRuntimeMode(_ mode: RuntimeMode) {
+        guard runtimeMode != mode else { return }
+        runtimeMode = mode
+        stabilityTracker = ObservationStabilityTracker()
+        localDataStatusMessage = mode == .live
+            ? "已切换到真实检测，Demo 事件不会计入今日指标。"
+            : "已切换到 Demo，Demo 事件会单独标记，不会计入真实报告指标。"
+        persistSettings()
     }
 
     func togglePause() {
         isPaused.toggle()
+
         if isPaused {
-            cameraService.stop()
-            cameraIsRunning = false
-            applyDemoState(.away, stableDuration: 0, reasonOverride: "manual_pause")
+            cameraService.stop { [weak self] running in
+                self?.cameraIsRunning = running
+            }
+            setPausedState(reason: "manual_pause")
             lastReminderMessage = "检测已暂停，摄像头已停止采集。"
         } else {
             startCameraIfAuthorized()
-            applyDemoState(.focused, stableDuration: 10, reasonOverride: "manual_resume")
             lastReminderMessage = "检测已恢复，会继续使用低打扰提醒。"
+            advanceStateTick()
         }
+
+        persistSettings()
     }
 
     func completeOnboarding() {
         hasCompletedOnboarding = true
-        dataStore.saveHasCompletedOnboarding(true)
+        persistSettings()
     }
 
     func requestCameraPermission() {
@@ -162,23 +205,22 @@ final class FocusPetModel: ObservableObject {
     func updatePetWindowAppearance() {
         PetWindowController.shared.setOpacity(petOpacity)
         PetWindowController.shared.setScale(petScale)
+        persistSettings()
     }
 
     func simulate(_ state: UserState) {
-        switch state {
-        case .focused:
-            applyDemoState(.focused, stableDuration: 600, reasonOverride: "manual_demo_focus")
-        case .possiblyDistracted:
-            applyDemoState(.possiblyDistracted, stableDuration: 34, reasonOverride: "manual_demo_distracted")
-        case .lookingDown:
-            applyDemoState(.lookingDown, stableDuration: 140, reasonOverride: "manual_demo_posture")
-        case .entertainment:
-            applyDemoState(.entertainment, stableDuration: 1_260, reasonOverride: "manual_demo_entertainment")
-        case .away:
-            applyDemoState(.away, stableDuration: 30, reasonOverride: "manual_demo_away")
-        default:
-            applyDemoState(.unknown, stableDuration: 0, reasonOverride: "manual_demo_unknown")
+        if runtimeMode != .demo {
+            setRuntimeMode(.demo)
         }
+
+        let context = runtimeContext(now: Date())
+        var observation = demoStateSource.observation(
+            for: state,
+            from: context,
+            reasonOverride: demoStateSource.reasonOverride(for: state)
+        )
+        observation = stabilityTracker.observationWithUpdatedStability(observation)
+        ingestObservation(observation, reasonOverride: demoStateSource.reasonOverride(for: state))
     }
 
     func markLatestReminderAsMistake() {
@@ -186,8 +228,15 @@ final class FocusPetModel: ObservableObject {
         lastReminderMessage = "已记录为误判，后续同类提醒会更克制。"
     }
 
+    func saveRules() {
+        dataStore.saveRules(rules)
+        localDataBytes = dataStore.currentDataSize()
+        localDataStatusMessage = "规则已保存到本地 JSON。"
+    }
+
     func saveLocalSnapshot() {
         dataStore.saveStateEvents(stateEvents)
+        dataStore.saveReminders(reminderHistory)
         localDataBytes = dataStore.currentDataSize()
     }
 
@@ -196,8 +245,10 @@ final class FocusPetModel: ObservableObject {
         stateEvents = []
         reminderHistory = []
         lastTriggeredAtByRuleID = [:]
+        exportedDataURL = nil
         refreshSummary()
         localDataBytes = dataStore.currentDataSize()
+        localDataStatusMessage = "本地结构化数据已删除；不会自动回填 Demo seed 数据。"
         lastReminderMessage = "本地结构化数据已删除。"
     }
 
@@ -205,42 +256,47 @@ final class FocusPetModel: ObservableObject {
         exportedDataURL = dataStore.exportSnapshot(
             stateEvents: stateEvents,
             reminders: reminderHistory,
+            rules: rules,
+            settings: appSettings(),
             summary: todaySummary
         )
         localDataBytes = dataStore.currentDataSize()
+        localDataStatusMessage = exportedDataURL.map { "已导出到 \($0.path)" } ?? "导出失败。"
+    }
+
+    private func configureCameraFrameHandler() {
+        cameraService.setFrameHandler { [weak self] frame in
+            Task { @MainActor in
+                self?.latestCameraFrame = frame
+                self?.latestCameraFrameAt = frame.timestamp
+                self?.cameraFrameCount = frame.sequenceNumber
+            }
+        }
     }
 
     private func startCameraIfAuthorized() {
         guard cameraAuthorization == .authorized, !isPaused else { return }
-        cameraService.start()
-        cameraIsRunning = cameraService.isRunning
+        cameraService.start { [weak self] running in
+            self?.cameraIsRunning = running
+        }
     }
 
-    private func advanceDemoTick() {
+    private func advanceStateTick() {
         guard !isPaused else { return }
-
         refreshFrontApp()
-        tickIndex += 1
 
-        let scriptedState: UserState
-        switch tickIndex % 10 {
-        case 0, 1, 2, 3:
-            scriptedState = .focused
-        case 4:
-            scriptedState = .possiblyDistracted
-        case 5:
-            scriptedState = .offScreen
-        case 6:
-            scriptedState = .lookingDown
-        case 7:
-            scriptedState = .entertainment
-        case 8:
-            scriptedState = .away
-        default:
-            scriptedState = .focused
+        let context = runtimeContext(now: Date())
+        var observation: StateObservation
+
+        switch runtimeMode {
+        case .live:
+            observation = liveStateSource.observation(from: context)
+        case .demo:
+            observation = demoStateSource.nextObservation(from: context)
         }
 
-        applyDemoState(scriptedState, stableDuration: scriptedDuration(for: scriptedState), reasonOverride: nil)
+        observation = stabilityTracker.observationWithUpdatedStability(observation)
+        ingestObservation(observation, reasonOverride: nil)
     }
 
     private func refreshFrontApp() {
@@ -249,44 +305,73 @@ final class FocusPetModel: ObservableObject {
         frontAppBundleID = frontApp.bundleID
     }
 
-    private func applyDemoState(_ userState: UserState, stableDuration: TimeInterval, reasonOverride: String?) {
-        let now = Date()
-        let context = contextForDemoState(userState)
-        let observation = StateObservation(
+    private func runtimeContext(now: Date) -> RuntimeInputContext {
+        let classifiedContext = appClassifier.classify(appName: frontAppName, bundleID: frontAppBundleID)
+
+        return RuntimeInputContext(
             timestamp: now,
-            facePresent: userState != .away,
-            gazeState: gazeForDemoState(userState),
-            headPitchDegrees: userState == .lookingDown ? 32 : 4,
             frontAppName: frontAppName,
-            context: context,
+            frontAppBundleID: frontAppBundleID,
+            context: classifiedContext,
             lastInputSeconds: InputActivityService.lastInputSeconds(),
-            stableDurationSeconds: stableDuration
+            cameraAuthorization: CameraAuthorizationState(cameraAuthorization),
+            cameraRunning: cameraIsRunning,
+            latestFrame: latestCameraFrame
         )
+    }
+
+    private func ingestObservation(_ observation: StateObservation, reasonOverride: String?) {
+        guard !isPaused else { return }
+
         currentObservation = observation
 
         var fused = fusionEngine.fuse(observation)
         if let reasonOverride {
             fused = FusedUserState(
                 timestamp: fused.timestamp,
-                userState: userState,
-                context: context,
+                userState: fused.userState,
+                context: fused.context,
                 confidence: max(fused.confidence, 0.8),
                 reason: [reasonOverride],
-                stableDurationSeconds: stableDuration
+                stableDurationSeconds: fused.stableDurationSeconds
             )
         }
-        currentState = fused
 
-        appendEvent(for: fused)
-        evaluateRules(for: fused, now: now)
+        currentState = fused
+        appendEvent(for: fused, sourceKind: observation.sourceKind)
+        evaluateRules(for: fused, now: observation.timestamp)
         refreshSummary()
         saveLocalSnapshot()
     }
 
-    private func appendEvent(for state: FusedUserState) {
-        let duration = max(4, Int(min(state.stableDurationSeconds, 600)))
+    private func setPausedState(reason: String) {
+        let now = Date()
+        currentObservation = StateObservation(
+            timestamp: now,
+            sourceKind: runtimeMode.sourceKind,
+            facePresence: .unknown,
+            gazeState: .unknown,
+            headPitchDegrees: 0,
+            frontAppName: frontAppName,
+            context: .neutral,
+            lastInputSeconds: InputActivityService.lastInputSeconds(),
+            stableDurationSeconds: 0
+        )
+        currentState = FusedUserState(
+            timestamp: now,
+            userState: .unknown,
+            context: .neutral,
+            confidence: 0,
+            reason: [reason],
+            stableDurationSeconds: 0
+        )
+    }
+
+    private func appendEvent(for state: FusedUserState, sourceKind: ObservationSourceKind) {
+        let duration = max(3, Int(min(state.stableDurationSeconds, 600)))
         let event = StateEvent(
             id: UUID().uuidString,
+            sourceKind: sourceKind,
             startTime: state.timestamp.addingTimeInterval(TimeInterval(-duration)),
             endTime: state.timestamp,
             userState: state.userState,
@@ -296,8 +381,8 @@ final class FocusPetModel: ObservableObject {
         )
         stateEvents.append(event)
 
-        if stateEvents.count > 160 {
-            stateEvents.removeFirst(stateEvents.count - 160)
+        if stateEvents.count > 240 {
+            stateEvents.removeFirst(stateEvents.count - 240)
         }
     }
 
@@ -329,99 +414,36 @@ final class FocusPetModel: ObservableObject {
             for: Date(),
             events: stateEvents,
             reminderCount: reminderHistory.count,
-            petEnergy: min(99, stateEvents.filter { $0.userState == .focused }.count * 3)
+            petEnergy: min(99, stateEvents.filter { $0.sourceKind == .live && $0.userState == .focused }.count * 3)
         )
     }
 
-    private func contextForDemoState(_ state: UserState) -> ContextType {
-        switch state {
-        case .entertainment:
-            .entertainment
-        case .meeting:
-            .meeting
-        case .away:
-            .neutral
-        default:
-            appClassifier.classify(appName: frontAppName, bundleID: frontAppBundleID) == .neutral
-                ? .work
-                : appClassifier.classify(appName: frontAppName, bundleID: frontAppBundleID)
-        }
+    private func persistSettings() {
+        dataStore.saveSettings(appSettings())
+        localDataBytes = dataStore.currentDataSize()
     }
 
-    private func gazeForDemoState(_ state: UserState) -> GazeState {
-        switch state {
-        case .focused, .meeting, .resting:
-            .screen
-        case .possiblyDistracted, .offScreen:
-            .offScreen
-        case .lookingDown:
-            .down
-        case .away, .unknown:
-            .unknown
-        case .entertainment:
-            .screen
-        }
+    private func appSettings() -> AppSettings {
+        AppSettings(
+            hasCompletedOnboarding: hasCompletedOnboarding,
+            runtimeMode: runtimeMode,
+            isPaused: isPaused,
+            petOpacity: petOpacity,
+            petScale: petScale,
+            petAnimationEnabled: petAnimationEnabled,
+            soundEnabled: soundEnabled
+        )
     }
 
-    private func scriptedDuration(for state: UserState) -> TimeInterval {
-        switch state {
-        case .focused:
-            900
-        case .possiblyDistracted:
-            24
-        case .offScreen:
-            34
-        case .lookingDown:
-            130
-        case .entertainment:
-            1_260
-        case .away:
-            28
-        default:
-            6
-        }
-    }
-}
-
-enum DemoFixtures {
-    static func seedEvents(now: Date) -> [StateEvent] {
-        [
-            StateEvent(
-                id: "seed-focus-morning",
-                startTime: now.addingTimeInterval(-9_600),
-                endTime: now.addingTimeInterval(-7_080),
-                userState: .focused,
-                context: .work,
-                confidence: 0.91,
-                reason: ["seed_focus_block"]
-            ),
-            StateEvent(
-                id: "seed-offscreen",
-                startTime: now.addingTimeInterval(-6_300),
-                endTime: now.addingTimeInterval(-6_240),
-                userState: .offScreen,
-                context: .work,
-                confidence: 0.82,
-                reason: ["seed_off_screen"]
-            ),
-            StateEvent(
-                id: "seed-looking-down",
-                startTime: now.addingTimeInterval(-5_100),
-                endTime: now.addingTimeInterval(-4_860),
-                userState: .lookingDown,
-                context: .work,
-                confidence: 0.86,
-                reason: ["seed_posture"]
-            ),
-            StateEvent(
-                id: "seed-entertainment",
-                startTime: now.addingTimeInterval(-3_300),
-                endTime: now.addingTimeInterval(-2_460),
-                userState: .entertainment,
-                context: .entertainment,
-                confidence: 0.9,
-                reason: ["seed_entertainment"]
-            )
-        ]
-    }
+    private static let initialObservation = StateObservation(
+        timestamp: Date(),
+        sourceKind: .live,
+        facePresence: .unknown,
+        gazeState: .unknown,
+        headPitchDegrees: 0,
+        frontAppName: "Focus Pet",
+        context: .neutral,
+        lastInputSeconds: 0,
+        stableDurationSeconds: 0
+    )
 }

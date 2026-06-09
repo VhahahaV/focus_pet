@@ -4,7 +4,7 @@ public struct StateFusionEngine: Sendable {
     public init() {}
 
     public func fuse(_ observation: StateObservation) -> FusedUserState {
-        if !observation.facePresent, observation.stableDurationSeconds >= 15 {
+        if observation.facePresence == .missing, observation.stableDurationSeconds >= 15 {
             return state(
                 observation,
                 .away,
@@ -18,7 +18,7 @@ public struct StateFusionEngine: Sendable {
                 observation,
                 .meeting,
                 confidence: 0.88,
-                reason: ["front_app_is_meeting", observation.facePresent ? "face_present" : "face_missing"]
+                reason: ["front_app_is_meeting", observation.facePresence == .present ? "face_present" : "vision_unknown_or_missing"]
             )
         }
 
@@ -31,7 +31,7 @@ public struct StateFusionEngine: Sendable {
             )
         }
 
-        if observation.facePresent,
+        if observation.facePresence == .present,
            (observation.gazeState == .down || observation.headPitchDegrees >= 28),
            observation.stableDurationSeconds >= 60 {
             return state(
@@ -42,7 +42,7 @@ public struct StateFusionEngine: Sendable {
             )
         }
 
-        if observation.facePresent,
+        if observation.facePresence == .present,
            observation.context == .work,
            observation.gazeState == .offScreen,
            observation.stableDurationSeconds >= 30 {
@@ -54,7 +54,7 @@ public struct StateFusionEngine: Sendable {
             )
         }
 
-        if observation.facePresent,
+        if observation.facePresence == .present,
            observation.context == .work,
            observation.gazeState == .offScreen,
            observation.stableDurationSeconds >= 20 {
@@ -66,7 +66,7 @@ public struct StateFusionEngine: Sendable {
             )
         }
 
-        if observation.facePresent,
+        if observation.facePresence == .present,
            observation.context == .work,
            observation.gazeState == .screen {
             return state(
@@ -77,7 +77,38 @@ public struct StateFusionEngine: Sendable {
             )
         }
 
-        if observation.facePresent, observation.gazeState == .screen {
+        if observation.facePresence == .unknown,
+           observation.context == .work,
+           observation.lastInputSeconds <= 20 {
+            return state(
+                observation,
+                .focused,
+                confidence: 0.68,
+                reason: ["front_app_is_work", "recent_input_in_work_context", "vision_unknown"]
+            )
+        }
+
+        if observation.facePresence == .unknown,
+           observation.context == .neutral,
+           observation.lastInputSeconds <= 20 {
+            return state(
+                observation,
+                .resting,
+                confidence: 0.66,
+                reason: ["recent_input_neutral_context", "vision_unknown"]
+            )
+        }
+
+        if observation.facePresence == .unknown {
+            return state(
+                observation,
+                .unknown,
+                confidence: 0.5,
+                reason: ["vision_unknown", observation.lastInputSeconds > 20 ? "input_idle" : "input_unclear"]
+            )
+        }
+
+        if observation.facePresence == .present, observation.gazeState == .screen {
             return state(
                 observation,
                 .resting,

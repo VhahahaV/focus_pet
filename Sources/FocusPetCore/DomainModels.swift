@@ -8,6 +8,75 @@ public enum GazeState: String, Codable, Hashable, Sendable, CaseIterable {
     case unknown
 }
 
+public enum ObservationSourceKind: String, Codable, Hashable, Sendable, CaseIterable, Identifiable {
+    case live
+    case demo
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .live: "真实检测"
+        case .demo: "Demo"
+        }
+    }
+}
+
+public enum RuntimeMode: String, Codable, Hashable, Sendable, CaseIterable, Identifiable {
+    case live
+    case demo
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .live: "真实检测"
+        case .demo: "Demo"
+        }
+    }
+
+    public var sourceKind: ObservationSourceKind {
+        switch self {
+        case .live: .live
+        case .demo: .demo
+        }
+    }
+}
+
+public enum FacePresence: String, Codable, Hashable, Sendable, CaseIterable {
+    case present
+    case missing
+    case unknown
+}
+
+public struct AppSettings: Codable, Hashable, Sendable {
+    public var hasCompletedOnboarding: Bool
+    public var runtimeMode: RuntimeMode
+    public var isPaused: Bool
+    public var petOpacity: Double
+    public var petScale: Double
+    public var petAnimationEnabled: Bool
+    public var soundEnabled: Bool
+
+    public init(
+        hasCompletedOnboarding: Bool = false,
+        runtimeMode: RuntimeMode = .live,
+        isPaused: Bool = false,
+        petOpacity: Double = 0.94,
+        petScale: Double = 1.0,
+        petAnimationEnabled: Bool = true,
+        soundEnabled: Bool = false
+    ) {
+        self.hasCompletedOnboarding = hasCompletedOnboarding
+        self.runtimeMode = runtimeMode
+        self.isPaused = isPaused
+        self.petOpacity = petOpacity
+        self.petScale = petScale
+        self.petAnimationEnabled = petAnimationEnabled
+        self.soundEnabled = soundEnabled
+    }
+}
+
 public enum ContextType: String, Codable, Hashable, Sendable, CaseIterable, Identifiable {
     case work
     case entertainment
@@ -95,7 +164,8 @@ public enum ReminderActionType: String, Codable, Hashable, Sendable, CaseIterabl
 
 public struct StateObservation: Codable, Hashable, Sendable {
     public var timestamp: Date
-    public var facePresent: Bool
+    public var sourceKind: ObservationSourceKind
+    public var facePresence: FacePresence
     public var gazeState: GazeState
     public var headPitchDegrees: Double
     public var frontAppName: String?
@@ -103,9 +173,14 @@ public struct StateObservation: Codable, Hashable, Sendable {
     public var lastInputSeconds: TimeInterval
     public var stableDurationSeconds: TimeInterval
 
+    public var facePresent: Bool {
+        facePresence == .present
+    }
+
     public init(
         timestamp: Date,
-        facePresent: Bool,
+        sourceKind: ObservationSourceKind = .live,
+        facePresence: FacePresence,
         gazeState: GazeState,
         headPitchDegrees: Double,
         frontAppName: String?,
@@ -114,13 +189,38 @@ public struct StateObservation: Codable, Hashable, Sendable {
         stableDurationSeconds: TimeInterval
     ) {
         self.timestamp = timestamp
-        self.facePresent = facePresent
+        self.sourceKind = sourceKind
+        self.facePresence = facePresence
         self.gazeState = gazeState
         self.headPitchDegrees = headPitchDegrees
         self.frontAppName = frontAppName
         self.context = context
         self.lastInputSeconds = lastInputSeconds
         self.stableDurationSeconds = stableDurationSeconds
+    }
+
+    public init(
+        timestamp: Date,
+        sourceKind: ObservationSourceKind = .live,
+        facePresent: Bool,
+        gazeState: GazeState,
+        headPitchDegrees: Double,
+        frontAppName: String?,
+        context: ContextType,
+        lastInputSeconds: TimeInterval,
+        stableDurationSeconds: TimeInterval
+    ) {
+        self.init(
+            timestamp: timestamp,
+            sourceKind: sourceKind,
+            facePresence: facePresent ? .present : .missing,
+            gazeState: gazeState,
+            headPitchDegrees: headPitchDegrees,
+            frontAppName: frontAppName,
+            context: context,
+            lastInputSeconds: lastInputSeconds,
+            stableDurationSeconds: stableDurationSeconds
+        )
     }
 }
 
@@ -279,6 +379,7 @@ public struct ReminderDecision: Identifiable, Codable, Hashable, Sendable {
 
 public struct StateEvent: Identifiable, Codable, Hashable, Sendable {
     public var id: String
+    public var sourceKind: ObservationSourceKind
     public var startTime: Date
     public var endTime: Date
     public var userState: UserState
@@ -288,6 +389,7 @@ public struct StateEvent: Identifiable, Codable, Hashable, Sendable {
 
     public init(
         id: String,
+        sourceKind: ObservationSourceKind = .live,
         startTime: Date,
         endTime: Date,
         userState: UserState,
@@ -296,6 +398,7 @@ public struct StateEvent: Identifiable, Codable, Hashable, Sendable {
         reason: [String]
     ) {
         self.id = id
+        self.sourceKind = sourceKind
         self.startTime = startTime
         self.endTime = endTime
         self.userState = userState
@@ -320,6 +423,8 @@ public struct DailySummary: Identifiable, Codable, Hashable, Sendable {
     public var longestFocusSeconds: Int
     public var reminderCount: Int
     public var petEnergy: Int
+    public var liveEventCount: Int
+    public var demoEventCount: Int
     public var summaryText: String
 
     public init(
@@ -332,6 +437,8 @@ public struct DailySummary: Identifiable, Codable, Hashable, Sendable {
         longestFocusSeconds: Int,
         reminderCount: Int,
         petEnergy: Int,
+        liveEventCount: Int = 0,
+        demoEventCount: Int = 0,
         summaryText: String
     ) {
         self.date = date
@@ -343,6 +450,8 @@ public struct DailySummary: Identifiable, Codable, Hashable, Sendable {
         self.longestFocusSeconds = longestFocusSeconds
         self.reminderCount = reminderCount
         self.petEnergy = petEnergy
+        self.liveEventCount = liveEventCount
+        self.demoEventCount = demoEventCount
         self.summaryText = summaryText
     }
 }
