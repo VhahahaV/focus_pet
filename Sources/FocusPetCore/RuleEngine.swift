@@ -6,11 +6,13 @@ public struct RuleEngine: Sendable {
     public func evaluate(
         rules: [FocusRule],
         state: FusedUserState,
+        sourceKind: ObservationSourceKind = .live,
         now: Date,
         lastTriggeredAtByRuleID: [String: Date],
         isPaused: Bool
     ) -> [ReminderDecision] {
         guard !isPaused else { return [] }
+        guard sourceKind == .live else { return [] }
         guard state.confidence >= 0.65 else { return [] }
 
         return rules.compactMap { rule in
@@ -27,6 +29,7 @@ public struct RuleEngine: Sendable {
             return ReminderDecision(
                 id: "\(rule.id).\(Int(now.timeIntervalSince1970))",
                 ruleID: rule.id,
+                sourceKind: sourceKind,
                 triggeredAt: now,
                 userState: state.userState,
                 action: rule.action

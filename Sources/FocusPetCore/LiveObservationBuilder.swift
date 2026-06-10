@@ -68,6 +68,7 @@ public struct LiveObservationInput: Codable, Hashable, Sendable {
     public var cameraRunning: Bool
     public var latestFrame: CameraFrameMetadata?
     public var latestFaceDetection: FaceDetectionResult?
+    public var localActivity: LocalActivitySnapshot
 
     public init(
         timestamp: Date,
@@ -78,7 +79,8 @@ public struct LiveObservationInput: Codable, Hashable, Sendable {
         cameraAuthorization: CameraAuthorizationState,
         cameraRunning: Bool,
         latestFrame: CameraFrameMetadata?,
-        latestFaceDetection: FaceDetectionResult? = nil
+        latestFaceDetection: FaceDetectionResult? = nil,
+        localActivity: LocalActivitySnapshot? = nil
     ) {
         self.timestamp = timestamp
         self.frontAppName = frontAppName
@@ -89,21 +91,30 @@ public struct LiveObservationInput: Codable, Hashable, Sendable {
         self.cameraRunning = cameraRunning
         self.latestFrame = latestFrame
         self.latestFaceDetection = latestFaceDetection
+        self.localActivity = localActivity ?? .legacy(lastInputSeconds: lastInputSeconds)
     }
 }
 
 public struct LiveObservationBuilder: Sendable {
     private let faceDetector: any FaceStateDetecting
+    private let maxFaceDetectionAgeSeconds: TimeInterval
+    private let minFaceDetectionConfidence: Double
 
-    public init(faceDetector: any FaceStateDetecting) {
+    public init(
+        faceDetector: any FaceStateDetecting,
+        maxFaceDetectionAgeSeconds: TimeInterval = 20,
+        minFaceDetectionConfidence: Double = 0.55
+    ) {
         self.faceDetector = faceDetector
+        self.maxFaceDetectionAgeSeconds = maxFaceDetectionAgeSeconds
+        self.minFaceDetectionConfidence = minFaceDetectionConfidence
     }
 
     public func makeObservation(
         input: LiveObservationInput,
         stableDurationSeconds: TimeInterval
     ) -> StateObservation {
-        let detection = input.latestFaceDetection ?? faceDetector.detect(from: input.latestFrame)
+        let detection = usableFaceDetection(from: input)
 
         return StateObservation(
             timestamp: input.timestamp,
@@ -114,7 +125,37 @@ public struct LiveObservationBuilder: Sendable {
             frontAppName: input.frontAppName,
             context: input.context,
             lastInputSeconds: input.lastInputSeconds,
-            stableDurationSeconds: stableDurationSeconds
+            stableDurationSeconds: stableDurationSeconds,
+            localActivity: input.localActivity
+        )
+    }
+
+    private func usableFaceDetection(from input: LiveObservationInput) -> FaceDetectionResult {
+        guard input.cameraAuthorization == .authorized,
+              input.cameraRunning else {
+            return unknownDetection(reason: "camera_not_running")
+        }
+
+        guard let frame = input.latestFrame,
+              input.timestamp.timeIntervalSince(frame.timestamp) <= maxFaceDetectionAgeSeconds else {
+            return unknownDetection(reason: "stale_or_missing_camera_frame")
+        }
+
+        let detection = input.latestFaceDetection ?? faceDetector.detect(from: frame)
+        guard detection.confidence >= minFaceDetectionConfidence else {
+            return unknownDetection(reason: "low_confidence_camera_ignored")
+        }
+
+        return detection
+    }
+
+    private func unknownDetection(reason: String) -> FaceDetectionResult {
+        FaceDetectionResult(
+            facePresence: .unknown,
+            gazeState: .unknown,
+            headPitchDegrees: 0,
+            confidence: 0,
+            reason: reason
         )
     }
 }

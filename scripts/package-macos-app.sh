@@ -4,6 +4,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/.build/FocusPet.app"
 EXECUTABLE="$ROOT_DIR/.build/debug/FocusPet"
+RESOURCE_BUNDLE="$ROOT_DIR/.build/debug/FocusPet_FocusPet.bundle"
+LOCAL_LUO_PACK="$ROOT_DIR/external_generated_packs/LuoXiaoHeiLocal"
+APP_ICON="$ROOT_DIR/Sources/FocusPet/Resources/AppIcon.icns"
+INCLUDE_LOCAL_TEST_PETS=0
+
+for arg in "$@"; do
+    if [[ "$arg" == "--include-local-test-pets" ]]; then
+        INCLUDE_LOCAL_TEST_PETS=1
+    fi
+done
 
 cd "$ROOT_DIR"
 swift build
@@ -11,6 +21,25 @@ swift build
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$EXECUTABLE" "$APP_DIR/Contents/MacOS/FocusPet"
+if [[ -d "$RESOURCE_BUNDLE" ]]; then
+    cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/"
+    ln -s "Contents/Resources/FocusPet_FocusPet.bundle" "$APP_DIR/FocusPet_FocusPet.bundle"
+fi
+
+if [[ -f "$APP_ICON" ]]; then
+    cp "$APP_ICON" "$APP_DIR/Contents/Resources/AppIcon.icns"
+fi
+
+if [[ -d "$LOCAL_LUO_PACK" ]]; then
+    mkdir -p "$APP_DIR/Contents/Resources/LocalPetPacks"
+    cp -R "$LOCAL_LUO_PACK" "$APP_DIR/Contents/Resources/LocalPetPacks/LuoXiaoHeiLocal"
+fi
+
+if [[ "$INCLUDE_LOCAL_TEST_PETS" -eq 0 ]]; then
+    echo "Excluding raw local-only source folders..."
+    find "$APP_DIR" -name "external_assets" -type d -prune -exec rm -rf {} +
+    find "$APP_DIR" -name "external_generated_packs" -type d -prune -exec rm -rf {} +
+fi
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -27,6 +56,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <string>6.0</string>
     <key>CFBundleName</key>
     <string>Focus Pet</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -35,6 +66,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
+    <key>LSMultipleInstancesProhibited</key>
+    <true/>
     <key>NSCameraUsageDescription</key>
     <string>用于判断你是否看向屏幕、是否低头、是否离开电脑。视频画面只在本机处理，不会保存或上传。</string>
 </dict>

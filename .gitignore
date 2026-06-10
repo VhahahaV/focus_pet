@@ -6,3 +6,5 @@ DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
+/external_assets/
+/external_generated_packs/

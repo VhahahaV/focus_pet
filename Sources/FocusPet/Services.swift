@@ -1,13 +1,16 @@
 import AppKit
 @preconcurrency import AVFoundation
+import CoreGraphics
 import FocusPetCore
 import Foundation
+import ImageIO
 import UserNotifications
 import Vision
 
 struct FrontApplication: Sendable {
     var name: String
     var bundleID: String?
+    var windowTitle: String?
 }
 
 struct ForegroundAppService: Sendable {
@@ -15,8 +18,29 @@ struct ForegroundAppService: Sendable {
         let app = NSWorkspace.shared.frontmostApplication
         return FrontApplication(
             name: app?.localizedName ?? "Unknown",
-            bundleID: app?.bundleIdentifier
+            bundleID: app?.bundleIdentifier,
+            windowTitle: frontWindowTitle(for: app?.processIdentifier)
         )
+    }
+
+    private func frontWindowTitle(for processID: pid_t?) -> String? {
+        guard let processID,
+              let windowList = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements],
+                kCGNullWindowID
+              ) as? [[String: Any]] else {
+            return nil
+        }
+
+        return windowList.first { info in
+            let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t
+            let layer = info[kCGWindowLayer as String] as? Int
+            return ownerPID == processID && layer == 0
+        }
+        .flatMap { info in
+            let title = info[kCGWindowName as String] as? String
+            return title?.isEmpty == false ? title : nil
+        }
     }
 }
 
@@ -39,9 +63,43 @@ extension CameraAuthorizationState {
 
 enum InputActivityService {
     static func lastInputSeconds() -> TimeInterval {
-        let key = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
-        let mouse = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .mouseMoved)
-        return min(key, mouse)
+        snapshot().lastInputSeconds
+    }
+
+    static func snapshot(
+        lastAppSwitchSeconds: TimeInterval = 0,
+        frontAppStableSeconds: TimeInterval = 0,
+        windowTitleStableSeconds: TimeInterval = 0
+    ) -> LocalActivitySnapshot {
+        let keyboard = secondsSinceMostRecent([.keyDown])
+        let mouse = secondsSinceMostRecent([
+            .mouseMoved,
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown,
+            .leftMouseDragged,
+            .rightMouseDragged,
+            .otherMouseDragged
+        ])
+        let scroll = secondsSinceMostRecent([.scrollWheel])
+        let input = min(keyboard, mouse, scroll)
+
+        return LocalActivitySnapshot(
+            lastInputSeconds: input,
+            lastKeyboardSeconds: keyboard,
+            lastMouseSeconds: mouse,
+            lastScrollSeconds: scroll,
+            lastAppSwitchSeconds: lastAppSwitchSeconds,
+            frontAppStableSeconds: frontAppStableSeconds,
+            windowTitleStableSeconds: windowTitleStableSeconds,
+            hasDetailedInputBreakdown: true
+        )
+    }
+
+    private static func secondsSinceMostRecent(_ eventTypes: [CGEventType]) -> TimeInterval {
+        eventTypes
+            .map { CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0) }
+            .min() ?? 0
     }
 }
 
@@ -62,6 +120,8 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
     private let frameQueue = DispatchQueue(label: "FocusPet.CameraCapture.frames")
     private let videoOutput = AVCaptureVideoDataOutput()
     private let visionDetector = VisionFrameFaceDetector()
+    private let detectionIntervalSeconds: TimeInterval = 10
+    private let targetFrameRate: Int32 = 2
     private let lock = NSLock()
     private var running = false
     private var frameHandler: ((CameraFrameMetadata, FaceDetectionResult?) -> Void)?
@@ -111,7 +171,7 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
         from connection: AVCaptureConnection
     ) {
         let now = Date()
-        if let lastFrameEmitAt, now.timeIntervalSince(lastFrameEmitAt) < 1.0 {
+        if let lastFrameEmitAt, now.timeIntervalSince(lastFrameEmitAt) < detectionIntervalSeconds {
             return
         }
 
@@ -119,7 +179,10 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
         frameSequence += 1
 
         let frame = CameraFrameMetadata(timestamp: now, sequenceNumber: frameSequence)
-        let detection = visionDetector.detect(sampleBuffer: sampleBuffer)
+        let detection = visionDetector.detect(
+            sampleBuffer: sampleBuffer,
+            orientation: imageOrientation(for: connection)
+        )
         let handler = lock.withLock { frameHandler }
         handler?(frame, detection)
     }
@@ -133,11 +196,15 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
         if let camera = AVCaptureDevice.default(for: .video),
            let input = try? AVCaptureDeviceInput(device: camera),
            session.canAddInput(input) {
+            configureLowFrameRate(camera)
             session.addInput(input)
         }
 
         if session.canAddOutput(videoOutput) {
             videoOutput.alwaysDiscardsLateVideoFrames = true
+            videoOutput.videoSettings = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            ]
             videoOutput.setSampleBufferDelegate(self, queue: frameQueue)
             session.addOutput(videoOutput)
         }
@@ -150,14 +217,58 @@ final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampleBuffer
             running = value
         }
     }
+
+    private func configureLowFrameRate(_ camera: AVCaptureDevice) {
+        let frameDuration = CMTime(value: 1, timescale: targetFrameRate)
+        guard camera.activeFormat.videoSupportedFrameRateRanges.contains(where: { range in
+            CMTimeCompare(range.minFrameDuration, frameDuration) <= 0
+                && CMTimeCompare(frameDuration, range.maxFrameDuration) <= 0
+        }) else {
+            return
+        }
+
+        do {
+            try camera.lockForConfiguration()
+            camera.activeVideoMinFrameDuration = frameDuration
+            camera.activeVideoMaxFrameDuration = frameDuration
+            camera.unlockForConfiguration()
+        } catch {
+            return
+        }
+    }
+
+    private func imageOrientation(for connection: AVCaptureConnection) -> CGImagePropertyOrientation {
+        let mirrored = connection.isVideoMirrored
+        let angle = normalizedRotationAngle(connection.videoRotationAngle)
+
+        switch angle {
+        case 90:
+            return mirrored ? .leftMirrored : .right
+        case 180:
+            return mirrored ? .downMirrored : .down
+        case 270:
+            return mirrored ? .rightMirrored : .left
+        default:
+            return mirrored ? .upMirrored : .up
+        }
+    }
+
+    private func normalizedRotationAngle(_ angle: CGFloat) -> Int {
+        let normalized = angle.truncatingRemainder(dividingBy: 360)
+        let positive = normalized < 0 ? normalized + 360 : normalized
+        return Int(positive.rounded()) % 360
+    }
 }
 
 private final class VisionFrameFaceDetector: @unchecked Sendable {
     private let heuristics = FaceStateHeuristics()
 
-    func detect(sampleBuffer: CMSampleBuffer) -> FaceDetectionResult {
-        let request = VNDetectFaceLandmarksRequest()
-        let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: .up, options: [:])
+    func detect(sampleBuffer: CMSampleBuffer, orientation: CGImagePropertyOrientation) -> FaceDetectionResult {
+        let request = VNDetectFaceRectanglesRequest()
+        if #available(macOS 13.0, *) {
+            request.revision = VNDetectFaceRectanglesRequestRevision3
+        }
+        let handler = VNImageRequestHandler(cmSampleBuffer: sampleBuffer, orientation: orientation, options: [:])
 
         do {
             try handler.perform([request])
@@ -230,8 +341,16 @@ struct LocalDataStore: Sendable {
         rootURL.appendingPathComponent("reminders.json")
     }
 
+    private var faceDiagnosticsURL: URL {
+        rootURL.appendingPathComponent("face-diagnostics.json")
+    }
+
     private var onboardingURL: URL {
         rootURL.appendingPathComponent("onboarding-complete.flag")
+    }
+
+    var petPacksRootURL: URL {
+        rootURL.appendingPathComponent("PetPacks", isDirectory: true)
     }
 
     var hasCompletedOnboarding: Bool {
@@ -259,6 +378,14 @@ struct LocalDataStore: Sendable {
         return settings
     }
 
+    func settingsContainsLegacyRuntimeMode() -> Bool {
+        guard let data = try? Data(contentsOf: settingsURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        return object["runtimeMode"] != nil
+    }
+
     func saveSettings(_ settings: AppSettings) {
         ensureRoot()
         guard let data = try? JSONEncoder.focusPet.encode(settings) else { return }
@@ -267,7 +394,14 @@ struct LocalDataStore: Sendable {
 
     func loadRules() -> [FocusRule] {
         guard let data = try? Data(contentsOf: rulesURL) else { return FocusRule.defaults }
-        return (try? JSONDecoder.focusPet.decode([FocusRule].self, from: data)) ?? FocusRule.defaults
+        guard let decoded = try? JSONDecoder.focusPet.decode([FocusRule].self, from: data) else {
+            return FocusRule.defaults
+        }
+
+        let currentRules = decoded.filter { rule in
+            FocusRule.currentRuleIDs.contains(rule.id) && !rule.states.isEmpty
+        }
+        return currentRules.isEmpty ? FocusRule.defaults : currentRules
     }
 
     func saveRules(_ rules: [FocusRule]) {
@@ -298,6 +432,35 @@ struct LocalDataStore: Sendable {
         try? data.write(to: eventsURL, options: [.atomic])
     }
 
+    func loadFaceDiagnostics() -> [FaceDiagnosticEntry] {
+        guard let data = try? Data(contentsOf: faceDiagnosticsURL) else { return [] }
+        return (try? JSONDecoder.focusPet.decode([FaceDiagnosticEntry].self, from: data)) ?? []
+    }
+
+    func saveFaceDiagnostics(_ entries: [FaceDiagnosticEntry]) {
+        ensureRoot()
+        guard let data = try? JSONEncoder.focusPet.encode(entries) else { return }
+        try? data.write(to: faceDiagnosticsURL, options: [.atomic])
+    }
+
+    func ensurePetPacksRoot() -> URL {
+        ensureRoot()
+        try? FileManager.default.createDirectory(at: petPacksRootURL, withIntermediateDirectories: true)
+        return petPacksRootURL
+    }
+
+    func reclaimLocalData(
+        stateEvents: [StateEvent],
+        reminders: [ReminderDecision],
+        faceDiagnostics: [FaceDiagnosticEntry]
+    ) -> ReclaimedLocalData {
+        LocalDataReclaimer().reclaim(
+            stateEvents: stateEvents,
+            reminders: reminders,
+            faceDiagnostics: faceDiagnostics
+        )
+    }
+
     func currentDataSize() -> Int {
         guard let enumerator = FileManager.default.enumerator(at: rootURL, includingPropertiesForKeys: [.fileSizeKey]) else {
             return 0
@@ -313,6 +476,7 @@ struct LocalDataStore: Sendable {
     func exportSnapshot(
         stateEvents: [StateEvent],
         reminders: [ReminderDecision],
+        faceDiagnostics: [FaceDiagnosticEntry],
         rules: [FocusRule],
         settings: AppSettings,
         summary: DailySummary
@@ -322,12 +486,14 @@ struct LocalDataStore: Sendable {
         let snapshot = ExportSnapshot(
             stateEvents: stateEvents,
             reminders: reminders,
+            faceDiagnostics: faceDiagnostics,
             rules: rules,
             settings: settings,
             summary: summary
         )
         guard let data = try? JSONEncoder.focusPet.encode(snapshot) else { return nil }
         try? data.write(to: exportURL, options: [.atomic])
+        pruneExportSnapshots(keeping: exportURL)
         return exportURL
     }
 
@@ -339,11 +505,53 @@ struct LocalDataStore: Sendable {
     private func ensureRoot() {
         try? FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
     }
+
+    private func pruneExportSnapshots(
+        keeping currentExportURL: URL,
+        maxCount: Int = 5,
+        maxAgeSeconds: TimeInterval = 7 * 24 * 60 * 60
+    ) {
+        let now = Date()
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: rootURL,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        let exports = urls.filter {
+            $0.lastPathComponent.hasPrefix("focus-pet-export-")
+                && $0.pathExtension == "json"
+                && $0 != currentExportURL
+        }
+        let sorted = exports.sorted { lhs, rhs in
+            modificationDate(for: lhs) < modificationDate(for: rhs)
+        }
+        let overCount = max(0, sorted.count - max(0, maxCount - 1))
+        var removalCandidates: [URL] = []
+
+        for (index, url) in sorted.enumerated() {
+            let isOld = now.timeIntervalSince(modificationDate(for: url)) > maxAgeSeconds
+            if index < overCount || isOld {
+                removalCandidates.append(url)
+            }
+        }
+
+        for url in removalCandidates {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private func modificationDate(for url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+    }
 }
 
 private struct ExportSnapshot: Codable {
     var stateEvents: [StateEvent]
     var reminders: [ReminderDecision]
+    var faceDiagnostics: [FaceDiagnosticEntry]
     var rules: [FocusRule]
     var settings: AppSettings
     var summary: DailySummary

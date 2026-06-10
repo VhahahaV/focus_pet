@@ -18,10 +18,19 @@ let package = Package(
         ),
         .executableTarget(
             name: "FocusPet",
-            dependencies: ["FocusPetCore"]
+            dependencies: ["FocusPetCore"],
+            resources: [
+                .copy("Resources/Pets"),
+                .copy("Resources/AppIcon.png"),
+                .copy("Resources/AppIcon.icns")
+            ]
         ),
         .executableTarget(
             name: "FocusPetCoreChecks",
+            dependencies: ["FocusPetCore"]
+        ),
+        .testTarget(
+            name: "FocusPetCoreTests",
             dependencies: ["FocusPetCore"]
         )
     ]

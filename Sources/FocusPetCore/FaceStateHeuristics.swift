@@ -42,9 +42,29 @@ public struct FaceStateHeuristics: Sendable {
             )
         }
 
-        let yaw = snapshot.yawDegrees ?? 0
-        let pitch = snapshot.pitchDegrees ?? estimatedPitch(fromBoundingBoxCenterY: snapshot.boundingBoxCenterY)
         let confidence = min(0.95, max(0.35, snapshot.confidence))
+        guard confidence >= 0.5 else {
+            return FaceDetectionResult(
+                facePresence: .present,
+                gazeState: .unknown,
+                headPitchDegrees: snapshot.pitchDegrees ?? 0,
+                confidence: confidence,
+                reason: "low_face_confidence"
+            )
+        }
+
+        guard snapshot.yawDegrees != nil || snapshot.pitchDegrees != nil else {
+            return FaceDetectionResult(
+                facePresence: .present,
+                gazeState: .unknown,
+                headPitchDegrees: 0,
+                confidence: 0.45,
+                reason: "head_pose_unavailable"
+            )
+        }
+
+        let yaw = snapshot.yawDegrees ?? 0
+        let pitch = snapshot.pitchDegrees ?? 0
 
         if pitch >= pitchDownThreshold {
             return FaceDetectionResult(
@@ -73,19 +93,5 @@ public struct FaceStateHeuristics: Sendable {
             confidence: confidence,
             reason: "face_centered"
         )
-    }
-
-    private func estimatedPitch(fromBoundingBoxCenterY centerY: Double?) -> Double {
-        guard let centerY else { return 0 }
-
-        if centerY < 0.42 {
-            return 28
-        }
-
-        if centerY > 0.72 {
-            return -8
-        }
-
-        return 0
     }
 }

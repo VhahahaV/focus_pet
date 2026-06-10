@@ -1,53 +1,53 @@
 import Foundation
 
 public struct ReportGenerator: Sendable {
-    public init() {}
+    private static let sampledEventMergeGapSeconds: TimeInterval = 12
+    private let timelineAnalyzer: StateTimelineAnalyzer
+
+    public init() {
+        timelineAnalyzer = StateTimelineAnalyzer(mergeGapSeconds: Self.sampledEventMergeGapSeconds)
+    }
 
     public func makeDailySummary(
         for date: Date,
         events: [StateEvent],
         reminderCount: Int,
-        petEnergy: Int
+        petEnergy: Int? = nil
     ) -> DailySummary {
-        let liveEvents = events.filter { $0.sourceKind == .live }
-        let demoEventCount = events.filter { $0.sourceKind == .demo }.count
-        let totalActiveSeconds = liveEvents.reduce(0) { $0 + $1.durationSeconds }
-        let focusSeconds = liveEvents
-            .filter { $0.userState == .focused }
-            .reduce(0) { $0 + $1.durationSeconds }
-        let entertainmentSeconds = liveEvents
-            .filter { $0.context == .entertainment || $0.userState == .entertainment }
-            .reduce(0) { $0 + $1.durationSeconds }
-        let offScreenCount = liveEvents
-            .filter { $0.userState == .offScreen || $0.userState == .away }
-            .count
-        let lookingDownSeconds = liveEvents
-            .filter { $0.userState == .lookingDown }
-            .reduce(0) { $0 + $1.durationSeconds }
-        let longestFocusSeconds = liveEvents
-            .filter { $0.userState == .focused }
-            .map(\.durationSeconds)
-            .max() ?? 0
+        let liveEvents = events.filter { $0.sourceKind == .live && Self.overlapsDay($0, date: date) }
+        let demoEventCount = events.filter { $0.sourceKind == .demo && Self.overlapsDay($0, date: date) }.count
+        let bounds = Self.dayBounds(for: date)
+        let timeline = timelineAnalyzer.summarize(
+            events: liveEvents,
+            from: bounds.start,
+            to: bounds.end,
+            sourceKind: .live
+        )
+        let totalActiveSeconds = timeline.totalSeconds
+        let focusSeconds = timeline.seconds(for: .focused)
+        let distractedSeconds = timeline.seconds(for: .distracted)
+        let awayCount = timeline.awayCount
+        let longestFocusSeconds = timeline.longestFocusSeconds
+        let resolvedPetEnergy = petEnergy ?? min(99, max(0, focusSeconds / 60))
 
         let summaryText = Self.makeSummaryText(
             focusSeconds: focusSeconds,
             longestFocusSeconds: longestFocusSeconds,
-            lookingDownSeconds: lookingDownSeconds,
-            offScreenCount: offScreenCount,
-            petEnergy: petEnergy
+            distractedSeconds: distractedSeconds,
+            awayCount: awayCount,
+            petEnergy: resolvedPetEnergy
         )
 
         return DailySummary(
             date: Self.dateString(from: date),
             totalActiveSeconds: totalActiveSeconds,
             focusSeconds: focusSeconds,
-            entertainmentSeconds: entertainmentSeconds,
-            offScreenCount: offScreenCount,
-            lookingDownSeconds: lookingDownSeconds,
+            distractedSeconds: distractedSeconds,
+            awayCount: awayCount,
             longestFocusSeconds: longestFocusSeconds,
             reminderCount: reminderCount,
-            petEnergy: petEnergy,
-            liveEventCount: liveEvents.count,
+            petEnergy: resolvedPetEnergy,
+            liveEventCount: timeline.segments.count,
             demoEventCount: demoEventCount,
             summaryText: summaryText
         )
@@ -56,19 +56,19 @@ public struct ReportGenerator: Sendable {
     private static func makeSummaryText(
         focusSeconds: Int,
         longestFocusSeconds: Int,
-        lookingDownSeconds: Int,
-        offScreenCount: Int,
+        distractedSeconds: Int,
+        awayCount: Int,
         petEnergy: Int
     ) -> String {
         let focusMinutes = focusSeconds / 60
         let longestMinutes = longestFocusSeconds / 60
-        let downMinutes = lookingDownSeconds / 60
+        let distractedMinutes = distractedSeconds / 60
 
         if focusSeconds == 0 {
-            return "今天还没有形成稳定专注记录。桌宠会先保持安静陪伴。"
+            return "今天还没有形成稳定专注记录。桌宠会继续观察专注、走神和暂离状态。"
         }
 
-        return "今天有效专注 \(focusMinutes) 分钟，最长连续专注 \(longestMinutes) 分钟。离屏 \(offScreenCount) 次，低头累计 \(downMinutes) 分钟，桌宠获得 \(petEnergy) 点能量。"
+        return "今天有效专注 \(focusMinutes) 分钟，最长连续专注 \(longestMinutes) 分钟。走神 \(distractedMinutes) 分钟，暂离 \(awayCount) 次，桌宠获得 \(petEnergy) 点能量。"
     }
 
     private static func dateString(from date: Date) -> String {
@@ -77,5 +77,18 @@ public struct ReportGenerator: Sendable {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
+    }
+
+    private static func overlapsDay(_ event: StateEvent, date: Date) -> Bool {
+        let bounds = dayBounds(for: date)
+        return event.endTime > bounds.start && event.startTime < bounds.end
+    }
+
+    private static func dayBounds(for date: Date) -> (start: Date, end: Date) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "zh_CN")
+        let start = calendar.startOfDay(for: date)
+        let end = calendar.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
+        return (start, end)
     }
 }
