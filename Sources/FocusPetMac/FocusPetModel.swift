@@ -48,6 +48,8 @@ final class FocusPetModel: ObservableObject {
     private var transientPetMessageExpiresAt: Date?
     private var transientPetAction: PetAction?
     private var transientPetActionExpiresAt: Date?
+    private var petAnimationIdentity: String?
+    private var petAnimationStartedAt = Date()
     private var lastTickAt: Date?
     private var openDashboardRequest: (@MainActor (DashboardTab) -> Void)?
 
@@ -370,6 +372,7 @@ final class FocusPetModel: ObservableObject {
     func handlePetDragBegan() {
         transientPetAction = .dragged
         transientPetActionExpiresAt = nil
+        petAnimationIdentity = nil
         updatePet()
     }
 
@@ -379,6 +382,7 @@ final class FocusPetModel: ObservableObject {
         settings.pet.customOriginY = origin.y
         transientPetAction = .landing
         transientPetActionExpiresAt = Date().addingTimeInterval(1.5)
+        petAnimationIdentity = nil
         statusMessage = "桌宠位置已保存为自定义。"
         save()
         showTransientPetMessage("放在这里。", seconds: 3)
@@ -464,6 +468,7 @@ final class FocusPetModel: ObservableObject {
         petPreviewAction = action
         transientPetAction = action
         transientPetActionExpiresAt = Date().addingTimeInterval(3)
+        petAnimationIdentity = nil
         showTransientPetMessage("预览动作：\(action.title)", seconds: 3)
         clearTransientPetAction(after: 3)
     }
@@ -478,6 +483,40 @@ final class FocusPetModel: ObservableObject {
             priority: 200
         ))
         statusMessage = "规则已添加。"
+        save()
+    }
+
+    func categoryForRule(pattern: String, matchKind: RuleMatchKind) -> ActivityCategory? {
+        let cleaned = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+
+        return rules
+            .filter { rule in
+                rule.matchKind == matchKind
+                    && rule.pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .localizedCaseInsensitiveCompare(cleaned) == .orderedSame
+            }
+            .sorted { $0.priority > $1.priority }
+            .first?
+            .category
+    }
+
+    func setRule(pattern: String, matchKind: RuleMatchKind, category: ActivityCategory) {
+        let cleaned = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+
+        rules.removeAll { rule in
+            rule.matchKind == matchKind
+                && rule.pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .localizedCaseInsensitiveCompare(cleaned) == .orderedSame
+        }
+        rules.append(ClassificationRule(
+            matchKind: matchKind,
+            pattern: cleaned,
+            category: category,
+            priority: 240
+        ))
+        statusMessage = "\(cleaned) 已设为\(category.title)。"
         save()
     }
 
@@ -675,11 +714,12 @@ final class FocusPetModel: ObservableObject {
         let selectedRecord = availablePetPacks.first { $0.id == settings.pet.selectedPackID }
             ?? availablePetPacks.first
             ?? PetPackRecord(pack: PetPackCatalog.fallbackPack, rootURL: nil, isBundled: true)
+        let now = Date()
         let policyAction = behaviorPolicy.action(
             for: currentDecision.state,
             previousState: previousState,
             latestNudge: nudges.last,
-            now: Date()
+            now: now
         )
         let transientAction = currentTransientAction()
         let baseAction = transientAction ?? policyAction
@@ -689,6 +729,17 @@ final class FocusPetModel: ObservableObject {
         let resolvedHoverAction = PetActionResolver().animationKey(for: hoverAction, in: selectedRecord.pack) ?? resolvedAction
         let animation = selectedRecord.pack.animations[resolvedAction]
         let hoverAnimation = selectedRecord.pack.animations[resolvedHoverAction]
+        let nextAnimationIdentity = [
+            selectedRecord.id,
+            action.rawValue,
+            hoverAction.rawValue,
+            resolvedAction.rawValue,
+            resolvedHoverAction.rawValue
+        ].joined(separator: "|")
+        if petAnimationIdentity != nextAnimationIdentity {
+            petAnimationIdentity = nextAnimationIdentity
+            petAnimationStartedAt = now
+        }
         petPanel.update(PetRenderState(
             focusState: currentDecision.state,
             action: action,
@@ -710,7 +761,7 @@ final class FocusPetModel: ObservableObject {
             hoverFrameURLs: selectedRecord.frameURLs(for: resolvedHoverAction),
             hoverFramesPerSecond: hoverAnimation?.fps ?? 8,
             hoverLoops: hoverAnimation?.loop ?? false,
-            animationStartedAt: Date()
+            animationStartedAt: petAnimationStartedAt
         ))
         petPanel.show()
     }

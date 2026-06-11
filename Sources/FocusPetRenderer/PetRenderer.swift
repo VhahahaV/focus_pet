@@ -124,12 +124,12 @@ public struct PetRenderState: Hashable, Sendable {
         isHovering && !hoverFrameURLs.isEmpty ? hoverLoops : loops
     }
 
-    func frameURL(at date: Date, isHovering: Bool) -> URL? {
+    public func frameURL(at date: Date, isHovering: Bool) -> URL? {
         let urls = displayFrameURLs(isHovering: isHovering)
         guard !urls.isEmpty else { return nil }
         let elapsed = max(0, date.timeIntervalSince(animationStartedAt))
         let rawIndex = Int((elapsed * displayFramesPerSecond(isHovering: isHovering)).rounded(.down))
-        let index = displayLoops(isHovering: isHovering) ? rawIndex % urls.count : min(rawIndex, urls.count - 1)
+        let index = rawIndex % urls.count
         return urls[index]
     }
 }
@@ -180,6 +180,8 @@ public final class PetPanelController {
     private let model = PetPanelModel()
     private var isDragging = false
     private var lastPlacedFrame: NSRect?
+    private var dragStartMouseLocation: CGPoint?
+    private var dragStartFrameOrigin: CGPoint?
     private let statusAreaHeight: CGFloat = 86
 
     public init(interactions: PetPanelInteractions = PetPanelInteractions()) {
@@ -260,21 +262,31 @@ public final class PetPanelController {
 
     private func moveBy(_ delta: CGSize) {
         guard let panel else { return }
-        isDragging = true
-        lastPlacedFrame = nil
+        let mouseLocation = NSEvent.mouseLocation
+        if !isDragging {
+            isDragging = true
+            lastPlacedFrame = nil
+            dragStartMouseLocation = mouseLocation
+            dragStartFrameOrigin = panel.frame.origin
+        }
+
+        guard let dragStartMouseLocation, let dragStartFrameOrigin else { return }
         var frame = panel.frame
-        frame.origin.x += delta.width
-        frame.origin.y -= delta.height
+        frame.origin.x = dragStartFrameOrigin.x + (mouseLocation.x - dragStartMouseLocation.x)
+        frame.origin.y = dragStartFrameOrigin.y + (mouseLocation.y - dragStartMouseLocation.y)
         panel.setFrame(clamped(frame), display: true)
     }
 
     private func finishDrag() {
         guard let panel else { return }
         isDragging = false
+        dragStartMouseLocation = nil
+        dragStartFrameOrigin = nil
         model.interactions.dragEnded(panel.frame.origin)
     }
 
     private func handleHoverChanged(_ inside: Bool) {
+        guard !isDragging else { return }
         guard model.isHovering != inside else { return }
         model.isHovering = inside
         model.interactions.setHovering(inside)

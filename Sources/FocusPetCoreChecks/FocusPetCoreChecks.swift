@@ -21,6 +21,7 @@ enum FocusPetCoreChecks {
         checkGroupedRules()
         checkPetFallback()
         checkPetHoverPresentation()
+        checkPetNonLoopFramesDoNotFreeze()
         checkPetSettingsCompatibility()
         print("FocusPetCoreChecks passed")
     }
@@ -233,6 +234,29 @@ enum FocusPetCoreChecks {
         expect(renderState.displayFrameURLs(isHovering: true) == [hoverFrame], "hover presentation should use hover frames without rebuilding the render state")
         expect(renderState.displayFramesPerSecond(isHovering: true) == 8, "hover presentation should use hover FPS")
         expect(renderState.displayLoops(isHovering: true) == false, "hover presentation should use hover loop setting")
+    }
+
+    private static func checkPetNonLoopFramesDoNotFreeze() {
+        let first = URL(fileURLWithPath: "/tmp/focus-pet-0.png")
+        let second = URL(fileURLWithPath: "/tmp/focus-pet-1.png")
+        let renderState = PetRenderState(
+            focusState: .focus,
+            action: .welcomeBack,
+            message: nil,
+            size: 150,
+            opacity: 0.94,
+            animationEnabled: true,
+            packName: "Focus Dino",
+            frameURLs: [first, second],
+            framesPerSecond: 1,
+            loops: false,
+            animationStartedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        expect(
+            renderState.frameURL(at: Date(timeIntervalSince1970: 3), isHovering: false) == second,
+            "non-loop sprite actions should keep cycling instead of freezing on the last frame"
+        )
     }
 
     private static func checkPetSettingsCompatibility() {

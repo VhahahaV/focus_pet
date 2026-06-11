@@ -285,8 +285,7 @@ struct TodayView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HeaderPanel()
-                CurrentStateCard()
+                TodayHeroPanel()
                 DailyVisualOverviewPanel()
                 FocusSessionCompactPanel()
                 TimelinePanel()
@@ -296,23 +295,89 @@ struct TodayView: View {
     }
 }
 
-struct HeaderPanel: View {
+struct TodayHeroPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
+    private var focusRatio: Double {
+        guard model.summary.totalSeconds > 0 else { return 0 }
+        return Double(model.summary.focusSeconds) / Double(model.summary.totalSeconds)
+    }
+
+    private var reasonText: String {
+        let reasons = model.currentDecision.reason.map(\.title)
+        return reasons.isEmpty ? "默认状态判断" : reasons.joined(separator: " · ")
+    }
+
     var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: model.currentDecision.state.symbolName)
-                .font(.system(size: 34, weight: .semibold))
-                .foregroundStyle(.tint)
-                .frame(width: 52, height: 52)
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Focus Pet")
-                    .font(.largeTitle.weight(.semibold))
-                Text(model.statusMessage)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 18) {
+                heroIdentity
+                Divider().frame(height: 74)
+                heroMetrics
+                Spacer(minLength: 8)
+                heroActions
             }
-            Spacer()
+
+            VStack(alignment: .leading, spacing: 14) {
+                heroIdentity
+                heroMetrics
+                heroActions
+            }
+        }
+        .dashboardCard()
+    }
+
+    private var heroIdentity: some View {
+        HStack(alignment: .center, spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(model.currentDecision.state.timelineColor.opacity(0.14))
+                Circle()
+                    .trim(from: 0, to: CGFloat(max(0, min(1, focusRatio))))
+                    .stroke(model.currentDecision.state.timelineColor.gradient, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .padding(3)
+                Image(systemName: model.currentDecision.state.symbolName)
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(model.currentDecision.state.timelineColor)
+            }
+            .frame(width: 62, height: 62)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(model.currentDecision.state.title)
+                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    Text(FocusPetFormatters.percentage(model.currentDecision.confidence))
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.quaternary.opacity(0.35), in: Capsule())
+                }
+                Text(model.currentSnapshot.appName)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(reasonText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .frame(minWidth: 260, alignment: .leading)
+        }
+    }
+
+    private var heroMetrics: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 118), spacing: 8), count: 2), alignment: .leading, spacing: 8) {
+            TodayHeroMetric(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
+            TodayHeroMetric(title: "专注占比", value: FocusPetFormatters.percentage(focusRatio), symbol: "chart.pie.fill", tint: .blue)
+            TodayHeroMetric(title: "空闲", value: FocusPetFormatters.duration(Int(model.currentSnapshot.idleSeconds)), symbol: "keyboard", tint: .orange)
+            TodayHeroMetric(title: "切换", value: "\(model.currentSnapshot.switchCountLast5Min) 次", symbol: "arrow.triangle.2.circlepath", tint: .purple)
+        }
+        .frame(maxWidth: 330)
+    }
+
+    private var heroActions: some View {
+        HStack(spacing: 9) {
             HeaderActionButton(title: "专注", symbol: "timer", tint: .green) {
                 model.startFocusSession(taskName: "专注任务", minutes: model.settings.focusTargetMinutes)
             }
@@ -320,7 +385,35 @@ struct HeaderPanel: View {
                 model.startBreak(minutes: model.settings.breakMinutes)
             }
         }
-        .dashboardCard()
+    }
+}
+
+private struct TodayHeroMetric: View {
+    var title: String
+    var value: String
+    var symbol: String
+    var tint: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 24, height: 24)
+                .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .frame(minHeight: 42)
+        .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -345,33 +438,6 @@ private struct HeaderActionButton: View {
         }
         .buttonStyle(.plain)
         .help(title)
-    }
-}
-
-struct CurrentStateCard: View {
-    @EnvironmentObject private var model: FocusPetModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("当前状态", systemImage: "dot.radiowaves.left.and.right")
-                .font(.headline)
-            HStack {
-                Text(model.currentDecision.state.title)
-                    .font(.system(size: 34, weight: .semibold))
-                Spacer()
-                Text(model.currentSnapshot.appName)
-                    .foregroundStyle(.secondary)
-            }
-            HStack(spacing: 8) {
-                StatusPill("\(model.currentSnapshot.category.title)", symbol: "tag.fill")
-                StatusPill("空闲 \(FocusPetFormatters.duration(Int(model.currentSnapshot.idleSeconds)))", symbol: "keyboard")
-                StatusPill("5分钟切换 \(model.currentSnapshot.switchCountLast5Min) 次", symbol: "arrow.triangle.2.circlepath")
-            }
-            Text(model.currentDecision.reason.map(\.title).joined(separator: " · "))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .dashboardCard()
     }
 }
 
@@ -582,7 +648,7 @@ struct TimelinePanel: View {
                     .foregroundStyle(.secondary)
             } else {
                 StatusLineChart(points: timeline.points, hasData: timeline.hasData)
-                    .frame(height: 200)
+                    .frame(height: 170)
                     .padding(.bottom, 6)
                 HStack(spacing: 12) {
                     ForEach(timeline.legend) { item in
@@ -696,13 +762,26 @@ private struct StatusLineChart: View {
                     ChartGridLines()
 
                     if hasData {
-                        Path { path in
-                            guard let first = points.first else { return }
-                            path.move(to: position(for: first, in: proxy.size))
-                            for point in points.dropFirst() {
-                                path.addLine(to: position(for: point, in: proxy.size))
-                            }
-                        }
+                        TimelineAreaShape(points: points)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        FocusPetCore.FocusState.focus.timelineColor.opacity(0.16),
+                                        FocusPetCore.FocusState.breakTime.timelineColor.opacity(0.09),
+                                        FocusPetCore.FocusState.away.timelineColor.opacity(0.04)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .opacity(reveal ? 1 : 0)
+
+                        TimelineLineShape(points: points)
+                            .trim(from: 0, to: reveal ? 1 : 0)
+                            .stroke(.white.opacity(0.18), style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
+                            .blur(radius: 3)
+
+                        TimelineLineShape(points: points)
                         .trim(from: 0, to: reveal ? 1 : 0)
                         .stroke(
                             LinearGradient(
@@ -714,14 +793,19 @@ private struct StatusLineChart: View {
                                 startPoint: .leading,
                                 endPoint: .trailing
                             ),
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
+                            style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round)
                         )
-                        .shadow(color: .primary.opacity(0.08), radius: 6, x: 0, y: 2)
+                        .shadow(color: .primary.opacity(0.1), radius: 5, x: 0, y: 2)
 
                         ForEach(points) { point in
-                            Circle()
-                                .fill(point.state.timelineColor)
-                                .frame(width: 7, height: 7)
+                            ZStack {
+                                Circle()
+                                    .fill(.background.opacity(0.8))
+                                    .frame(width: 10, height: 10)
+                                Circle()
+                                    .fill(point.state.timelineColor)
+                                    .frame(width: 5, height: 5)
+                            }
                                 .position(position(for: point, in: proxy.size))
                                 .opacity(reveal ? 1 : 0)
                         }
@@ -745,18 +829,26 @@ private struct StatusLineChart: View {
                 }
                 .drawingGroup()
             }
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .background {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        LinearGradient(
+                            colors: [.white.opacity(0.08), .clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
         }
         .overlay(
             HStack(spacing: 12) {
-                Text("00:00")
+                TimelineTimeChip("00:00")
                 Spacer()
-                Text("12:00")
+                TimelineTimeChip("12:00")
                 Spacer()
-                Text("23:59")
+                TimelineTimeChip("23:59")
             }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
             .padding(10),
             alignment: .bottomLeading
         )
@@ -764,6 +856,64 @@ private struct StatusLineChart: View {
 
     private func position(for point: StatusTimelinePoint, in size: CGSize) -> CGPoint {
         CGPoint(x: size.width * CGFloat(point.progress), y: size.height * (1 - point.level))
+    }
+}
+
+private struct TimelineLineShape: Shape {
+    var points: [StatusTimelinePoint]
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard let first = points.first else { return path }
+        path.move(to: position(for: first, in: rect.size))
+        for point in points.dropFirst() {
+            path.addLine(to: position(for: point, in: rect.size))
+        }
+        return path
+    }
+
+    private func position(for point: StatusTimelinePoint, in size: CGSize) -> CGPoint {
+        CGPoint(x: size.width * CGFloat(point.progress), y: size.height * (1 - point.level))
+    }
+}
+
+private struct TimelineAreaShape: Shape {
+    var points: [StatusTimelinePoint]
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard let first = points.first, let last = points.last else { return path }
+        let firstPosition = position(for: first, in: rect.size)
+        let lastPosition = position(for: last, in: rect.size)
+        path.move(to: CGPoint(x: firstPosition.x, y: rect.maxY))
+        path.addLine(to: firstPosition)
+        for point in points.dropFirst() {
+            path.addLine(to: position(for: point, in: rect.size))
+        }
+        path.addLine(to: CGPoint(x: lastPosition.x, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+
+    private func position(for point: StatusTimelinePoint, in size: CGSize) -> CGPoint {
+        CGPoint(x: size.width * CGFloat(point.progress), y: size.height * (1 - point.level))
+    }
+}
+
+private struct TimelineTimeChip: View {
+    var title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(title)
+            .font(.caption2.monospacedDigit().weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(.regularMaterial, in: Capsule())
     }
 }
 
@@ -817,6 +967,135 @@ private extension ActivityCategory {
         case .entertainment: .orange
         case .ignore: .blue
         case .neutral: .secondary
+        }
+    }
+}
+
+private struct SlidingSegmentOption<Value: Hashable>: Identifiable {
+    var value: Value
+    var title: String
+    var symbol: String
+    var tint: Color
+
+    var id: String { String(describing: value) }
+}
+
+private struct SlidingSegmentedPicker<Value: Hashable>: View {
+    var options: [SlidingSegmentOption<Value>]
+    @Binding var selection: Value
+    var compact = false
+    @Namespace private var namespace
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(options) { option in
+                let selected = option.value == selection
+                Button {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                        selection = option.value
+                    }
+                } label: {
+                    HStack(spacing: compact ? 4 : 6) {
+                        Image(systemName: option.symbol)
+                            .font(.system(size: compact ? 11 : 12, weight: .semibold))
+                        Text(option.title)
+                            .font((compact ? Font.caption2 : Font.caption).weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                    }
+                    .foregroundStyle(selected ? option.tint : .secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, compact ? 6 : 10)
+                    .padding(.vertical, compact ? 6 : 8)
+                    .background {
+                        if selected {
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(.regularMaterial)
+                                .matchedGeometryEffect(id: "selected", in: namespace)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .stroke(option.tint.opacity(0.28), lineWidth: 1)
+                                }
+                        }
+                    }
+                    .contentShape(RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .help(option.title)
+            }
+        }
+        .padding(3)
+        .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 9))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(.primary.opacity(0.06), lineWidth: 1)
+        }
+    }
+}
+
+private func activityCategoryOptions() -> [SlidingSegmentOption<ActivityCategory>] {
+    ActivityCategory.allCases.map { category in
+        SlidingSegmentOption(
+            value: category,
+            title: category.title,
+            symbol: category.symbolName,
+            tint: category.tint
+        )
+    }
+}
+
+private func petPlacementOptions() -> [SlidingSegmentOption<PetPlacementMode>] {
+    PetPlacementMode.allCases.map { placement in
+        SlidingSegmentOption(
+            value: placement,
+            title: placement.title,
+            symbol: placement.symbolName,
+            tint: placement == .custom ? .purple : .blue
+        )
+    }
+}
+
+private func petActionPreviewOptions() -> [SlidingSegmentOption<PetAction>] {
+    PetAction.allCases.map { action in
+        SlidingSegmentOption(
+            value: action,
+            title: action.title,
+            symbol: action.symbolName,
+            tint: action.tint
+        )
+    }
+}
+
+private extension PetAction {
+    var symbolName: String {
+        switch self {
+        case .idle: "circle.dotted"
+        case .blink: "eye"
+        case .breath: "wind"
+        case .sleep: "moon.zzz.fill"
+        case .wake: "sun.max.fill"
+        case .focusStart: "timer"
+        case .focusStable: "checkmark.circle.fill"
+        case .stretch: "figure.flexibility"
+        case .distractedLook: "eye.trianglebadge.exclamationmark"
+        case .nudgeGentle: "bell.fill"
+        case .nudgeStrong: "bell.badge.fill"
+        case .breakRelax: "cup.and.saucer.fill"
+        case .breakEnd: "arrow.clockwise.circle.fill"
+        case .welcomeBack: "hand.wave.fill"
+        case .dragged: "hand.draw.fill"
+        case .landing: "arrow.down.to.line"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .focusStart, .focusStable: .green
+        case .distractedLook, .nudgeGentle, .nudgeStrong: .orange
+        case .breakRelax, .breakEnd: .blue
+        case .sleep, .wake, .welcomeBack: .indigo
+        case .dragged, .landing: .purple
+        case .idle, .blink, .breath, .stretch: .secondary
         }
     }
 }
@@ -1232,146 +1511,280 @@ struct SessionStatPill: View {
 
 struct RulesView: View {
     @EnvironmentObject private var model: FocusPetModel
+    @State private var selectedRuleCategory: ActivityCategory = .work
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 260), spacing: 12), count: 2), spacing: 12) {
-                    RuleGroupEditor(
-                        title: "工作 App",
-                        symbol: "hammer.fill",
-                        placeholder: "Cursor / Xcode",
-                        matchKind: .appName,
-                        category: .work
-                    )
-                    RuleGroupEditor(
-                        title: "娱乐 App",
-                        symbol: "play.rectangle.fill",
-                        placeholder: "Steam / YouTube",
-                        matchKind: .appName,
-                        category: .entertainment
-                    )
-                    RuleGroupEditor(
-                        title: "忽略 App",
-                        symbol: "eye.slash.fill",
-                        placeholder: "1Password",
-                        matchKind: .appName,
-                        category: .ignore
-                    )
-                    RuleGroupEditor(
-                        title: "工作关键词",
-                        symbol: "doc.text.magnifyingglass",
-                        placeholder: "paper / report",
-                        matchKind: .windowTitle,
-                        category: .work
-                    )
-                    RuleGroupEditor(
-                        title: "娱乐关键词",
-                        symbol: "text.badge.play",
-                        placeholder: "视频 / 直播",
-                        matchKind: .windowTitle,
-                        category: .entertainment
-                    )
-                }
-
+                RulesHeroPanel(selectedCategory: $selectedRuleCategory)
+                AppRuleSelectionPanel(selectedCategory: selectedRuleCategory)
+                KeywordRuleSelectionPanel(selectedCategory: selectedRuleCategory)
                 OtherRulesPanel()
             }
         }
     }
 }
 
-struct RuleGroupEditor: View {
+private struct RulesHeroPanel: View {
     @EnvironmentObject private var model: FocusPetModel
-    @State private var pattern = ""
+    @Binding var selectedCategory: ActivityCategory
 
-    var title: String
-    var symbol: String
-    var placeholder: String
-    var matchKind: RuleMatchKind
-    var category: ActivityCategory
-
-    private var rules: [ClassificationRule] {
-        model.rules
-            .filter { $0.matchKind == matchKind && $0.category == category }
-            .sorted { lhs, rhs in
-                if lhs.priority == rhs.priority {
-                    return lhs.pattern.localizedCaseInsensitiveCompare(rhs.pattern) == .orderedAscending
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.tint)
+                    .frame(width: 38, height: 38)
+                    .background(.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("规则")
+                        .font(.title2.weight(.semibold))
+                    Text("像系统设置一样为 App 和关键词选择分类。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                return lhs.priority > rhs.priority
+                Spacer()
+                StatusPill("\(model.rules.count) 条规则", symbol: "number")
             }
+
+            SlidingSegmentedPicker(
+                options: activityCategoryOptions(),
+                selection: $selectedCategory
+            )
+        }
+        .dashboardCard()
+    }
+}
+
+private struct RuleChoice: Identifiable, Hashable {
+    var title: String
+    var subtitle: String
+    var matchKind: RuleMatchKind
+    var defaultCategory: ActivityCategory
+    var bundleID: String?
+    var seconds: Int
+
+    var id: String { "\(matchKind.rawValue)-\(title.lowercased())" }
+}
+
+private struct AppRuleSelectionPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+    var selectedCategory: ActivityCategory
+
+    private var choices: [RuleChoice] {
+        var result: [String: RuleChoice] = [:]
+
+        func add(_ choice: RuleChoice) {
+            let key = choice.title.lowercased()
+            if let existing = result[key] {
+                result[key] = RuleChoice(
+                    title: existing.title,
+                    subtitle: choice.seconds > existing.seconds ? choice.subtitle : existing.subtitle,
+                    matchKind: existing.matchKind,
+                    defaultCategory: existing.defaultCategory,
+                    bundleID: existing.bundleID ?? choice.bundleID,
+                    seconds: max(existing.seconds, choice.seconds)
+                )
+            } else {
+                result[key] = choice
+            }
+        }
+
+        for item in model.summary.appUsage.prefix(12) {
+            add(RuleChoice(
+                title: item.appName,
+                subtitle: item.seconds > 0 ? "今日 \(FocusPetFormatters.duration(item.seconds))" : item.category.title,
+                matchKind: .appName,
+                defaultCategory: item.category,
+                bundleID: item.bundleID,
+                seconds: item.seconds
+            ))
+        }
+
+        for rule in model.rules where rule.matchKind == .appName {
+            add(RuleChoice(
+                title: rule.pattern,
+                subtitle: "已配置为\(rule.category.title)",
+                matchKind: .appName,
+                defaultCategory: rule.category,
+                bundleID: nil,
+                seconds: 0
+            ))
+        }
+
+        defaultAppChoices.forEach(add)
+
+        return result.values.sorted { lhs, rhs in
+            let lhsCategory = model.categoryForRule(pattern: lhs.title, matchKind: .appName) ?? lhs.defaultCategory
+            let rhsCategory = model.categoryForRule(pattern: rhs.title, matchKind: .appName) ?? rhs.defaultCategory
+            if lhsCategory == selectedCategory && rhsCategory != selectedCategory { return true }
+            if lhsCategory != selectedCategory && rhsCategory == selectedCategory { return false }
+            if lhs.seconds == rhs.seconds {
+                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+            return lhs.seconds > rhs.seconds
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label(title, systemImage: symbol)
+                Label("应用分类", systemImage: "app.badge.fill")
                     .font(.headline)
                 Spacer()
-                Text("\(rules.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.quaternary.opacity(0.4), in: Capsule())
+                StatusPill("最近 + 默认", symbol: "sparkles")
             }
 
-            HStack {
-                TextField(placeholder, text: $pattern)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(add)
-                Button(action: add) {
-                    Label("添加", systemImage: "plus")
-                }
-                .disabled(pattern.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-
-            if rules.isEmpty {
-                Text("暂无")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
-            } else {
-                VStack(spacing: 5) {
-                    ForEach(rules) { rule in
-                        RuleRow(rule: rule)
-                    }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 10)], spacing: 10) {
+                ForEach(choices) { choice in
+                    RuleChoiceRow(choice: choice, selectedCategory: selectedCategory)
                 }
             }
         }
         .dashboardCard()
     }
-
-    private func add() {
-        let cleaned = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return }
-        model.addRule(pattern: cleaned, matchKind: matchKind, category: category)
-        pattern = ""
-    }
 }
 
-struct RuleRow: View {
-    @EnvironmentObject private var model: FocusPetModel
-    var rule: ClassificationRule
+private struct KeywordRuleSelectionPanel: View {
+    var selectedCategory: ActivityCategory
+
+    private var choices: [RuleChoice] {
+        defaultKeywordChoices.sorted { lhs, rhs in
+            if lhs.defaultCategory == selectedCategory && rhs.defaultCategory != selectedCategory { return true }
+            if lhs.defaultCategory != selectedCategory && rhs.defaultCategory == selectedCategory { return false }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+    }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(rule.pattern)
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            Text(rule.matchKind.title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button(role: .destructive) {
-                model.deleteRule(rule)
-            } label: {
-                Image(systemName: "trash")
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("窗口关键词", systemImage: "text.magnifyingglass")
+                    .font(.headline)
+                Spacer()
+                StatusPill("点选即可生效", symbol: "hand.tap.fill")
             }
-            .buttonStyle(.borderless)
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 10)], spacing: 10) {
+                ForEach(choices) { choice in
+                    RuleChoiceRow(choice: choice, selectedCategory: selectedCategory)
+                }
+            }
         }
-        .padding(.vertical, 4)
+        .dashboardCard()
     }
 }
+
+private struct RuleChoiceRow: View {
+    @EnvironmentObject private var model: FocusPetModel
+    var choice: RuleChoice
+    var selectedCategory: ActivityCategory
+
+    private var effectiveCategory: ActivityCategory {
+        model.categoryForRule(pattern: choice.title, matchKind: choice.matchKind) ?? choice.defaultCategory
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RuleChoiceIcon(choice: choice, category: effectiveCategory)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(choice.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(choice.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(minWidth: 112, maxWidth: .infinity, alignment: .leading)
+
+            SlidingSegmentedPicker(
+                options: activityCategoryOptions(),
+                selection: Binding(
+                    get: { effectiveCategory },
+                    set: { category in
+                        model.setRule(pattern: choice.title, matchKind: choice.matchKind, category: category)
+                    }
+                ),
+                compact: true
+            )
+            .frame(width: choice.matchKind == .appName ? 224 : 214)
+        }
+        .padding(10)
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(effectiveCategory == selectedCategory ? effectiveCategory.tint.opacity(0.35) : .primary.opacity(0.05), lineWidth: 1)
+        }
+    }
+
+    private var rowBackground: Color {
+        effectiveCategory == selectedCategory ? effectiveCategory.tint.opacity(0.08) : .primary.opacity(0.025)
+    }
+}
+
+private struct RuleChoiceIcon: View {
+    var choice: RuleChoice
+    var category: ActivityCategory
+
+    var body: some View {
+        ZStack {
+            if choice.matchKind == .appName,
+               let bundleID = choice.bundleID,
+               let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .scaledToFit()
+                    .padding(4)
+            } else {
+                Image(systemName: choice.matchKind == .appName ? "app.fill" : "textformat")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(category.tint)
+            }
+        }
+        .frame(width: 38, height: 38)
+        .background(category.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private let defaultAppChoices: [RuleChoice] = [
+    RuleChoice(title: "Cursor", subtitle: "代码编辑", matchKind: .appName, defaultCategory: .work, bundleID: nil, seconds: 0),
+    RuleChoice(title: "Xcode", subtitle: "开发工具", matchKind: .appName, defaultCategory: .work, bundleID: "com.apple.dt.Xcode", seconds: 0),
+    RuleChoice(title: "Terminal", subtitle: "终端", matchKind: .appName, defaultCategory: .work, bundleID: "com.apple.Terminal", seconds: 0),
+    RuleChoice(title: "iTerm", subtitle: "终端", matchKind: .appName, defaultCategory: .work, bundleID: "com.googlecode.iterm2", seconds: 0),
+    RuleChoice(title: "Notion", subtitle: "文档与计划", matchKind: .appName, defaultCategory: .work, bundleID: nil, seconds: 0),
+    RuleChoice(title: "Obsidian", subtitle: "知识库", matchKind: .appName, defaultCategory: .work, bundleID: "md.obsidian", seconds: 0),
+    RuleChoice(title: "Figma", subtitle: "设计", matchKind: .appName, defaultCategory: .work, bundleID: "com.figma.Desktop", seconds: 0),
+    RuleChoice(title: "Safari", subtitle: "浏览器", matchKind: .appName, defaultCategory: .neutral, bundleID: "com.apple.Safari", seconds: 0),
+    RuleChoice(title: "Google Chrome", subtitle: "浏览器", matchKind: .appName, defaultCategory: .neutral, bundleID: "com.google.Chrome", seconds: 0),
+    RuleChoice(title: "Microsoft Edge", subtitle: "浏览器", matchKind: .appName, defaultCategory: .neutral, bundleID: "com.microsoft.edgemac", seconds: 0),
+    RuleChoice(title: "Steam", subtitle: "游戏", matchKind: .appName, defaultCategory: .entertainment, bundleID: "com.valvesoftware.steam", seconds: 0),
+    RuleChoice(title: "Bilibili", subtitle: "视频", matchKind: .appName, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
+    RuleChoice(title: "WeChat", subtitle: "通讯", matchKind: .appName, defaultCategory: .neutral, bundleID: "com.tencent.xinWeChat", seconds: 0),
+    RuleChoice(title: "Finder", subtitle: "系统", matchKind: .appName, defaultCategory: .ignore, bundleID: "com.apple.finder", seconds: 0),
+    RuleChoice(title: "System Settings", subtitle: "系统", matchKind: .appName, defaultCategory: .ignore, bundleID: "com.apple.systempreferences", seconds: 0),
+    RuleChoice(title: "Activity Monitor", subtitle: "系统", matchKind: .appName, defaultCategory: .ignore, bundleID: "com.apple.ActivityMonitor", seconds: 0),
+    RuleChoice(title: "1Password", subtitle: "密码管理", matchKind: .appName, defaultCategory: .ignore, bundleID: nil, seconds: 0)
+]
+
+private let defaultKeywordChoices: [RuleChoice] = [
+    RuleChoice(title: "paper", subtitle: "论文 / 阅读", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
+    RuleChoice(title: "论文", subtitle: "论文 / 阅读", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
+    RuleChoice(title: "draft", subtitle: "写作", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
+    RuleChoice(title: "report", subtitle: "报告", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
+    RuleChoice(title: "project", subtitle: "项目", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
+    RuleChoice(title: "GitHub", subtitle: "代码协作", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
+    RuleChoice(title: "YouTube", subtitle: "视频", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
+    RuleChoice(title: "Bilibili", subtitle: "视频", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
+    RuleChoice(title: "Netflix", subtitle: "视频", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
+    RuleChoice(title: "Twitch", subtitle: "直播", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
+    RuleChoice(title: "小红书", subtitle: "内容流", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
+    RuleChoice(title: "抖音", subtitle: "短视频", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
+    RuleChoice(title: "游戏", subtitle: "娱乐", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
+    RuleChoice(title: "直播", subtitle: "娱乐", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0)
+]
 
 struct OtherRulesPanel: View {
     @EnvironmentObject private var model: FocusPetModel
@@ -1379,10 +1792,7 @@ struct OtherRulesPanel: View {
     private var otherRules: [ClassificationRule] {
         model.rules
             .filter { rule in
-                !(
-                    (rule.matchKind == .appName && [.work, .entertainment, .ignore].contains(rule.category))
-                    || (rule.matchKind == .windowTitle && [.work, .entertainment].contains(rule.category))
-                )
+                rule.matchKind == .bundleID
             }
             .sorted { lhs, rhs in
                 if lhs.category.rawValue == rhs.category.rawValue {
@@ -1444,12 +1854,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Label("桌宠设置", systemImage: "pawprint.fill")
                         .font(.headline)
-                    Picker("资源包", selection: $model.settings.pet.selectedPackID) {
-                        ForEach(model.availablePetPacks) { record in
-                            Text(record.pack.name).tag(record.id)
-                        }
-                    }
-                    .onChange(of: model.settings.pet.selectedPackID) { _, _ in model.saveSettings() }
+                    PetPackSelectionGrid()
                     HStack {
                         Button {
                             model.chooseAndImportPetPack()
@@ -1475,14 +1880,26 @@ struct SettingsView: View {
                     }
                     if let record = model.availablePetPacks.first(where: { $0.id == model.settings.pet.selectedPackID }) {
                         PetPackSummaryView(record: record)
-                        HStack {
-                            Picker("动作预览", selection: $previewAction) {
-                                ForEach(PetAction.allCases) { action in
-                                    Text(action.title).tag(action)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("动作预览")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button {
+                                    model.previewPetAction(previewAction)
+                                } label: {
+                                    Label("预览", systemImage: "play.fill")
                                 }
+                                .buttonStyle(.bordered)
                             }
-                            Button("预览") {
-                                model.previewPetAction(previewAction)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                SlidingSegmentedPicker(
+                                    options: petActionPreviewOptions(),
+                                    selection: $previewAction,
+                                    compact: true
+                                )
+                                .frame(minWidth: CGFloat(PetAction.allCases.count) * 78)
                             }
                         }
                         PetPackCoverageMatrix(record: record)
@@ -1494,14 +1911,18 @@ struct SettingsView: View {
                             model.saveSettings()
                         }
                     ))
-                    Picker("位置", selection: $model.settings.pet.placement) {
-                        ForEach(PetPlacementMode.allCases) { placement in
-                            Label(placement.title, systemImage: placement.symbolName).tag(placement)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: model.settings.pet.placement) { _, placement in
-                        model.setPetPlacement(placement)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("位置")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        SlidingSegmentedPicker(
+                            options: petPlacementOptions(),
+                            selection: Binding(
+                                get: { model.settings.pet.placement },
+                                set: { model.setPetPlacement($0) }
+                            ),
+                            compact: true
+                        )
                     }
                     if model.settings.pet.placement == .custom,
                        let x = model.settings.pet.customOriginX,
@@ -1620,6 +2041,93 @@ struct SettingsView: View {
         .onAppear {
             model.refreshPetPacks()
         }
+    }
+}
+
+private struct PetPackSelectionGrid: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: 188), spacing: 8)]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("资源包")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(model.availablePetPacks) { record in
+                    PetPackSelectionCard(record: record)
+                }
+            }
+        }
+    }
+}
+
+private struct PetPackSelectionCard: View {
+    @EnvironmentObject private var model: FocusPetModel
+    var record: PetPackRecord
+
+    private var isSelected: Bool {
+        model.settings.pet.selectedPackID == record.id
+    }
+
+    var body: some View {
+        Button {
+            model.settings.pet.selectedPackID = record.id
+            model.saveSettings()
+        } label: {
+            HStack(spacing: 10) {
+                PetPackThumbnail(record: record)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(record.pack.name)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text(record.pack.style)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? .green : .secondary)
+            }
+            .padding(8)
+            .frame(minHeight: 54)
+            .background(cardBackground, in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.05), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var cardBackground: Color {
+        isSelected ? Color.accentColor.opacity(0.1) : Color.primary.opacity(0.025)
+    }
+}
+
+private struct PetPackThumbnail: View {
+    var record: PetPackRecord
+
+    var body: some View {
+        ZStack {
+            if let url = record.previewURL, let image = NSImage(contentsOf: url) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .padding(4)
+            } else {
+                Image(systemName: "pawprint.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 38, height: 38)
+        .background(.quaternary.opacity(0.24), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
