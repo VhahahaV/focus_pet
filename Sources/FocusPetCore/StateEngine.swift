@@ -1,8 +1,10 @@
 import Foundation
 
 public enum StateReason: String, Codable, Hashable, Sendable, CaseIterable {
-    case idleAway
-    case longAway
+    case systemSleep
+    case screenLocked
+    case longInputIdleAway
+    case inputIdleDistracted
     case activeBreak
     case activeFocusSession
     case workCategory
@@ -16,22 +18,22 @@ public enum StateReason: String, Codable, Hashable, Sendable, CaseIterable {
 
 public struct StateEngineThresholds: Codable, Hashable, Sendable {
     public var uiStabilitySeconds: TimeInterval
+    public var idleDistractedSeconds: TimeInterval
+    public var idleAwaySeconds: TimeInterval
     public var distractedSeconds: TimeInterval
-    public var awaySeconds: TimeInterval
-    public var longAwaySeconds: TimeInterval
     public var frequentSwitchesLast5Min: Int
 
     public init(
         uiStabilitySeconds: TimeInterval = 10,
-        distractedSeconds: TimeInterval = 5 * 60,
-        awaySeconds: TimeInterval = 10 * 60,
-        longAwaySeconds: TimeInterval = 30 * 60,
-        frequentSwitchesLast5Min: Int = 12
+        idleDistractedSeconds: TimeInterval = 60,
+        idleAwaySeconds: TimeInterval = 10 * 60,
+        distractedSeconds: TimeInterval = 60,
+        frequentSwitchesLast5Min: Int = 8
     ) {
         self.uiStabilitySeconds = uiStabilitySeconds
+        self.idleDistractedSeconds = idleDistractedSeconds
+        self.idleAwaySeconds = max(idleDistractedSeconds, idleAwaySeconds)
         self.distractedSeconds = distractedSeconds
-        self.awaySeconds = awaySeconds
-        self.longAwaySeconds = longAwaySeconds
         self.frequentSwitchesLast5Min = frequentSwitchesLast5Min
     }
 }
@@ -81,13 +83,25 @@ public struct StateEngine: Sendable {
     }
 
     public func evaluate(_ snapshot: ActivitySnapshot, previousStableState: FocusState?) -> StateDecision {
-        if snapshot.idleSeconds >= thresholds.awaySeconds {
+        let activeCarryState: FocusState = previousStableState == .distracted ? .distracted : .focus
+
+        if snapshot.isSystemSleeping {
             return decision(
                 snapshot,
                 state: .away,
-                confidence: snapshot.idleSeconds >= thresholds.longAwaySeconds ? 0.98 : 0.92,
-                reason: snapshot.idleSeconds >= thresholds.longAwaySeconds ? [.idleAway, .longAway] : [.idleAway],
-                stableDuration: snapshot.idleSeconds
+                confidence: 0.98,
+                reason: [.systemSleep],
+                stableDuration: max(snapshot.idleSeconds, snapshot.activeCategoryDuration)
+            )
+        }
+
+        if snapshot.isScreenLocked {
+            return decision(
+                snapshot,
+                state: .away,
+                confidence: 0.96,
+                reason: [.screenLocked],
+                stableDuration: max(snapshot.idleSeconds, snapshot.activeCategoryDuration)
             )
         }
 
@@ -101,23 +115,23 @@ public struct StateEngine: Sendable {
             )
         }
 
-        if snapshot.isFocusSessionActive {
-            if snapshot.category == .entertainment && snapshot.activeCategoryDuration >= thresholds.distractedSeconds {
-                return decision(
-                    snapshot,
-                    state: .distracted,
-                    confidence: 0.78,
-                    reason: [.entertainmentStable],
-                    stableDuration: snapshot.activeCategoryDuration
-                )
-            }
-
+        if snapshot.idleSeconds >= thresholds.idleAwaySeconds {
             return decision(
                 snapshot,
-                state: .focus,
-                confidence: 0.9,
-                reason: [.activeFocusSession],
-                stableDuration: snapshot.activeCategoryDuration
+                state: .away,
+                confidence: 0.88,
+                reason: [.longInputIdleAway],
+                stableDuration: snapshot.idleSeconds
+            )
+        }
+
+        if snapshot.idleSeconds >= thresholds.idleDistractedSeconds {
+            return decision(
+                snapshot,
+                state: .distracted,
+                confidence: 0.82,
+                reason: [.inputIdleDistracted],
+                stableDuration: snapshot.idleSeconds
             )
         }
 
@@ -143,7 +157,7 @@ public struct StateEngine: Sendable {
 
             return decision(
                 snapshot,
-                state: previousStableState ?? .focus,
+                state: activeCarryState,
                 confidence: 0.58,
                 reason: [.entertainmentGrace, .previousStateHeld],
                 stableDuration: snapshot.activeCategoryDuration
@@ -151,7 +165,7 @@ public struct StateEngine: Sendable {
         case .ignore:
             return decision(
                 snapshot,
-                state: previousStableState ?? .focus,
+                state: activeCarryState,
                 confidence: 0.45,
                 reason: [.ignoredActivity, .previousStateHeld],
                 stableDuration: snapshot.activeCategoryDuration
@@ -169,7 +183,7 @@ public struct StateEngine: Sendable {
 
             return decision(
                 snapshot,
-                state: previousStableState ?? .focus,
+                state: activeCarryState,
                 confidence: 0.55,
                 reason: previousStableState == nil ? [.neutralDefault] : [.previousStateHeld],
                 stableDuration: snapshot.activeCategoryDuration

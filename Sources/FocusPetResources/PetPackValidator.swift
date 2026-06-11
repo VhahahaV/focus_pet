@@ -81,7 +81,8 @@ public struct PetPackValidator: Sendable {
         if pack.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             errors.append(.missingName)
         }
-        for action in requiredActions where pack.animations[action] == nil {
+        let resolver = PetActionResolver()
+        for action in requiredActions where resolver.semanticAnimationKey(for: action, in: pack) == nil {
             errors.append(.missingRequiredAction(action))
         }
         for (action, animation) in pack.animations where (animation.frameCount ?? 1) < 0 {

@@ -34,6 +34,7 @@ final class FocusPetModel: ObservableObject {
     private let summaryBuilder = DailySummaryBuilder()
     private let foregroundMonitor = ForegroundAppMonitor()
     private let switchTracker = AppSwitchTracker()
+    private let mouseScreenTracker = MouseScreenTracker()
     private let petLibrary = PetPackLibrary()
     private let petPanel = PetPanelController()
     private let notificationSender = SystemNotificationSender()
@@ -51,12 +52,19 @@ final class FocusPetModel: ObservableObject {
     private var petAnimationIdentity: String?
     private var petAnimationStartedAt = Date()
     private var lastTickAt: Date?
+    private var sleepStartedAt: Date?
+    private var screenLockedStartedAt: Date?
+    private var screenLockedRecordedUntil: Date?
+    private var screenLockedStateBeforeLock: FocusState?
+    private var sleepObserverTokens: [NSObjectProtocol] = []
+    private var sessionObserverTokens: [NSObjectProtocol] = []
+    private var mouseTimer: Timer?
+    private var petScreenHint: ScreenPlacementHint?
     private var openDashboardRequest: (@MainActor (DashboardTab) -> Void)?
 
     init() {
         let now = Date()
-        let loadedSnapshot = store.loadSnapshot()
-        let snapshot = loadedSnapshot.repairedOvernightFocusArtifacts(now: now)
+        let snapshot = store.loadSnapshot()
         settings = snapshot.settings
         stateSegments = snapshot.stateSegments
         appUsage = snapshot.appUsage
@@ -96,10 +104,6 @@ final class FocusPetModel: ObservableObject {
         )
         refreshPetPacks(saveIfChanged: false)
         configurePetPanelInteractions()
-        if snapshot != loadedSnapshot {
-            statusMessage = "已修复夜间误判统计。"
-            save()
-        }
     }
 
     var activeFocusSession: FocusSession? {
@@ -136,19 +140,33 @@ final class FocusPetModel: ObservableObject {
     }
 
     var petHoverMessage: String {
-        let category = currentSnapshot.category == .neutral ? "普通" : currentSnapshot.category.title
-        return "\(currentDecision.state.title) · \(category)"
+        if let rest = activeBreakSession {
+            return "休息中 · 还剩 \(FocusPetFormatters.duration(rest.remainingSeconds()))"
+        }
+        return "需要休息一下吗？"
     }
 
     var petHoverDetails: [PetHoverContextItem] {
         [
-            PetHoverContextItem(symbol: "macwindow", title: "前台", value: currentSnapshot.appName),
-            PetHoverContextItem(symbol: "tag.fill", title: "分类", value: currentSnapshot.category.title),
-            PetHoverContextItem(symbol: "keyboard", title: "空闲", value: FocusPetFormatters.duration(Int(currentSnapshot.idleSeconds))),
-            PetHoverContextItem(symbol: "arrow.triangle.2.circlepath", title: "切换", value: "\(currentSnapshot.switchCountLast5Min) 次/5分"),
-            PetHoverContextItem(symbol: "waveform.path.ecg", title: "置信", value: FocusPetFormatters.percentage(currentDecision.confidence)),
-            PetHoverContextItem(symbol: "quote.bubble.fill", title: "原因", value: currentDecision.reason.map(reasonTitle).joined(separator: "、"))
+            PetHoverContextItem(symbol: "cup.and.saucer.fill", title: "上次休息", value: lastBreakDistanceTitle),
+            PetHoverContextItem(symbol: "checkmark.circle.fill", title: "今日专注", value: FocusPetFormatters.duration(summary.focusSeconds)),
+            PetHoverContextItem(symbol: "eye.trianglebadge.exclamationmark", title: "今日走神", value: FocusPetFormatters.duration(summary.distractedSeconds)),
+            PetHoverContextItem(symbol: "keyboard", title: "无输入", value: FocusPetFormatters.duration(Int(currentSnapshot.idleSeconds)))
         ]
+    }
+
+    var petHoverBreakButtonTitle: String {
+        activeBreakSession == nil ? "休息 \(settings.breakMinutes) 分钟" : "结束休息"
+    }
+
+    private var lastBreakDistanceTitle: String {
+        if activeBreakSession != nil {
+            return "正在休息"
+        }
+        guard let end = breakSessions.compactMap(\.end).max() else {
+            return "暂无"
+        }
+        return "\(FocusPetFormatters.duration(Int(Date().timeIntervalSince(end))))前"
     }
 
     var reminderPauseTitle: String {
@@ -164,6 +182,8 @@ final class FocusPetModel: ObservableObject {
 
     func start() {
         guard timer == nil else { return }
+        configureSystemSleepObservers()
+        configureSessionActivityObservers()
         advanceStateTick()
         timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -171,6 +191,13 @@ final class FocusPetModel: ObservableObject {
             }
         }
         timer?.tolerance = 1
+        mouseTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.trackMouseScreen()
+                self?.refreshLivePetPresentationIfNeeded()
+            }
+        }
+        mouseTimer?.tolerance = 0.25
         if !settings.pet.hidden {
             petPanel.show()
         }
@@ -182,6 +209,8 @@ final class FocusPetModel: ObservableObject {
     func stop() {
         timer?.invalidate()
         timer = nil
+        mouseTimer?.invalidate()
+        mouseTimer = nil
         save()
     }
 
@@ -189,6 +218,13 @@ final class FocusPetModel: ObservableObject {
         let now = Date()
         let elapsedSinceLastTick = lastTickAt.map { now.timeIntervalSince($0) }
         lastTickAt = now
+        closeExpiredBreakIfNeeded(now: now)
+
+        let session = SessionActivityMonitor.snapshot()
+        if session.isScreenLocked {
+            applyScreenLockedSnapshot(now: now)
+            return
+        }
 
         let front = foregroundMonitor.snapshot()
         let sanitizedTitle = settings.privacy.sanitize(front.windowTitle)
@@ -209,16 +245,14 @@ final class FocusPetModel: ObservableObject {
             titleStored: sanitizedTitle.titleStored,
             titleDisplay: sanitizedTitle.titleDisplay,
             category: category,
-            idleSeconds: RuntimeIdleResolver(awaySeconds: engine.thresholds.awaySeconds).effectiveIdleSeconds(
-                reportedIdleSeconds: IdleMonitor.idleSeconds(),
-                elapsedSinceLastTick: elapsedSinceLastTick
-            ),
+            idleSeconds: IdleMonitor.idleSeconds(),
             switchCountLast5Min: switchTracker.switchCount(seconds: 5 * 60, now: now),
             switchCountLast15Min: switchTracker.switchCount(seconds: 15 * 60, now: now),
             activeCategoryDuration: switchTracker.activeCategoryDuration(now: now),
             activeAppDuration: switchTracker.activeAppDuration(now: now),
             isFocusSessionActive: activeFocusSession != nil,
-            isBreakActive: activeBreakSession != nil
+            isBreakActive: activeBreakSession != nil,
+            isScreenLocked: session.isScreenLocked
         )
 
         let stateBeforeTick = currentDecision.state
@@ -233,12 +267,7 @@ final class FocusPetModel: ObservableObject {
             return
         }
 
-        closeExpiredBreakIfNeeded(now: now)
-        let tickSeconds = RuntimeIdleResolver(awaySeconds: engine.thresholds.awaySeconds).effectiveTickSeconds(
-            defaultTickSeconds: tracker.tickSeconds,
-            elapsedSinceLastTick: elapsedSinceLastTick,
-            effectiveIdleSeconds: snapshot.idleSeconds
-        )
+        let tickSeconds = min(max(tracker.tickSeconds, elapsedSinceLastTick ?? tracker.tickSeconds), 60)
         let tickTracker = TimeTracker(tickSeconds: tickSeconds)
         stateSegments = tickTracker.record(decision: decision, snapshot: snapshot, segments: stateSegments)
         appUsage = decision.state == .away ? appUsage : tickTracker.recordAppUsage(snapshot: snapshot, appUsage: appUsage)
@@ -263,6 +292,7 @@ final class FocusPetModel: ObservableObject {
         ))
         statusMessage = "已开始专注：\(taskName)"
         save()
+        updatePet()
     }
 
     func finishCurrentFocusSession(completed: Bool = true) {
@@ -270,6 +300,8 @@ final class FocusPetModel: ObservableObject {
         finishFocusSession(active, status: completed ? .completed : .cancelled)
         if completed && settings.autoStartBreak {
             startBreak(minutes: settings.breakMinutes, source: .afterFocusSession)
+        } else {
+            updatePet()
         }
     }
 
@@ -277,13 +309,29 @@ final class FocusPetModel: ObservableObject {
         if let activeBreakSession, activeBreakSession.end == nil {
             return
         }
+        let now = Date()
+        if let activeFocusSession {
+            finishFocusSession(activeFocusSession, status: .completed)
+        }
         breakSessions.append(BreakSession(
-            start: Date(),
+            start: now,
             targetDurationSeconds: max(1, minutes) * 60,
             source: source
         ))
         statusMessage = "休息开始。"
+        applyImmediateBreakDecision(now: now)
+        refreshSummary()
         save()
+        updatePet()
+    }
+
+    func toggleBreakFromPet() {
+        if activeBreakSession != nil {
+            endCurrentBreak()
+        } else {
+            startBreak(minutes: settings.breakMinutes)
+            showTransientPetMessage("休息 \(settings.breakMinutes) 分钟，我会提醒你回来。", seconds: 5)
+        }
     }
 
     func pauseReminders(minutes: Int = 30) {
@@ -329,6 +377,7 @@ final class FocusPetModel: ObservableObject {
     func setPetHovering(_ isHovering: Bool) {
         guard isPetHovering != isHovering else { return }
         isPetHovering = isHovering
+        updatePet()
     }
 
     func showPetStatusBubble() {
@@ -530,6 +579,16 @@ final class FocusPetModel: ObservableObject {
     }
 
     private func stabilized(_ decision: StateDecision, now: Date) -> StateDecision {
+        if shouldApplyImmediately(decision) || (currentDecision.state == .breakTime && decision.state != .breakTime) {
+            if decision.state != currentDecision.state {
+                previousState = currentDecision.state
+            }
+            candidateState = decision.state
+            candidateSince = now
+            stableStateSince = now.addingTimeInterval(-decision.stableDuration)
+            return decision
+        }
+
         if decision.state != candidateState {
             candidateState = decision.state
             candidateSince = now
@@ -553,6 +612,14 @@ final class FocusPetModel: ObservableObject {
             reason: [.previousStateHeld],
             stableDuration: now.timeIntervalSince(stableStateSince)
         )
+    }
+
+    private func shouldApplyImmediately(_ decision: StateDecision) -> Bool {
+        decision.reason.contains(.inputIdleDistracted)
+            || decision.reason.contains(.systemSleep)
+            || decision.reason.contains(.screenLocked)
+            || decision.reason.contains(.longInputIdleAway)
+            || decision.reason.contains(.activeBreak)
     }
 
     private func decisionWithStableDuration(_ decision: StateDecision, since: Date, now: Date) -> StateDecision {
@@ -651,11 +718,276 @@ final class FocusPetModel: ObservableObject {
         save()
     }
 
+    private func configureSystemSleepObservers() {
+        guard sleepObserverTokens.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        sleepObserverTokens.append(center.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleSystemWillSleep()
+            }
+        })
+        sleepObserverTokens.append(center.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleSystemDidWake()
+            }
+        })
+    }
+
+    private func configureSessionActivityObservers() {
+        guard sessionObserverTokens.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        sessionObserverTokens.append(center.addObserver(
+            forName: NSWorkspace.sessionDidResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleScreenDidLock()
+            }
+        })
+        sessionObserverTokens.append(center.addObserver(
+            forName: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleScreenDidUnlock()
+            }
+        })
+        sessionObserverTokens.append(center.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleScreenDidLock()
+            }
+        })
+        sessionObserverTokens.append(center.addObserver(
+            forName: NSWorkspace.screensDidWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleScreenDidUnlock()
+            }
+        })
+    }
+
+    private func handleScreenDidLock() {
+        let now = Date()
+        if screenLockedStartedAt == nil {
+            screenLockedStartedAt = now
+            screenLockedRecordedUntil = now
+            screenLockedStateBeforeLock = currentDecision.state
+        }
+        applyScreenLockedSnapshot(now: now)
+        statusMessage = "屏幕已锁定，暂离计时开始。"
+        save()
+    }
+
+    private func handleScreenDidUnlock() {
+        let now = Date()
+        if let start = screenLockedStartedAt {
+            recordAwayInterval(
+                start: screenLockedRecordedUntil ?? start,
+                end: now,
+                appName: "Locked Screen",
+                source: [.screenLock]
+            )
+        }
+        screenLockedStartedAt = nil
+        screenLockedRecordedUntil = nil
+        screenLockedStateBeforeLock = nil
+        lastTickAt = now
+        statusMessage = "屏幕已解锁，回到活跃判断。"
+        showTransientPetMessage("欢迎回来。", seconds: 4)
+        advanceStateTick()
+    }
+
+    private func applyScreenLockedSnapshot(now: Date) {
+        if screenLockedStartedAt == nil {
+            screenLockedStartedAt = now
+            screenLockedRecordedUntil = now
+            screenLockedStateBeforeLock = currentDecision.state
+        }
+        let snapshot = ActivitySnapshot(
+            timestamp: now,
+            appName: "Locked Screen",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
+            idleSeconds: IdleMonitor.idleSeconds(),
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: screenLockedStartedAt.map { now.timeIntervalSince($0) } ?? 0,
+            activeAppDuration: 0,
+            isFocusSessionActive: activeFocusSession != nil,
+            isBreakActive: activeBreakSession != nil,
+            isScreenLocked: true,
+            source: [.screenLock, .idleTime]
+        )
+        let previous = currentDecision.state
+        currentSnapshot = snapshot
+        currentDecision = engine.evaluate(snapshot, previousStableState: previous)
+        if previous != currentDecision.state {
+            previousState = previous
+            candidateState = currentDecision.state
+            candidateSince = now
+            stableStateSince = screenLockedStartedAt ?? now
+        }
+
+        guard !settings.privacy.pauseActivityRecording else {
+            statusMessage = "所有本地记录已暂停。"
+            updatePet()
+            return
+        }
+
+        if let recordedUntil = screenLockedRecordedUntil {
+            let tickSeconds = max(0, now.timeIntervalSince(recordedUntil))
+            if tickSeconds >= 1 {
+                stateSegments = TimeTracker(tickSeconds: tickSeconds).record(
+                    decision: currentDecision,
+                    snapshot: snapshot,
+                    segments: stateSegments
+                )
+                applySessionAccounting(
+                    decision: currentDecision,
+                    previousTickState: screenLockedStateBeforeLock ?? previous,
+                    tickSeconds: tickSeconds
+                )
+                screenLockedStateBeforeLock = nil
+                screenLockedRecordedUntil = now
+            }
+        } else {
+            screenLockedRecordedUntil = now
+        }
+        refreshSummary()
+        save()
+        updatePet()
+    }
+
+    private func handleSystemWillSleep() {
+        let now = Date()
+        if let lockedStart = screenLockedStartedAt {
+            recordAwayInterval(
+                start: screenLockedRecordedUntil ?? lockedStart,
+                end: now,
+                appName: "Locked Screen",
+                source: [.screenLock]
+            )
+            screenLockedStartedAt = nil
+            screenLockedRecordedUntil = nil
+            screenLockedStateBeforeLock = nil
+        }
+        sleepStartedAt = now
+        let snapshot = ActivitySnapshot(
+            timestamp: now,
+            appName: "Sleep",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
+            idleSeconds: 0,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 0,
+            isFocusSessionActive: activeFocusSession != nil,
+            isBreakActive: activeBreakSession != nil,
+            isSystemSleeping: true,
+            source: [.systemSleep]
+        )
+        currentSnapshot = snapshot
+        currentDecision = engine.evaluate(snapshot, previousStableState: currentDecision.state)
+        statusMessage = "电脑即将睡眠，暂离计时开始。"
+        updatePet()
+        save()
+    }
+
+    private func handleSystemDidWake() {
+        let now = Date()
+        let start = sleepStartedAt ?? lastTickAt ?? now
+        sleepStartedAt = nil
+        recordSystemSleepInterval(start: start, end: now)
+        lastTickAt = now
+        statusMessage = "电脑已唤醒，回到活跃判断。"
+        showTransientPetMessage("欢迎回来。", seconds: 4)
+        advanceStateTick()
+    }
+
+    private func recordSystemSleepInterval(start: Date, end: Date) {
+        recordAwayInterval(start: start, end: end, appName: "Sleep", source: [.systemSleep])
+    }
+
+    private func recordAwayInterval(start: Date, end: Date, appName: String, source: Set<ActivitySignalSource>) {
+        guard end.timeIntervalSince(start) >= 5 else { return }
+        let awaySnapshot = ActivitySnapshot(
+            timestamp: end,
+            appName: appName,
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
+            idleSeconds: end.timeIntervalSince(start),
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: end.timeIntervalSince(start),
+            isFocusSessionActive: activeFocusSession != nil,
+            isBreakActive: activeBreakSession != nil,
+            isSystemSleeping: source.contains(.systemSleep),
+            isScreenLocked: source.contains(.screenLock),
+            source: source
+        )
+        let awayDecision = engine.evaluate(awaySnapshot, previousStableState: currentDecision.state)
+        stateSegments = TimeTracker(tickSeconds: end.timeIntervalSince(start)).record(
+            decision: awayDecision,
+            snapshot: awaySnapshot,
+            segments: stateSegments
+        )
+        if let activeIndex = focusSessions.lastIndex(where: { $0.status == .active }) {
+            focusSessions[activeIndex].awaySeconds += max(0, Int(end.timeIntervalSince(start).rounded()))
+        }
+        currentSnapshot = awaySnapshot
+        currentDecision = awayDecision
+        refreshSummary()
+        save()
+    }
+
+    private func trackMouseScreen() {
+        guard !settings.pet.hidden else { return }
+        guard let hint = mouseScreenTracker.update() else { return }
+        let hadScreenHint = petScreenHint != nil
+        let previousHint = petScreenHint
+        petScreenHint = hint
+        guard hadScreenHint else {
+            updatePet()
+            return
+        }
+        if settings.pet.placement == .custom {
+            remapCustomPetOrigin(from: previousHint, to: hint)
+            save()
+        }
+        transientPetAction = .screenTransfer
+        transientPetActionExpiresAt = Date().addingTimeInterval(1.6)
+        petAnimationIdentity = nil
+        showTransientPetMessage("我切到这块屏幕。", seconds: 2)
+        clearTransientPetAction(after: 1.7)
+    }
+
     private func closeExpiredBreakIfNeeded(now: Date) {
         guard let index = breakSessions.lastIndex(where: { $0.end == nil && !$0.completed }) else { return }
         if breakSessions[index].remainingSeconds(now: now) == 0 {
             breakSessions[index].end = now
             breakSessions[index].completed = true
+            transientPetAction = .mouseSummon
+            transientPetActionExpiresAt = now.addingTimeInterval(6)
+            petAnimationIdentity = nil
             recordNudge(NudgeEvent(
                 time: now,
                 reason: .breakEnding,
@@ -666,16 +998,112 @@ final class FocusPetModel: ObservableObject {
                 cooldownSeconds: 0,
                 message: "休息时间结束啦。"
             ))
+            petPanel.summonNearMouse(duration: 12)
+            showTransientPetMessage("休息结束，回来工作啦。", seconds: 6)
             statusMessage = "休息结束。"
+            refreshSummary()
+            save()
+            updatePet()
         }
     }
 
     private func finishActiveBreak(cancelled: Bool) {
+        let now = Date()
         guard let index = breakSessions.lastIndex(where: { $0.end == nil && !$0.completed }) else { return }
-        breakSessions[index].end = Date()
+        breakSessions[index].end = now
         breakSessions[index].completed = !cancelled
         statusMessage = cancelled ? "休息已结束。" : "休息完成。"
         save()
+        advanceStateTick()
+    }
+
+    private func refreshLivePetPresentationIfNeeded() {
+        if activeBreakSession != nil || isPetHovering {
+            refreshSummary()
+            updatePet()
+        }
+    }
+
+    private func applyImmediateBreakDecision(now: Date) {
+        let previous = currentDecision.state
+        let snapshot = ActivitySnapshot(
+            timestamp: now,
+            appName: "Break",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
+            idleSeconds: IdleMonitor.idleSeconds(),
+            switchCountLast5Min: currentSnapshot.switchCountLast5Min,
+            switchCountLast15Min: currentSnapshot.switchCountLast15Min,
+            activeCategoryDuration: 0,
+            activeAppDuration: 0,
+            isFocusSessionActive: activeFocusSession != nil,
+            isBreakActive: true,
+            source: [.breakSession]
+        )
+        currentSnapshot = snapshot
+        currentDecision = engine.evaluate(snapshot, previousStableState: previous)
+        previousState = previous == .breakTime ? previousState : previous
+        candidateState = .breakTime
+        candidateSince = now
+        stableStateSince = now
+        petAnimationIdentity = nil
+    }
+
+    private func remapCustomPetOrigin(from previousHint: ScreenPlacementHint?, to nextHint: ScreenPlacementHint) {
+        let panelSize = currentPetPanelSize()
+        let previousVisible = previousHint?.visibleFrame
+            ?? visibleFrameContainingCustomOrigin()
+            ?? nextHint.visibleFrame
+        let nextVisible = nextHint.visibleFrame
+        let currentOrigin = CGPoint(
+            x: settings.pet.customOriginX ?? previousVisible.maxX - panelSize.width - 24,
+            y: settings.pet.customOriginY ?? previousVisible.minY + 24
+        )
+        let xRatio = normalizedPosition(
+            value: currentOrigin.x,
+            lower: previousVisible.minX,
+            upper: previousVisible.maxX - panelSize.width
+        )
+        let yRatio = normalizedPosition(
+            value: currentOrigin.y,
+            lower: previousVisible.minY,
+            upper: previousVisible.maxY - panelSize.height
+        )
+        settings.pet.customOriginX = mappedPosition(
+            ratio: xRatio,
+            lower: nextVisible.minX,
+            upper: nextVisible.maxX - panelSize.width
+        )
+        settings.pet.customOriginY = mappedPosition(
+            ratio: yRatio,
+            lower: nextVisible.minY,
+            upper: nextVisible.maxY - panelSize.height
+        )
+    }
+
+    private func currentPetPanelSize() -> CGSize {
+        let size = CGFloat(settings.pet.size)
+        return CGSize(width: max(size, min(280, size + 110)), height: size + 128)
+    }
+
+    private func visibleFrameContainingCustomOrigin() -> CGRect? {
+        guard let x = settings.pet.customOriginX,
+              let y = settings.pet.customOriginY else {
+            return nil
+        }
+        let origin = CGPoint(x: x, y: y)
+        return NSScreen.screens.first { $0.frame.contains(origin) }?.visibleFrame
+    }
+
+    private func normalizedPosition(value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+        guard upper > lower else { return 0.5 }
+        return min(1, max(0, (value - lower) / (upper - lower)))
+    }
+
+    private func mappedPosition(ratio: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+        guard upper > lower else { return lower }
+        return lower + ratio * (upper - lower)
     }
 
     private func refreshSummary() {
@@ -747,6 +1175,8 @@ final class FocusPetModel: ObservableObject {
             hoverMessage: petHoverMessage,
             hoverStatusEnabled: settings.pet.hoverStatusEnabled,
             hoverDetails: petHoverDetails,
+            hoverBreakButtonTitle: petHoverBreakButtonTitle,
+            breakEndsAt: activeBreakSession.map { $0.start.addingTimeInterval(Double($0.targetDurationSeconds)) },
             size: settings.pet.size,
             opacity: settings.pet.opacity,
             animationEnabled: settings.pet.animationEnabled,
@@ -761,7 +1191,10 @@ final class FocusPetModel: ObservableObject {
             hoverFrameURLs: selectedRecord.frameURLs(for: resolvedHoverAction),
             hoverFramesPerSecond: hoverAnimation?.fps ?? 8,
             hoverLoops: hoverAnimation?.loop ?? false,
-            animationStartedAt: petAnimationStartedAt
+            animationStartedAt: petAnimationStartedAt,
+            screenHint: petScreenHint.map {
+                PetScreenHint(screenFrame: $0.screenFrame, visibleFrame: $0.visibleFrame)
+            }
         ))
         petPanel.show()
     }
@@ -798,14 +1231,7 @@ final class FocusPetModel: ObservableObject {
             showStatusBubble: { [weak self] in self?.showPetStatusBubble() },
             openDashboard: { [weak self] in self?.openDashboard(tab: .today) },
             openSettings: { [weak self] in self?.openDashboard(tab: .settings) },
-            startFocus: { [weak self] in
-                guard let self else { return }
-                self.startFocusSession(taskName: "专注任务", minutes: self.settings.focusTargetMinutes)
-            },
-            startBreak: { [weak self] in
-                guard let self else { return }
-                self.startBreak(minutes: self.settings.breakMinutes)
-            },
+            startBreak: { [weak self] in self?.toggleBreakFromPet() },
             pauseReminders: { [weak self] in self?.pauseReminders() },
             setHovering: { [weak self] in self?.setPetHovering($0) },
             toggleHidden: { [weak self] in self?.togglePetHidden() },
@@ -851,8 +1277,10 @@ final class FocusPetModel: ObservableObject {
 
     private func reasonTitle(_ reason: StateReason) -> String {
         switch reason {
-        case .idleAway: "空闲暂离"
-        case .longAway: "长时间暂离"
+        case .systemSleep: "系统睡眠"
+        case .screenLocked: "屏幕锁定"
+        case .longInputIdleAway: "长时间暂离"
+        case .inputIdleDistracted: "无输入走神"
         case .activeBreak: "休息中"
         case .activeFocusSession: "专注会话"
         case .workCategory: "工作分类"

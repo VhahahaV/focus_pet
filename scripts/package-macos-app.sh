@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/.build/FocusPet.app"
 EXECUTABLE="$ROOT_DIR/.build/debug/FocusPet"
-RESOURCE_BUNDLE="$ROOT_DIR/.build/debug/FocusPet_FocusPetMac.bundle"
 LOCAL_LUO_PACK="$ROOT_DIR/external_generated_packs/LuoXiaoHeiLocal"
 APP_ICON="$ROOT_DIR/Sources/FocusPetMac/Resources/AppIcon.icns"
 INCLUDE_LOCAL_TEST_PETS=0
@@ -21,10 +20,12 @@ swift build
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$EXECUTABLE" "$APP_DIR/Contents/MacOS/FocusPet"
-if [[ -d "$RESOURCE_BUNDLE" ]]; then
+for RESOURCE_BUNDLE in "$ROOT_DIR"/.build/debug/FocusPet_*.bundle; do
+    [[ -d "$RESOURCE_BUNDLE" ]] || continue
+    BUNDLE_NAME="$(basename "$RESOURCE_BUNDLE")"
     cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/"
-    ln -s "Contents/Resources/FocusPet_FocusPetMac.bundle" "$APP_DIR/FocusPet_FocusPetMac.bundle"
-fi
+    ln -s "Contents/Resources/$BUNDLE_NAME" "$APP_DIR/$BUNDLE_NAME"
+done
 
 if [[ -f "$APP_ICON" ]]; then
     cp "$APP_ICON" "$APP_DIR/Contents/Resources/AppIcon.icns"

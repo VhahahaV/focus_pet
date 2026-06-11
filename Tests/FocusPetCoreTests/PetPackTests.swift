@@ -26,11 +26,11 @@ struct PetPackMVPProbe {
         return PetActionResolver().animationKey(for: .nudgeStrong, in: pack) == .nudgeGentle
     }
 
-    func validatorRequiresMinimumActions() -> Bool {
+    func validatorAcceptsFallbackCoveredActions() -> Bool {
         let pack = PetPack(
             schemaVersion: 1,
-            id: "bad",
-            name: "Bad",
+            id: "minimal",
+            name: "Minimal",
             author: "Focus Pet",
             style: "minimal_2d",
             license: "original",
@@ -41,10 +41,46 @@ struct PetPackMVPProbe {
         )
 
         let result = PetPackValidator().validate(pack)
-        return result.isValid == false && result.errors.contains(.missingRequiredAction(.sleep))
+        return result.isValid
     }
 
-    func legacyLuoXiaoHeiManifestDecodesDuplicateBreakAliases() -> Bool {
+    func validatorRejectsUnrenderablePack() -> Bool {
+        let pack = PetPack(
+            schemaVersion: 1,
+            id: "bad",
+            name: "Bad",
+            author: "Focus Pet",
+            style: "minimal_2d",
+            license: "original",
+            distribution: "redistributable",
+            defaultSize: PetPackSize(width: 160, height: 160),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
+            animations: [:]
+        )
+
+        let result = PetPackValidator().validate(pack)
+        return result.isValid == false && result.errors.contains(.missingRequiredAction(.idle))
+    }
+
+    func validatorRejectsOnlyUnrelatedFallbackAction() -> Bool {
+        let pack = PetPack(
+            schemaVersion: 1,
+            id: "bad_semantics",
+            name: "Bad Semantics",
+            author: "Focus Pet",
+            style: "minimal_2d",
+            license: "original",
+            distribution: "redistributable",
+            defaultSize: PetPackSize(width: 160, height: 160),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
+            animations: [.run: PetAnimationSpec(folder: "run", fps: 8, loop: true, frameCount: 1)]
+        )
+
+        let result = PetPackValidator().validate(pack)
+        return !result.isValid && result.errors.contains(.missingRequiredAction(.idle))
+    }
+
+    func legacyLuoXiaoHeiManifestDecodesDistinctActionNames() -> Bool {
         let manifest = """
         {
           "schemaVersion": 1,
@@ -74,33 +110,10 @@ struct PetPackMVPProbe {
         }
 
         return pack.id == "luo_xiaohei_local"
-            && pack.animations[.nudgeGentle]?.folder == "nudge_distracted"
+            && pack.animations[.distractedLook]?.folder == "nudge_distracted"
             && pack.animations[.breakRelax] != nil
+            && pack.animations[.run]?.folder == "playful_idle"
             && pack.license.contains("Local testing only.")
-    }
-
-    func packCoverageReportsFallbacks() -> Bool {
-        let pack = PetPack(
-            schemaVersion: 1,
-            id: "coverage",
-            name: "Coverage",
-            author: "Focus Pet",
-            style: "minimal_2d",
-            license: "original",
-            distribution: "redistributable",
-            defaultSize: PetPackSize(width: 160, height: 160),
-            anchor: PetPackAnchor(x: 0.5, y: 1.0),
-            animations: [
-                .idle: PetAnimationSpec(folder: "idle", fps: 6, loop: true, frameCount: 1),
-                .sleep: PetAnimationSpec(folder: "sleep", fps: 4, loop: true, frameCount: 1),
-                .nudgeGentle: PetAnimationSpec(folder: "nudgeGentle", fps: 8, loop: false, frameCount: 1),
-                .welcomeBack: PetAnimationSpec(folder: "welcomeBack", fps: 8, loop: false, frameCount: 1),
-                .breakRelax: PetAnimationSpec(folder: "breakRelax", fps: 6, loop: true, frameCount: 1)
-            ]
-        )
-        let record = PetPackRecord(pack: pack, rootURL: nil, isBundled: true)
-        let strong = record.coverage(for: [.nudgeStrong]).first
-        return strong?.status == .fallback && strong?.resolvedAction == .nudgeGentle
     }
 
     func libraryImportsValidPack() -> Bool {
@@ -154,11 +167,12 @@ struct PetPackMVPProbe {
 private let runPetPackMVPProbe: Void = {
     let probe = PetPackMVPProbe()
     precondition(probe.missingStrongNudgeFallsBackToGentle(), "nudgeStrong should fall back to nudgeGentle")
-    precondition(probe.validatorRequiresMinimumActions(), "validator should require minimum pet actions")
+    precondition(probe.validatorAcceptsFallbackCoveredActions(), "validator should accept packs covered by fallback actions")
+    precondition(probe.validatorRejectsUnrenderablePack(), "validator should reject packs with no renderable actions")
+    precondition(probe.validatorRejectsOnlyUnrelatedFallbackAction(), "validator should reject packs covered only by unrelated runtime fallback")
     precondition(
-        probe.legacyLuoXiaoHeiManifestDecodesDuplicateBreakAliases(),
-        "legacy Luo Xiaohei manifest should decode without duplicate-key crashes"
+        probe.legacyLuoXiaoHeiManifestDecodesDistinctActionNames(),
+        "legacy Luo Xiaohei manifest should decode into distinct action names"
     )
-    precondition(probe.packCoverageReportsFallbacks(), "pack coverage should report fallback actions")
     precondition(probe.libraryImportsValidPack(), "pet pack library should import valid local packs")
 }()

@@ -13,10 +13,6 @@ struct MainDashboardView: View {
                 .tabItem { Label(DashboardTab.today.title, systemImage: DashboardTab.today.symbolName) }
                 .tag(DashboardTab.today)
 
-            DistributionView()
-                .tabItem { Label(DashboardTab.distribution.title, systemImage: DashboardTab.distribution.symbolName) }
-                .tag(DashboardTab.distribution)
-
             SessionsView()
                 .tabItem { Label(DashboardTab.sessions.title, systemImage: DashboardTab.sessions.symbolName) }
                 .tag(DashboardTab.sessions)
@@ -129,7 +125,7 @@ private struct MenuStatusStrip: View {
             HStack(spacing: 8) {
                 MenuMetricChip(title: "走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), tint: .orange)
                 MenuMetricChip(title: "休息", value: FocusPetFormatters.duration(model.summary.breakSeconds), tint: .blue)
-                MenuMetricChip(title: "离开", value: FocusPetFormatters.duration(model.summary.awaySeconds), tint: .indigo)
+                MenuMetricChip(title: "暂离", value: FocusPetFormatters.duration(model.summary.awaySeconds), tint: .indigo)
             }
 
             MenuStateStripBar(
@@ -211,7 +207,7 @@ private struct MenuActionGrid: View {
             }
 
             if model.activeFocusSession == nil {
-                MenuActionButton(title: "开始专注", symbol: "timer", tint: .green) {
+                MenuActionButton(title: "专注 \(model.settings.focusTargetMinutes) 分钟", symbol: "timer", tint: .green) {
                     model.startFocusSession(taskName: "专注任务", minutes: model.settings.focusTargetMinutes)
                 }
             } else {
@@ -221,12 +217,12 @@ private struct MenuActionGrid: View {
             }
 
             if model.activeBreakSession == nil {
-                MenuActionButton(title: "开始休息", symbol: "cup.and.saucer.fill", tint: .blue) {
-                    model.startBreak(minutes: model.settings.breakMinutes)
+                MenuActionButton(title: "休息 \(model.settings.breakMinutes) 分钟", symbol: "cup.and.saucer.fill", tint: .blue) {
+                    model.toggleBreakFromPet()
                 }
             } else {
                 MenuActionButton(title: "结束休息", symbol: "checkmark.circle.fill", tint: .blue) {
-                    model.endCurrentBreak()
+                    model.toggleBreakFromPet()
                 }
             }
 
@@ -286,9 +282,8 @@ struct TodayView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 TodayHeroPanel()
-                DailyVisualOverviewPanel()
-                FocusSessionCompactPanel()
                 TimelinePanel()
+                TodayAppUsageBarChartPanel()
                 NudgePanel()
             }
         }
@@ -298,93 +293,73 @@ struct TodayView: View {
 struct TodayHeroPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
-    private var focusRatio: Double {
-        guard model.summary.totalSeconds > 0 else { return 0 }
-        return Double(model.summary.focusSeconds) / Double(model.summary.totalSeconds)
-    }
-
-    private var reasonText: String {
-        let reasons = model.currentDecision.reason.map(\.title)
-        return reasons.isEmpty ? "默认状态判断" : reasons.joined(separator: " · ")
+    private var stateItems: [StateDurationItem] {
+        [
+            StateDurationItem(state: .focus, seconds: model.summary.focusSeconds),
+            StateDurationItem(state: .distracted, seconds: model.summary.distractedSeconds),
+            StateDurationItem(state: .breakTime, seconds: model.summary.breakSeconds),
+            StateDurationItem(state: .away, seconds: model.summary.awaySeconds)
+        ]
     }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 18) {
+            HStack(alignment: .center, spacing: 16) {
                 heroIdentity
-                Divider().frame(height: 74)
-                heroMetrics
-                Spacer(minLength: 8)
-                heroActions
+                stateDurationGrid
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                BreakDurationControl()
+                    .frame(width: 260)
             }
 
             VStack(alignment: .leading, spacing: 14) {
                 heroIdentity
-                heroMetrics
-                heroActions
+                stateDurationGrid
+                BreakDurationControl()
             }
         }
         .dashboardCard()
     }
 
     private var heroIdentity: some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: 12) {
             ZStack {
                 Circle()
                     .fill(model.currentDecision.state.timelineColor.opacity(0.14))
-                Circle()
-                    .trim(from: 0, to: CGFloat(max(0, min(1, focusRatio))))
-                    .stroke(model.currentDecision.state.timelineColor.gradient, style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .padding(3)
                 Image(systemName: model.currentDecision.state.symbolName)
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(model.currentDecision.state.timelineColor)
             }
-            .frame(width: 62, height: 62)
+            .frame(width: 58, height: 58)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(model.currentDecision.state.title)
                         .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    Text(FocusPetFormatters.percentage(model.currentDecision.confidence))
-                        .font(.caption.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(.quaternary.opacity(0.35), in: Capsule())
                 }
                 Text(model.currentSnapshot.appName)
                     .font(.headline)
                     .lineLimit(1)
-                Text(reasonText)
-                    .font(.caption)
+                Text("今日状态")
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
             }
-            .frame(minWidth: 260, alignment: .leading)
+            .frame(minWidth: 210, alignment: .leading)
         }
     }
 
-    private var heroMetrics: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 118), spacing: 8), count: 2), alignment: .leading, spacing: 8) {
-            TodayHeroMetric(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
-            TodayHeroMetric(title: "专注占比", value: FocusPetFormatters.percentage(focusRatio), symbol: "chart.pie.fill", tint: .blue)
-            TodayHeroMetric(title: "空闲", value: FocusPetFormatters.duration(Int(model.currentSnapshot.idleSeconds)), symbol: "keyboard", tint: .orange)
-            TodayHeroMetric(title: "切换", value: "\(model.currentSnapshot.switchCountLast5Min) 次", symbol: "arrow.triangle.2.circlepath", tint: .purple)
-        }
-        .frame(maxWidth: 330)
-    }
-
-    private var heroActions: some View {
-        HStack(spacing: 9) {
-            HeaderActionButton(title: "专注", symbol: "timer", tint: .green) {
-                model.startFocusSession(taskName: "专注任务", minutes: model.settings.focusTargetMinutes)
-            }
-            HeaderActionButton(title: "休息", symbol: "cup.and.saucer.fill", tint: .blue) {
-                model.startBreak(minutes: model.settings.breakMinutes)
+    private var stateDurationGrid: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 136), spacing: 8)], alignment: .leading, spacing: 8) {
+            ForEach(stateItems) { item in
+                TodayHeroMetric(
+                    title: item.state.title,
+                    value: FocusPetFormatters.duration(item.seconds),
+                    symbol: item.state.symbolName,
+                    tint: item.state.timelineColor
+                )
             }
         }
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -412,8 +387,105 @@ private struct TodayHeroMetric: View {
             Spacer(minLength: 0)
         }
         .padding(8)
-        .frame(minHeight: 42)
+        .frame(minHeight: 48)
         .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct BreakDurationControl: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: model.activeBreakSession == nil ? "cup.and.saucer.fill" : "timer")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.blue)
+                        .frame(width: 30, height: 30)
+                        .background(.blue.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.activeBreakSession == nil ? "休息计时" : "正在休息")
+                            .font(.caption.weight(.semibold))
+                        Text(statusSubtitle(at: context.date))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Text(primaryTimeText(at: context.date))
+                        .font(.title3.monospacedDigit().weight(.semibold))
+                }
+
+                if let progress = activeBreakProgress(at: context.date) {
+                    CompactMeter(ratio: progress, tint: .blue, height: 8)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Slider(value: breakMinutesBinding, in: 1...30, step: 1)
+                            .tint(.blue)
+                        HStack {
+                            Text("1")
+                            Spacer()
+                            Text("15")
+                            Spacer()
+                            Text("30 分钟")
+                        }
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                }
+
+                Button {
+                    model.toggleBreakFromPet()
+                } label: {
+                    Label(model.activeBreakSession == nil ? "开始休息" : "结束休息", systemImage: model.activeBreakSession == nil ? "play.fill" : "stop.fill")
+                        .font(.caption.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(model.activeBreakSession == nil ? .blue : .orange)
+            }
+            .padding(12)
+            .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.blue.opacity(0.16), lineWidth: 1)
+            }
+        }
+    }
+
+    private var breakMinutesBinding: Binding<Double> {
+        Binding(
+            get: { Double(model.settings.breakMinutes) },
+            set: { value in
+                let next = max(1, min(30, Int(value.rounded())))
+                guard model.settings.breakMinutes != next else { return }
+                model.settings.breakMinutes = next
+                model.saveSettings()
+            }
+        )
+    }
+
+    private func primaryTimeText(at date: Date) -> String {
+        guard let rest = model.activeBreakSession else {
+            return "\(model.settings.breakMinutes) 分钟"
+        }
+        let remaining = max(0, rest.targetDurationSeconds - max(0, Int(date.timeIntervalSince(rest.start))))
+        return FocusPetFormatters.duration(remaining)
+    }
+
+    private func statusSubtitle(at date: Date) -> String {
+        guard let rest = model.activeBreakSession else {
+            return "滑动调整 1-30 分钟"
+        }
+        let elapsed = max(0, Int(date.timeIntervalSince(rest.start)))
+        return "已休息 \(FocusPetFormatters.duration(elapsed))"
+    }
+
+    private func activeBreakProgress(at date: Date) -> Double? {
+        guard let rest = model.activeBreakSession else { return nil }
+        let elapsed = max(0, date.timeIntervalSince(rest.start))
+        return min(1, elapsed / Double(max(1, rest.targetDurationSeconds)))
     }
 }
 
@@ -598,40 +670,86 @@ private struct StateSummaryTile: View {
     }
 }
 
-struct FocusSessionCompactPanel: View {
+struct RestStatusCompactPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("当前会话", systemImage: "timer")
+        VStack(alignment: .leading, spacing: 12) {
+            Label("当前节奏", systemImage: "timer")
                 .font(.headline)
-            if let session = model.activeFocusSession {
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(session.taskName)
-                            .font(.title3.weight(.semibold))
-                        Text("剩余 \(FocusPetFormatters.duration(session.remainingSeconds()))")
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("结束专注") {
-                        model.finishCurrentFocusSession()
-                    }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    RestStatusTile(title: "当前状态", value: model.currentDecision.state.title, symbol: model.currentDecision.state.symbolName, tint: model.currentDecision.state.timelineColor)
+                    RestStatusTile(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
+                    RestStatusTile(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: .orange)
+                    restAction
                 }
-            } else if let rest = model.activeBreakSession {
-                HStack {
-                    Text("休息中 · 剩余 \(FocusPetFormatters.duration(rest.remainingSeconds()))")
-                    Spacer()
-                    Button("结束休息") {
-                        model.endCurrentBreak()
-                    }
+                VStack(spacing: 10) {
+                    RestStatusTile(title: "当前状态", value: model.currentDecision.state.title, symbol: model.currentDecision.state.symbolName, tint: model.currentDecision.state.timelineColor)
+                    RestStatusTile(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
+                    RestStatusTile(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: .orange)
+                    restAction
                 }
-            } else {
-                Text("还没有正在进行的专注或休息。")
-                    .foregroundStyle(.secondary)
             }
         }
         .dashboardCard()
+    }
+
+    private var restAction: some View {
+        Button {
+            model.toggleBreakFromPet()
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: "cup.and.saucer.fill")
+                    .font(.title3.weight(.semibold))
+                Text(model.activeBreakSession == nil ? "休息 \(model.settings.breakMinutes) 分钟" : "结束休息")
+                    .font(.headline)
+                if let rest = model.activeBreakSession {
+                    Text("剩余 \(FocusPetFormatters.duration(rest.remainingSeconds()))")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.8))
+                } else {
+                    Text("休息后自动恢复判断")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
+            .padding(12)
+            .foregroundStyle(.white)
+            .background(Color.blue.gradient, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct RestStatusTile: View {
+    var title: String
+    var value: String
+    var symbol: String
+    var tint: Color
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.headline)
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .background(tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(value)
+                    .font(.headline.monospacedDigit())
+                    .lineLimit(1)
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
+        .padding(12)
+        .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -639,17 +757,32 @@ struct TimelinePanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
-        let timeline = TodayTimelineSnapshot(segments: model.stateSegments)
+        let timeline = StatusStripSnapshot(segments: model.stateSegments, secondsBack: 21_600)
         VStack(alignment: .leading, spacing: 10) {
-            Label("今日时间线", systemImage: "list.bullet.rectangle")
-                .font(.headline)
+            HStack {
+                Label("最近 6 小时", systemImage: "list.bullet.rectangle")
+                    .font(.headline)
+                Spacer()
+                StatusPill("状态区间", symbol: "square.split.2x1.fill")
+            }
             if !timeline.hasData {
-                Text("今天暂无状态记录。")
+                Text("最近 6 小时暂无状态记录。")
                     .foregroundStyle(.secondary)
             } else {
-                StatusLineChart(points: timeline.points, hasData: timeline.hasData)
-                    .frame(height: 170)
-                    .padding(.bottom, 6)
+                StateSegmentStrip(
+                    ranges: timeline.ranges,
+                    start: timeline.start,
+                    end: timeline.end,
+                    height: 22
+                )
+                .frame(height: 38)
+                HStack {
+                    TimelineTimeChip(timeline.timeLabels.first ?? "")
+                    Spacer()
+                    TimelineTimeChip(timeline.timeLabels.dropFirst().first ?? "")
+                    Spacer()
+                    TimelineTimeChip(timeline.timeLabels.last ?? "")
+                }
                 HStack(spacing: 12) {
                     ForEach(timeline.legend) { item in
                         Label {
@@ -667,15 +800,122 @@ struct TimelinePanel: View {
     }
 }
 
-private struct TodayTimelineSnapshot {
-    var points: [StatusTimelinePoint]
+private struct StatusStripSnapshot {
+    var start: Date
+    var end: Date
+    var ranges: [StatusStripRange]
     var hasData: Bool
     var legend: [StatusTimelineLegendItem]
+    var timeLabels: [String]
+
+    init(segments: [StateSegment], secondsBack: TimeInterval) {
+        let now = Date()
+        let windowEnd = now
+        let windowStart = now.addingTimeInterval(-secondsBack)
+        let midpoint = windowStart.addingTimeInterval(windowEnd.timeIntervalSince(windowStart) / 2)
+        self.start = windowStart
+        self.end = windowEnd
+        self.timeLabels = [
+            FocusPetFormatters.clock(windowStart),
+            FocusPetFormatters.clock(midpoint),
+            FocusPetFormatters.clock(windowEnd)
+        ]
+
+        let filtered = segments.filter { $0.end > windowStart && $0.start < windowEnd }
+        self.hasData = !filtered.isEmpty
+        var durations: [FocusPetCore.FocusState: TimeInterval] = [:]
+        self.ranges = filtered
+            .sorted { $0.start < $1.start }
+            .compactMap { segment in
+                let clippedStart = max(segment.start, windowStart)
+                let clippedEnd = min(segment.end, windowEnd)
+                guard clippedEnd > clippedStart else { return nil }
+                durations[segment.state, default: 0] += clippedEnd.timeIntervalSince(clippedStart)
+                return StatusStripRange(start: clippedStart, end: clippedEnd, state: segment.state)
+            }
+        self.legend = FocusPetCore.FocusState.allCases
+            .map { state in
+                StatusTimelineLegendItem(
+                    state: state,
+                    title: "\(state.title) \(FocusPetFormatters.duration(Int(durations[state] ?? 0)))",
+                    color: state.timelineColor
+                )
+            }
+            .filter { durations[$0.state] ?? 0 > 0 }
+    }
+}
+
+private struct StatusStripRange: Identifiable, Hashable {
+    let id = UUID()
+    var start: Date
+    var end: Date
+    var state: FocusPetCore.FocusState
+}
+
+private struct StateSegmentStrip: View {
+    var ranges: [StatusStripRange]
+    var start: Date
+    var end: Date
+    var height: CGFloat = 14
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: height / 2)
+                    .fill(.secondary.opacity(0.13))
+                ForEach(ranges) { range in
+                    let x = xOffset(for: range.start, width: proxy.size.width)
+                    let width = segmentWidth(for: range, totalWidth: proxy.size.width)
+                    Rectangle()
+                        .fill(range.state.timelineColor.gradient)
+                        .frame(width: width, height: height)
+                        .offset(x: x)
+                }
+            }
+            .frame(height: height)
+            .clipShape(RoundedRectangle(cornerRadius: height / 2))
+            .overlay {
+                RoundedRectangle(cornerRadius: height / 2)
+                    .stroke(.white.opacity(0.18), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.05), radius: 5, y: 2)
+        }
+    }
+
+    private var span: TimeInterval {
+        max(1, end.timeIntervalSince(start))
+    }
+
+    private func xOffset(for date: Date, width: CGFloat) -> CGFloat {
+        let progress = max(0, min(1, date.timeIntervalSince(start) / span))
+        return width * CGFloat(progress)
+    }
+
+    private func segmentWidth(for range: StatusStripRange, totalWidth: CGFloat) -> CGFloat {
+        let clippedStart = max(range.start, start)
+        let clippedEnd = min(range.end, end)
+        let progress = max(0, clippedEnd.timeIntervalSince(clippedStart) / span)
+        return max(2, totalWidth * CGFloat(progress))
+    }
+}
+
+private struct TodayTimelineSnapshot {
+    var points: [StatusTimelinePoint]
+    var ranges: [StatusTimelineRange]
+    var hasData: Bool
+    var legend: [StatusTimelineLegendItem]
+    var timeLabels: [String]
 
     init(segments: [StateSegment]) {
         let now = Date()
-        let start = Calendar.current.startOfDay(for: now)
-        let end = min(now, start.addingTimeInterval(86_400))
+        let start = now.addingTimeInterval(-21_600)
+        let end = now
+        let midpoint = start.addingTimeInterval(end.timeIntervalSince(start) / 2)
+        timeLabels = [
+            FocusPetFormatters.clock(start),
+            FocusPetFormatters.clock(midpoint),
+            FocusPetFormatters.clock(end)
+        ]
         let filtered = segments.filter { segment in
             segment.end > start && segment.start < end
         }
@@ -683,6 +923,7 @@ private struct TodayTimelineSnapshot {
         let hasData = !filtered.isEmpty
         if !hasData {
             points = []
+            ranges = []
             legend = FocusPetCore.FocusState.allCases.map { state in
                 StatusTimelineLegendItem(state: state, title: state.title, color: state.timelineColor)
             }
@@ -692,6 +933,7 @@ private struct TodayTimelineSnapshot {
 
         var durations: [FocusPetCore.FocusState: TimeInterval] = [:]
         var generatedPoints: [StatusTimelinePoint] = []
+        var generatedRanges: [StatusTimelineRange] = []
         let span = max(1, end.timeIntervalSince(start))
 
         func progress(for date: Date) -> Double {
@@ -705,15 +947,23 @@ private struct TodayTimelineSnapshot {
 
             let startProgress = progress(for: clippedStart)
             let endProgress = progress(for: clippedEnd)
-            if generatedPoints.last?.progress != startProgress || generatedPoints.last?.state != segment.state {
+            let midpointProgress = (startProgress + endProgress) / 2
+            generatedRanges.append(StatusTimelineRange(
+                startProgress: startProgress,
+                endProgress: endProgress,
+                state: segment.state
+            ))
+            if generatedPoints.isEmpty {
                 generatedPoints.append(StatusTimelinePoint(progress: startProgress, state: segment.state))
             }
+            generatedPoints.append(StatusTimelinePoint(progress: midpointProgress, state: segment.state))
             generatedPoints.append(StatusTimelinePoint(progress: endProgress, state: segment.state))
 
             durations[segment.state, default: 0] += clippedEnd.timeIntervalSince(clippedStart)
         }
 
-        points = generatedPoints
+        points = Self.deduplicated(generatedPoints)
+        ranges = generatedRanges
         self.hasData = true
         legend = FocusPetCore.FocusState.allCases
             .map { state in
@@ -725,6 +975,18 @@ private struct TodayTimelineSnapshot {
                 )
             }
             .filter { durations[$0.state] ?? 0 > 0 }
+    }
+
+    private static func deduplicated(_ points: [StatusTimelinePoint]) -> [StatusTimelinePoint] {
+        var result: [StatusTimelinePoint] = []
+        for point in points.sorted(by: { $0.progress < $1.progress }) {
+            if let last = result.last, abs(last.progress - point.progress) < 0.003 {
+                result[result.count - 1] = point
+            } else {
+                result.append(point)
+            }
+        }
+        return result
     }
 }
 
@@ -743,6 +1005,13 @@ private struct StatusTimelinePoint: Identifiable {
     }
 }
 
+private struct StatusTimelineRange: Identifiable {
+    let id = UUID()
+    let startProgress: Double
+    let endProgress: Double
+    let state: FocusPetCore.FocusState
+}
+
 private struct StatusTimelineLegendItem: Identifiable {
     let id = UUID()
     let state: FocusPetCore.FocusState
@@ -752,63 +1021,39 @@ private struct StatusTimelineLegendItem: Identifiable {
 
 private struct StatusLineChart: View {
     var points: [StatusTimelinePoint]
+    var ranges: [StatusTimelineRange]
     var hasData: Bool
+    var timeLabels: [String]
     @State private var reveal = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             GeometryReader { proxy in
                 ZStack {
+                    TimelineStateBands(ranges: ranges)
                     ChartGridLines()
 
                     if hasData {
-                        TimelineAreaShape(points: points)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        FocusPetCore.FocusState.focus.timelineColor.opacity(0.16),
-                                        FocusPetCore.FocusState.breakTime.timelineColor.opacity(0.09),
-                                        FocusPetCore.FocusState.away.timelineColor.opacity(0.04)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .opacity(reveal ? 1 : 0)
-
-                        TimelineLineShape(points: points)
+                        SmoothTimelineLineShape(points: points)
                             .trim(from: 0, to: reveal ? 1 : 0)
-                            .stroke(.white.opacity(0.18), style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
+                            .stroke(.white.opacity(0.22), style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
                             .blur(radius: 3)
 
-                        TimelineLineShape(points: points)
-                        .trim(from: 0, to: reveal ? 1 : 0)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    FocusPetCore.FocusState.focus.timelineColor,
-                                    FocusPetCore.FocusState.breakTime.timelineColor,
-                                    FocusPetCore.FocusState.away.timelineColor
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            ),
-                            style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round)
-                        )
-                        .shadow(color: .primary.opacity(0.1), radius: 5, x: 0, y: 2)
-
-                        ForEach(points) { point in
-                            ZStack {
-                                Circle()
-                                    .fill(.background.opacity(0.8))
-                                    .frame(width: 10, height: 10)
-                                Circle()
-                                    .fill(point.state.timelineColor)
-                                    .frame(width: 5, height: 5)
-                            }
-                                .position(position(for: point, in: proxy.size))
-                                .opacity(reveal ? 1 : 0)
-                        }
+                        SmoothTimelineLineShape(points: points)
+                            .trim(from: 0, to: reveal ? 1 : 0)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [
+                                        FocusPetCore.FocusState.focus.timelineColor,
+                                        FocusPetCore.FocusState.breakTime.timelineColor,
+                                        FocusPetCore.FocusState.away.timelineColor
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                ),
+                                style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round)
+                            )
+                            .shadow(color: .primary.opacity(0.1), radius: 5, x: 0, y: 2)
                     } else {
                         Text("暂无今日状态点。")
                             .font(.caption.weight(.medium))
@@ -843,55 +1088,55 @@ private struct StatusLineChart: View {
         }
         .overlay(
             HStack(spacing: 12) {
-                TimelineTimeChip("00:00")
+                TimelineTimeChip(timeLabels.first ?? "")
                 Spacer()
-                TimelineTimeChip("12:00")
+                TimelineTimeChip(timeLabels.dropFirst().first ?? "")
                 Spacer()
-                TimelineTimeChip("23:59")
+                TimelineTimeChip(timeLabels.last ?? "")
             }
             .padding(10),
             alignment: .bottomLeading
         )
     }
+}
 
-    private func position(for point: StatusTimelinePoint, in size: CGSize) -> CGPoint {
-        CGPoint(x: size.width * CGFloat(point.progress), y: size.height * (1 - point.level))
+private struct TimelineStateBands: View {
+    var ranges: [StatusTimelineRange]
+
+    var body: some View {
+        GeometryReader { proxy in
+            ForEach(ranges) { range in
+                let startX = proxy.size.width * CGFloat(range.startProgress)
+                let endX = proxy.size.width * CGFloat(range.endProgress)
+                Rectangle()
+                    .fill(range.state.timelineColor.opacity(0.10))
+                    .frame(width: max(2, endX - startX), height: proxy.size.height)
+                    .position(x: startX + max(2, endX - startX) / 2, y: proxy.size.height / 2)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
-private struct TimelineLineShape: Shape {
+private struct SmoothTimelineLineShape: Shape {
     var points: [StatusTimelinePoint]
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        guard let first = points.first else { return path }
-        path.move(to: position(for: first, in: rect.size))
-        for point in points.dropFirst() {
-            path.addLine(to: position(for: point, in: rect.size))
+        let positions = points.map { position(for: $0, in: rect.size) }
+        guard let first = positions.first else { return path }
+        path.move(to: first)
+        guard positions.count > 1 else { return path }
+        for index in 1..<positions.count {
+            let previous = positions[index - 1]
+            let current = positions[index]
+            let controlX = (previous.x + current.x) / 2
+            path.addCurve(
+                to: current,
+                control1: CGPoint(x: controlX, y: previous.y),
+                control2: CGPoint(x: controlX, y: current.y)
+            )
         }
-        return path
-    }
-
-    private func position(for point: StatusTimelinePoint, in size: CGSize) -> CGPoint {
-        CGPoint(x: size.width * CGFloat(point.progress), y: size.height * (1 - point.level))
-    }
-}
-
-private struct TimelineAreaShape: Shape {
-    var points: [StatusTimelinePoint]
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        guard let first = points.first, let last = points.last else { return path }
-        let firstPosition = position(for: first, in: rect.size)
-        let lastPosition = position(for: last, in: rect.size)
-        path.move(to: CGPoint(x: firstPosition.x, y: rect.maxY))
-        path.addLine(to: firstPosition)
-        for point in points.dropFirst() {
-            path.addLine(to: position(for: point, in: rect.size))
-        }
-        path.addLine(to: CGPoint(x: lastPosition.x, y: rect.maxY))
-        path.closeSubpath()
         return path
     }
 
@@ -944,7 +1189,7 @@ private extension FocusPetCore.FocusState {
     var timelineColor: Color {
         switch self {
         case .focus: .green
-        case .distracted: .orange
+        case .distracted: .red
         case .breakTime: .blue
         case .away: .indigo
         }
@@ -968,6 +1213,135 @@ private extension ActivityCategory {
         case .ignore: .blue
         case .neutral: .secondary
         }
+    }
+}
+
+private struct AppIconView: View {
+    var appName: String
+    var bundleID: String?
+    var category: ActivityCategory
+    var size: CGFloat = 34
+
+    var body: some View {
+        ZStack {
+            if let image = AppIconResolver.image(appName: appName, bundleID: bundleID) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(3)
+            } else {
+                Image(systemName: category.symbolName)
+                    .font(.system(size: max(13, size * 0.42), weight: .semibold))
+                    .foregroundStyle(category.tint)
+            }
+        }
+        .frame(width: size, height: size)
+        .background(category.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private enum AppIconResolver {
+    static func image(appName: String, bundleID: String?) -> NSImage? {
+        let workspace = NSWorkspace.shared
+        if let bundleID,
+           let url = workspace.urlForApplication(withBundleIdentifier: bundleID) {
+            return workspace.icon(forFile: url.path)
+        }
+
+        for hintedBundleID in hintedBundleIDs(for: appName) {
+            if let url = workspace.urlForApplication(withBundleIdentifier: hintedBundleID) {
+                return workspace.icon(forFile: url.path)
+            }
+        }
+
+        if let runningURL = runningApplicationURL(for: appName) {
+            return workspace.icon(forFile: runningURL.path)
+        }
+
+        for candidate in candidateNames(for: appName) {
+            for base in applicationSearchRoots {
+                let url = base.appendingPathComponent("\(candidate).app")
+                if FileManager.default.fileExists(atPath: url.path) {
+                    return workspace.icon(forFile: url.path)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private static let applicationSearchRoots: [URL] = [
+        URL(fileURLWithPath: "/Applications"),
+        URL(fileURLWithPath: "/System/Applications"),
+        URL(fileURLWithPath: "/System/Applications/Utilities"),
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Applications")
+    ]
+
+    private static let bundleHints: [String: [String]] = [
+        "微信": ["com.tencent.xinWeChat", "com.tencent.xinwechat"],
+        "wechat": ["com.tencent.xinWeChat", "com.tencent.xinwechat"],
+        "企业微信": ["com.tencent.WeWorkMac"],
+        "wecom": ["com.tencent.WeWorkMac"],
+        "microsoftedge": ["com.microsoft.edgemac"],
+        "edge": ["com.microsoft.edgemac"],
+        "访达": ["com.apple.finder"],
+        "finder": ["com.apple.finder"],
+        "系统设置": ["com.apple.systempreferences"],
+        "systemsettings": ["com.apple.systempreferences"],
+        "活动监视器": ["com.apple.ActivityMonitor"],
+        "activitymonitor": ["com.apple.ActivityMonitor"],
+        "网易云音乐": ["com.netease.163music"],
+        "neteasemusic": ["com.netease.163music"],
+        "safari": ["com.apple.Safari"],
+        "googlechrome": ["com.google.Chrome"],
+        "chrome": ["com.google.Chrome"],
+        "terminal": ["com.apple.Terminal"],
+        "iterm": ["com.googlecode.iterm2"],
+        "iterm2": ["com.googlecode.iterm2"],
+        "xcode": ["com.apple.dt.Xcode"],
+        "obsidian": ["md.obsidian"],
+        "figma": ["com.figma.Desktop"],
+        "steam": ["com.valvesoftware.steam"]
+    ]
+
+    private static let nameAliases: [String: [String]] = [
+        "微信": ["WeChat"],
+        "访达": ["Finder"],
+        "系统设置": ["System Settings"],
+        "活动监视器": ["Activity Monitor"],
+        "网易云音乐": ["NeteaseMusic", "网易云音乐"],
+        "microsoftedge": ["Microsoft Edge"],
+        "googlechrome": ["Google Chrome"]
+    ]
+
+    private static func hintedBundleIDs(for appName: String) -> [String] {
+        bundleHints[normalized(appName)] ?? []
+    }
+
+    private static func candidateNames(for appName: String) -> [String] {
+        let key = normalized(appName)
+        var names = [appName]
+        if let aliases = nameAliases[key] {
+            names.append(contentsOf: aliases)
+        }
+        return Array(Set(names)).filter { !$0.isEmpty }
+    }
+
+    private static func runningApplicationURL(for appName: String) -> URL? {
+        let key = normalized(appName)
+        return NSWorkspace.shared.runningApplications.first { app in
+            guard let name = app.localizedName else { return false }
+            let runningKey = normalized(name)
+            return runningKey == key || runningKey.contains(key) || key.contains(runningKey)
+        }?.bundleURL
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
     }
 }
 
@@ -1033,6 +1407,126 @@ private struct SlidingSegmentedPicker<Value: Hashable>: View {
     }
 }
 
+private struct NumberStepperControl: View {
+    var title: String
+    @Binding var value: Int
+    var range: ClosedRange<Int>
+    var suffix: String
+    var tint: Color = .blue
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text("\(value) \(suffix)")
+                    .font(.headline.monospacedDigit())
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 4) {
+                stepButton(symbol: "minus") {
+                    value = max(range.lowerBound, value - 1)
+                }
+                stepButton(symbol: "plus") {
+                    value = min(range.upperBound, value + 1)
+                }
+            }
+        }
+        .padding(10)
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(tint.opacity(0.18), lineWidth: 1)
+        }
+    }
+
+    private func stepButton(symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .bold))
+                .frame(width: 24, height: 24)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct TogglePillButton: View {
+    var title: String
+    var symbol: String
+    @Binding var isOn: Bool
+    var tint: Color = .blue
+
+    var body: some View {
+        Button {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+                isOn.toggle()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isOn ? "checkmark.circle.fill" : symbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isOn ? tint : .secondary)
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Capsule()
+                    .fill(isOn ? tint.gradient : Color.secondary.opacity(0.22).gradient)
+                    .frame(width: 34, height: 18)
+                    .overlay(alignment: isOn ? .trailing : .leading) {
+                        Circle()
+                            .fill(.background)
+                            .frame(width: 14, height: 14)
+                            .padding(2)
+                    }
+            }
+            .padding(10)
+            .background(isOn ? tint.opacity(0.10) : Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isOn ? tint.opacity(0.24) : Color.primary.opacity(0.05), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(title)
+    }
+}
+
+private struct ControlSliderRow: View {
+    var title: String
+    @Binding var value: Double
+    var range: ClosedRange<Double>
+    var suffix: String = ""
+    var tint: Color = .blue
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(displayValue)
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: $value, in: range)
+                .tint(tint)
+        }
+        .padding(10)
+        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var displayValue: String {
+        if suffix == "%" {
+            "\(Int((value * 100).rounded()))%"
+        } else {
+            "\(Int(value.rounded()))\(suffix)"
+        }
+    }
+}
+
 private func activityCategoryOptions() -> [SlidingSegmentOption<ActivityCategory>] {
     ActivityCategory.allCases.map { category in
         SlidingSegmentOption(
@@ -1055,16 +1549,15 @@ private func petPlacementOptions() -> [SlidingSegmentOption<PetPlacementMode>] {
     }
 }
 
-private func petActionPreviewOptions() -> [SlidingSegmentOption<PetAction>] {
-    PetAction.allCases.map { action in
-        SlidingSegmentOption(
-            value: action,
-            title: action.title,
-            symbol: action.symbolName,
-            tint: action.tint
-        )
-    }
-}
+private let previewablePetActions: [PetAction] = [
+    .idle,
+    .distractedLook,
+    .nudgeStrong,
+    .breakRelax,
+    .welcomeBack,
+    .stretch,
+    .run
+]
 
 private extension PetAction {
     var symbolName: String {
@@ -1085,6 +1578,9 @@ private extension PetAction {
         case .welcomeBack: "hand.wave.fill"
         case .dragged: "hand.draw.fill"
         case .landing: "arrow.down.to.line"
+        case .run: "figure.run"
+        case .screenTransfer: "arrow.left.arrow.right.circle.fill"
+        case .mouseSummon: "cursorarrow.motionlines"
         }
     }
 
@@ -1094,7 +1590,7 @@ private extension PetAction {
         case .distractedLook, .nudgeGentle, .nudgeStrong: .orange
         case .breakRelax, .breakEnd: .blue
         case .sleep, .wake, .welcomeBack: .indigo
-        case .dragged, .landing: .purple
+        case .dragged, .landing, .run, .screenTransfer, .mouseSummon: .purple
         case .idle, .blink, .breath, .stretch: .secondary
         }
     }
@@ -1103,8 +1599,10 @@ private extension PetAction {
 private extension StateReason {
     var title: String {
         switch self {
-        case .idleAway: "空闲暂离"
-        case .longAway: "长时间离开"
+        case .systemSleep: "系统睡眠"
+        case .screenLocked: "屏幕锁定"
+        case .longInputIdleAway: "长时间暂离"
+        case .inputIdleDistracted: "无输入走神"
         case .activeBreak: "休息中"
         case .activeFocusSession: "专注会话"
         case .workCategory: "工作分类"
@@ -1310,11 +1808,7 @@ private struct AppUsageCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: item.category.symbolName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(item.category.tint)
-                    .frame(width: 24, height: 24)
-                    .background(item.category.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
+                AppIconView(appName: item.appName, bundleID: item.bundleID, category: item.category, size: 30)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.appName)
                         .font(.headline)
@@ -1355,6 +1849,154 @@ private struct AppUsageCard: View {
         .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
     }
 }
+
+struct TodayAppUsageBarChartPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    private var items: [AppUsageDisplayItem] {
+        Array(AppUsageDisplayItem.merged(from: model.summary.appUsage).prefix(7))
+    }
+
+    private var maxSeconds: Int {
+        max(1, items.map(\.seconds).max() ?? 1)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("App 时间排行", systemImage: "chart.bar.xaxis")
+                    .font(.headline)
+                Spacer()
+                StatusPill("柱状图", symbol: "chart.bar.fill")
+            }
+
+            if items.isEmpty {
+                Text("暂无 App 使用统计。")
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 6) {
+                    HStack(spacing: 10) {
+                        Text("App")
+                            .frame(width: 176, alignment: .leading)
+                        Text("时间分布")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("时长")
+                            .frame(width: 68, alignment: .trailing)
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        TodayAppUsageBarRow(item: item, rank: index + 1, maxSeconds: maxSeconds)
+                    }
+                }
+            }
+        }
+        .dashboardCard()
+    }
+}
+
+private struct AppUsageDisplayItem: Identifiable {
+    var id: String
+    var appName: String
+    var bundleID: String?
+    var category: ActivityCategory
+    var seconds: Int
+    var stateBreakdown: [FocusPetCore.FocusState: Int]
+
+    static func merged(from summaries: [AppUsageSummary]) -> [AppUsageDisplayItem] {
+        struct Accumulator {
+            var appName: String
+            var bundleID: String?
+            var seconds: Int = 0
+            var stateBreakdown: [FocusPetCore.FocusState: Int] = [:]
+            var categorySeconds: [ActivityCategory: Int] = [:]
+        }
+
+        var grouped: [String: Accumulator] = [:]
+        for item in summaries {
+            guard !isHiddenSystemUsage(item) else { continue }
+            let key = item.bundleID ?? item.appName.lowercased()
+            var accumulator = grouped[key] ?? Accumulator(appName: item.appName, bundleID: item.bundleID)
+            accumulator.seconds += item.seconds
+            accumulator.bundleID = accumulator.bundleID ?? item.bundleID
+            accumulator.categorySeconds[item.category, default: 0] += item.seconds
+            for (state, seconds) in item.stateBreakdown {
+                accumulator.stateBreakdown[state, default: 0] += seconds
+            }
+            grouped[key] = accumulator
+        }
+
+        return grouped.map { key, accumulator in
+            let category = accumulator.categorySeconds.max { lhs, rhs in lhs.value < rhs.value }?.key ?? .neutral
+            return AppUsageDisplayItem(
+                id: key,
+                appName: accumulator.appName,
+                bundleID: accumulator.bundleID,
+                category: category,
+                seconds: accumulator.seconds,
+                stateBreakdown: accumulator.stateBreakdown
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.seconds == rhs.seconds {
+                return lhs.appName.localizedCaseInsensitiveCompare(rhs.appName) == .orderedAscending
+            }
+            return lhs.seconds > rhs.seconds
+        }
+    }
+
+    private static func isHiddenSystemUsage(_ item: AppUsageSummary) -> Bool {
+        let appName = item.appName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let bundleID = item.bundleID?.lowercased() ?? ""
+        return appName == "sleep"
+            || appName == "loginwindow"
+            || bundleID.contains("loginwindow")
+    }
+}
+
+private struct TodayAppUsageBarRow: View {
+    var item: AppUsageDisplayItem
+    var rank: Int
+    var maxSeconds: Int
+
+    private var ratio: Double {
+        Double(item.seconds) / Double(max(1, maxSeconds))
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("#\(rank)")
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, alignment: .leading)
+
+            AppIconView(appName: item.appName, bundleID: item.bundleID, category: item.category, size: 26)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.appName)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(item.category.title)
+                    .font(.caption2)
+                    .foregroundStyle(item.category.tint)
+            }
+            .frame(width: 130, alignment: .leading)
+
+            MiniMeter(ratio: ratio, tint: item.category.tint, breakdown: item.stateBreakdown, total: item.seconds)
+                .frame(maxWidth: .infinity)
+                .frame(height: 16)
+
+            Text(FocusPetFormatters.duration(item.seconds))
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 68, alignment: .trailing)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(.primary.opacity(rank <= 3 ? 0.035 : 0.018), in: RoundedRectangle(cornerRadius: 7))
+    }
+}
 struct AppUsageChartPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
@@ -1388,50 +2030,29 @@ struct AppUsageChartPanel: View {
 
 struct SessionsView: View {
     @EnvironmentObject private var model: FocusPetModel
-    @State private var taskName = "专注任务"
+
+    private var sessions: [FocusHistorySession] {
+        FocusHistorySession.build(from: model.stateSegments)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("开始专注", systemImage: "timer")
-                        .font(.headline)
-                    TextField("任务名称", text: $taskName)
-                        .textFieldStyle(.roundedBorder)
-                    HStack {
-                        Stepper("目标 \(model.settings.focusTargetMinutes) 分钟", value: $model.settings.focusTargetMinutes, in: 1...180)
-                            .onChange(of: model.settings.focusTargetMinutes) { _, _ in model.saveSettings() }
-                        Toggle("完成后自动休息", isOn: $model.settings.autoStartBreak)
-                            .onChange(of: model.settings.autoStartBreak) { _, _ in model.saveSettings() }
-                        Button("开始") {
-                            model.startFocusSession(taskName: taskName, minutes: model.settings.focusTargetMinutes)
-                        }
-                    }
-                }
-                .dashboardCard()
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("休息计时", systemImage: "cup.and.saucer.fill")
-                        .font(.headline)
-                    HStack {
-                        Stepper("休息 \(model.settings.breakMinutes) 分钟", value: $model.settings.breakMinutes, in: 1...60)
-                            .onChange(of: model.settings.breakMinutes) { _, _ in model.saveSettings() }
-                        Button("开始休息") {
-                            model.startBreak(minutes: model.settings.breakMinutes)
-                        }
-                    }
-                }
-                .dashboardCard()
-
+                FocusSessionControlPanel()
+                FocusSessionRecordsPanel()
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("历史会话", systemImage: "clock.arrow.circlepath")
-                        .font(.headline)
-                    if model.focusSessions.isEmpty {
-                        Text("还没有专注会话。")
+                    HStack {
+                        Label("自动片段", systemImage: "waveform.path.ecg")
+                            .font(.headline)
+                        Spacer()
+                        StatusPill("\(sessions.count) 段", symbol: "number")
+                    }
+                    if sessions.isEmpty {
+                        Text("暂无连续专注/走神片段。")
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(model.focusSessions.reversed()) { session in
-                            FocusSessionRow(session: session)
+                        ForEach(sessions) { session in
+                            FocusHistorySessionCard(session: session)
                         }
                     }
                 }
@@ -1441,15 +2062,332 @@ struct SessionsView: View {
     }
 }
 
-struct FocusSessionRow: View {
+private struct FocusSessionControlPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+    @State private var taskName = "专注任务"
+
+    var body: some View {
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    identityTile(at: context.date)
+                    controls
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    identityTile(at: context.date)
+                    controls
+                }
+            }
+        }
+        .dashboardCard()
+    }
+
+    private func identityTile(at date: Date) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: model.activeFocusSession == nil ? "timer" : "timer.circle.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.green)
+                    .frame(width: 38, height: 38)
+                    .background(.green.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.activeFocusSession?.taskName ?? "专注任务")
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(1)
+                    Text(sessionSubtitle(at: date))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(primaryTime(at: date))
+                    .font(.title2.monospacedDigit().weight(.semibold))
+            }
+
+            MiniMeter(ratio: sessionProgress(at: date), tint: .green)
+                .frame(height: 10)
+
+            HStack(spacing: 8) {
+                SessionStatPill(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
+                SessionStatPill(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: .orange)
+                SessionStatPill(title: "暂离", value: FocusPetFormatters.duration(model.summary.awaySeconds), symbol: FocusPetCore.FocusState.away.symbolName, tint: .indigo)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if model.activeFocusSession == nil {
+                TextField("专注任务", text: $taskName)
+                    .textFieldStyle(.roundedBorder)
+                NumberStepperControl(
+                    title: "目标",
+                    value: $model.settings.focusTargetMinutes,
+                    range: 5...180,
+                    suffix: "分钟",
+                    tint: .green
+                )
+                .onChange(of: model.settings.focusTargetMinutes) { _, _ in model.saveSettings() }
+                TogglePillButton(title: "完成后自动休息", symbol: "cup.and.saucer.fill", isOn: $model.settings.autoStartBreak, tint: .blue)
+                    .onChange(of: model.settings.autoStartBreak) { _, _ in model.saveSettings() }
+                Button {
+                    model.startFocusSession(taskName: taskName, minutes: model.settings.focusTargetMinutes)
+                } label: {
+                    Label("开始专注", systemImage: "play.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+            } else {
+                Button {
+                    model.finishCurrentFocusSession()
+                } label: {
+                    Label("完成专注", systemImage: "checkmark.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                Button(role: .destructive) {
+                    model.finishCurrentFocusSession(completed: false)
+                } label: {
+                    Label("取消会话", systemImage: "xmark.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(width: 260, alignment: .top)
+    }
+
+    private func sessionSubtitle(at date: Date) -> String {
+        guard let session = model.activeFocusSession else {
+            return "目标 \(FocusPetFormatters.duration(model.settings.focusTargetMinutes * 60))"
+        }
+        return "\(FocusPetFormatters.clock(session.start)) 开始 · \(statusTitle(at: date))"
+    }
+
+    private func statusTitle(at date: Date) -> String {
+        guard let session = model.activeFocusSession else { return "" }
+        let remaining = max(0, session.targetDurationSeconds - session.elapsedSeconds(now: date))
+        return remaining == 0 ? "可完成" : "剩余 \(FocusPetFormatters.duration(remaining))"
+    }
+
+    private func primaryTime(at date: Date) -> String {
+        guard let session = model.activeFocusSession else {
+            return "\(model.settings.focusTargetMinutes) 分钟"
+        }
+        return FocusPetFormatters.duration(session.elapsedSeconds(now: date))
+    }
+
+    private func sessionProgress(at date: Date) -> Double {
+        guard let session = model.activeFocusSession else { return 0 }
+        return min(1, Double(session.elapsedSeconds(now: date)) / Double(max(1, session.targetDurationSeconds)))
+    }
+}
+
+private struct FocusSessionRecordsPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    private var sessions: [FocusSession] {
+        model.focusSessions.sorted { $0.start > $1.start }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("任务记录", systemImage: "list.bullet.rectangle.portrait.fill")
+                    .font(.headline)
+                Spacer()
+                StatusPill("\(sessions.count) 条", symbol: "number")
+            }
+            if sessions.isEmpty {
+                Text("暂无专注任务记录。")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(sessions.prefix(8)) { session in
+                    FocusSessionHistoryCard(session: session)
+                }
+            }
+        }
+        .dashboardCard()
+    }
+}
+
+private struct FocusHistorySession: Identifiable {
+    var id: String
+    var start: Date
+    var end: Date
+    var focusSeconds: Int
+    var distractedSeconds: Int
+    var ranges: [StatusStripRange]
+
+    var totalSeconds: Int {
+        max(0, Int(end.timeIntervalSince(start).rounded()))
+    }
+
+    static func build(from segments: [StateSegment]) -> [FocusHistorySession] {
+        var result: [FocusHistorySession] = []
+        var currentStart: Date?
+        var currentEnd: Date?
+        var focusSeconds = 0
+        var distractedSeconds = 0
+        var ranges: [StatusStripRange] = []
+
+        func flush() {
+            guard let start = currentStart,
+                  let end = currentEnd,
+                  end > start,
+                  !ranges.isEmpty else {
+                currentStart = nil
+                currentEnd = nil
+                focusSeconds = 0
+                distractedSeconds = 0
+                ranges = []
+                return
+            }
+            result.append(FocusHistorySession(
+                id: "\(start.timeIntervalSince1970)-\(end.timeIntervalSince1970)",
+                start: start,
+                end: end,
+                focusSeconds: focusSeconds,
+                distractedSeconds: distractedSeconds,
+                ranges: ranges
+            ))
+            currentStart = nil
+            currentEnd = nil
+            focusSeconds = 0
+            distractedSeconds = 0
+            ranges = []
+        }
+
+        for segment in segments.sorted(by: { $0.start < $1.start }) {
+            switch segment.state {
+            case .focus, .distracted:
+                if currentStart == nil {
+                    currentStart = segment.start
+                }
+                currentEnd = max(currentEnd ?? segment.end, segment.end)
+                let seconds = max(0, Int(segment.end.timeIntervalSince(segment.start).rounded()))
+                if segment.state == .focus {
+                    focusSeconds += seconds
+                } else {
+                    distractedSeconds += seconds
+                }
+                ranges.append(StatusStripRange(start: segment.start, end: segment.end, state: segment.state))
+            case .breakTime, .away:
+                flush()
+            }
+        }
+        flush()
+
+        return Array(result.reversed())
+    }
+}
+
+private struct FocusHistorySessionCard: View {
+    var session: FocusHistorySession
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(FocusPetFormatters.clock(session.start)) - \(FocusPetFormatters.clock(session.end))")
+                        .font(.headline.monospacedDigit())
+                    Text("连续专注/走神片段")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(FocusPetFormatters.duration(session.totalSeconds))
+                    .font(.title3.monospacedDigit().weight(.semibold))
+            }
+
+            StateSegmentStrip(ranges: session.ranges, start: session.start, end: session.end, height: 13)
+                .frame(height: 20)
+
+            HStack(spacing: 8) {
+                SessionStatPill(title: "专注", value: FocusPetFormatters.duration(session.focusSeconds), symbol: FocusPetCore.FocusState.focus.symbolName, tint: .green)
+                SessionStatPill(title: "走神", value: FocusPetFormatters.duration(session.distractedSeconds), symbol: FocusPetCore.FocusState.distracted.symbolName, tint: .red)
+                SessionStatPill(title: "总时长", value: FocusPetFormatters.duration(session.totalSeconds), symbol: "clock.fill", tint: .blue)
+            }
+        }
+        .padding(12)
+        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+private struct RestControlPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                breakTile
+                autoJudgeTile
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                breakTile
+                autoJudgeTile
+            }
+        }
+    }
+
+    private var breakTile: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("休息计时", systemImage: "cup.and.saucer.fill")
+                .font(.headline)
+            Text("休息由用户手动指定。休息结束后，系统自动回到专注/走神判断。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            NumberStepperControl(
+                title: "休息",
+                value: $model.settings.breakMinutes,
+                range: 1...60,
+                suffix: "分钟",
+                tint: .blue
+            )
+            .onChange(of: model.settings.breakMinutes) { _, _ in model.saveSettings() }
+            Button {
+                model.toggleBreakFromPet()
+            } label: {
+                Label(model.activeBreakSession == nil ? "开始休息" : "结束休息", systemImage: model.activeBreakSession == nil ? "play.fill" : "stop.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.blue)
+        }
+        .dashboardCard()
+    }
+
+    private var autoJudgeTile: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("自动判定", systemImage: "sparkles")
+                .font(.headline)
+            HStack(spacing: 10) {
+                SessionStatPill(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
+                SessionStatPill(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: .orange)
+            }
+            Text("电脑未 sleep 且不在休息时，系统只在专注和走神之间切换；超过 1 分钟无输入会进入走神。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .dashboardCard()
+    }
+}
+
+struct FocusSessionHistoryCard: View {
     var session: FocusSession
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.taskName)
-                        .font(.headline)
+                        .font(.title3.weight(.semibold))
                     Text("\(FocusPetFormatters.clock(session.start)) · \(statusTitle)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1459,20 +2397,22 @@ struct FocusSessionRow: View {
                     .font(.headline.monospacedDigit())
             }
 
-            ProgressView(value: session.completionRatio)
+            MiniMeter(ratio: session.completionRatio, tint: statusTint)
+                .frame(height: 10)
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 120), spacing: 8), count: 4), spacing: 8) {
-                SessionStatPill(title: "有效专注", value: FocusPetFormatters.duration(session.effectiveFocusSeconds), symbol: "checkmark.circle.fill")
-                SessionStatPill(title: "主用 App", value: session.mainAppName ?? "暂无", symbol: "macwindow")
-                SessionStatPill(title: "打断", value: "\(session.interruptionCount) 次", symbol: "exclamationmark.triangle.fill")
-                SessionStatPill(title: "切换", value: "\(session.switchCount) 次", symbol: "arrow.triangle.2.circlepath")
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 132), spacing: 8), count: 4), spacing: 8) {
+                SessionStatPill(title: "有效专注", value: FocusPetFormatters.duration(session.effectiveFocusSeconds), symbol: "checkmark.circle.fill", tint: .green)
+                SessionStatPill(title: "主用 App", value: session.mainAppName ?? "暂无", symbol: "macwindow", tint: .blue, appName: session.mainAppName)
+                SessionStatPill(title: "打断", value: "\(session.interruptionCount) 次", symbol: "exclamationmark.triangle.fill", tint: .orange)
+                SessionStatPill(title: "切换", value: "\(session.switchCount) 次", symbol: "arrow.triangle.2.circlepath", tint: .purple)
             }
 
-            Text("走神 \(FocusPetFormatters.duration(session.distractedSeconds)) · 离开 \(FocusPetFormatters.duration(session.awaySeconds)) · 目标 \(FocusPetFormatters.duration(session.targetDurationSeconds))")
+            Text("走神 \(FocusPetFormatters.duration(session.distractedSeconds)) · 暂离 \(FocusPetFormatters.duration(session.awaySeconds)) · 目标 \(FocusPetFormatters.duration(session.targetDurationSeconds))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 8)
+        .padding(12)
+        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var statusTitle: String {
@@ -1482,18 +2422,32 @@ struct FocusSessionRow: View {
         case .cancelled: "已取消"
         }
     }
+
+    private var statusTint: Color {
+        switch session.status {
+        case .active: .blue
+        case .completed: .green
+        case .cancelled: .orange
+        }
+    }
 }
 
 struct SessionStatPill: View {
     var title: String
     var value: String
     var symbol: String
+    var tint: Color = .secondary
+    var appName: String?
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: symbol)
-                .foregroundStyle(.secondary)
-                .frame(width: 16)
+            if let appName {
+                AppIconView(appName: appName, bundleID: nil, category: .neutral, size: 24)
+            } else {
+                Image(systemName: symbol)
+                    .foregroundStyle(tint)
+                    .frame(width: 18)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(value)
                     .font(.caption.weight(.medium))
@@ -1505,7 +2459,7 @@ struct SessionStatPill: View {
             Spacer(minLength: 0)
         }
         .padding(8)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -1666,13 +2620,66 @@ private struct KeywordRuleSelectionPanel: View {
                 StatusPill("点选即可生效", symbol: "hand.tap.fill")
             }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 10)], spacing: 10) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
                 ForEach(choices) { choice in
-                    RuleChoiceRow(choice: choice, selectedCategory: selectedCategory)
+                    KeywordRuleCard(choice: choice, selectedCategory: selectedCategory)
                 }
             }
         }
         .dashboardCard()
+    }
+}
+
+private struct KeywordRuleCard: View {
+    @EnvironmentObject private var model: FocusPetModel
+    var choice: RuleChoice
+    var selectedCategory: ActivityCategory
+
+    private var effectiveCategory: ActivityCategory {
+        model.categoryForRule(pattern: choice.title, matchKind: choice.matchKind) ?? choice.defaultCategory
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 9) {
+                Image(systemName: choice.defaultCategory.symbolName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(effectiveCategory.tint)
+                    .frame(width: 28, height: 28)
+                    .background(effectiveCategory.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(choice.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(choice.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+
+            SlidingSegmentedPicker(
+                options: activityCategoryOptions(),
+                selection: Binding(
+                    get: { effectiveCategory },
+                    set: { category in
+                        model.setRule(pattern: choice.title, matchKind: choice.matchKind, category: category)
+                    }
+                ),
+                compact: true
+            )
+        }
+        .padding(10)
+        .background(keywordBackground, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(effectiveCategory == selectedCategory ? effectiveCategory.tint.opacity(0.34) : .primary.opacity(0.05), lineWidth: 1)
+        }
+    }
+
+    private var keywordBackground: Color {
+        effectiveCategory == selectedCategory ? effectiveCategory.tint.opacity(0.08) : .primary.opacity(0.025)
     }
 }
 
@@ -1730,22 +2737,15 @@ private struct RuleChoiceIcon: View {
     var category: ActivityCategory
 
     var body: some View {
-        ZStack {
-            if choice.matchKind == .appName,
-               let bundleID = choice.bundleID,
-               let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                    .resizable()
-                    .scaledToFit()
-                    .padding(4)
-            } else {
-                Image(systemName: choice.matchKind == .appName ? "app.fill" : "textformat")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(category.tint)
-            }
+        if choice.matchKind == .appName {
+            AppIconView(appName: choice.title, bundleID: choice.bundleID, category: category, size: 38)
+        } else {
+            Image(systemName: "textformat")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(category.tint)
+                .frame(width: 38, height: 38)
+                .background(category.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
         }
-        .frame(width: 38, height: 38)
-        .background(category.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -1846,201 +2846,275 @@ struct OtherRulesPanel: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var model: FocusPetModel
-    @State private var previewAction: PetAction = .idle
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("桌宠设置", systemImage: "pawprint.fill")
-                        .font(.headline)
-                    PetPackSelectionGrid()
-                    HStack {
-                        Button {
-                            model.chooseAndImportPetPack()
-                        } label: {
-                            Label("导入资源包", systemImage: "square.and.arrow.down")
-                        }
-                        Button {
-                            model.refreshPetPacks()
-                        } label: {
-                            Label("刷新", systemImage: "arrow.clockwise")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    if let message = model.petImportMessage {
-                        Text(message)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let message = model.petImportErrorMessage {
-                        Text(message)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                    if let record = model.availablePetPacks.first(where: { $0.id == model.settings.pet.selectedPackID }) {
-                        PetPackSummaryView(record: record)
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("动作预览")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Button {
-                                    model.previewPetAction(previewAction)
-                                } label: {
-                                    Label("预览", systemImage: "play.fill")
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                SlidingSegmentedPicker(
-                                    options: petActionPreviewOptions(),
-                                    selection: $previewAction,
-                                    compact: true
-                                )
-                                .frame(minWidth: CGFloat(PetAction.allCases.count) * 78)
-                            }
-                        }
-                        PetPackCoverageMatrix(record: record)
-                    }
-                    Toggle("显示桌宠", isOn: Binding(
-                        get: { !model.settings.pet.hidden },
-                        set: { value in
-                            model.settings.pet.hidden = !value
-                            model.saveSettings()
-                        }
-                    ))
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("位置")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        SlidingSegmentedPicker(
-                            options: petPlacementOptions(),
-                            selection: Binding(
-                                get: { model.settings.pet.placement },
-                                set: { model.setPetPlacement($0) }
-                            ),
-                            compact: true
-                        )
-                    }
-                    if model.settings.pet.placement == .custom,
-                       let x = model.settings.pet.customOriginX,
-                       let y = model.settings.pet.customOriginY {
-                        Text("自定义位置：x \(Int(x)), y \(Int(y))。拖动桌宠可更新。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Slider(value: $model.settings.pet.size, in: 96...260) {
-                        Text("大小")
-                    }
-                    .onChange(of: model.settings.pet.size) { _, _ in model.saveSettings() }
-                    Slider(value: $model.settings.pet.opacity, in: 0.35...1) {
-                        Text("透明度")
-                    }
-                    .onChange(of: model.settings.pet.opacity) { _, _ in model.saveSettings() }
-                    Toggle("动画", isOn: $model.settings.pet.animationEnabled)
-                        .onChange(of: model.settings.pet.animationEnabled) { _, _ in model.saveSettings() }
-                    Toggle("指针悬浮状态弹窗", isOn: $model.settings.pet.hoverStatusEnabled)
-                        .onChange(of: model.settings.pet.hoverStatusEnabled) { _, _ in model.saveSettings() }
-                }
-                .dashboardCard()
+                PetSettingsPanel()
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("提醒设置", systemImage: "bell.badge.fill")
-                        .font(.headline)
-                    Toggle("桌宠气泡提醒", isOn: $model.settings.reminder.enablePetBubbles)
-                        .onChange(of: model.settings.reminder.enablePetBubbles) { _, _ in model.saveSettings() }
-                    Toggle("系统通知", isOn: $model.settings.reminder.enableSystemNotifications)
-                        .onChange(of: model.settings.reminder.enableSystemNotifications) { _, _ in model.saveSettings() }
-                    HStack {
-                        if let pauseUntil = model.settings.reminder.pauseUntil, pauseUntil > Date() {
-                            Text(model.reminderPauseTitle)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("恢复提醒") {
-                                model.resumeReminders()
-                            }
-                        } else {
-                            Text("提醒未暂停")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("暂停 30 分钟") {
-                                model.pauseReminders()
-                            }
-                        }
-                    }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 12)], spacing: 12) {
+                    ReminderSettingsPanel()
+                    PrivacySettingsPanel()
+                    RetentionSettingsPanel()
+                    AboutSettingsPanel()
                 }
-                .dashboardCard()
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("隐私设置", systemImage: "lock.shield.fill")
-                        .font(.headline)
-                    Toggle("暂停所有记录", isOn: $model.settings.privacy.pauseActivityRecording)
-                        .onChange(of: model.settings.privacy.pauseActivityRecording) { _, _ in model.saveSettings() }
-                    Text(model.recordingStatusTitle)
-                        .font(.caption)
-                        .foregroundStyle(model.settings.privacy.pauseActivityRecording ? .orange : .secondary)
-                    Toggle("只保存分类结果", isOn: $model.settings.privacy.storeOnlyCategoryResult)
-                        .onChange(of: model.settings.privacy.storeOnlyCategoryResult) { _, enabled in
-                            if enabled {
-                                model.settings.privacy.storeRawTitle = false
-                            }
-                            model.saveSettings()
-                        }
-                    Toggle("保存完整窗口标题", isOn: $model.settings.privacy.storeRawTitle)
-                        .disabled(model.settings.privacy.storeOnlyCategoryResult)
-                        .onChange(of: model.settings.privacy.storeRawTitle) { _, enabled in
-                            if enabled {
-                                model.settings.privacy.storeOnlyCategoryResult = false
-                            }
-                            model.saveSettings()
-                        }
-                    Text("默认只保存 App、分类、状态和时间，并持久化脱敏标题线索。开启“只保存分类结果”后不会保存标题摘要、脱敏标题或完整标题。")
-                        .foregroundStyle(.secondary)
-                }
-                .dashboardCard()
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("数据留存", systemImage: "externaldrive.fill")
-                        .font(.headline)
-                    Stepper("状态片段 \(model.settings.retention.stateRetentionDays) 天", value: $model.settings.retention.stateRetentionDays, in: 1...365)
-                        .onChange(of: model.settings.retention.stateRetentionDays) { _, _ in model.saveSettings() }
-                    Stepper("App 统计 \(model.settings.retention.appUsageRetentionDays) 天", value: $model.settings.retention.appUsageRetentionDays, in: 1...365)
-                        .onChange(of: model.settings.retention.appUsageRetentionDays) { _, _ in model.saveSettings() }
-                    Stepper("会话 \(model.settings.retention.sessionRetentionDays) 天", value: $model.settings.retention.sessionRetentionDays, in: 1...365)
-                        .onChange(of: model.settings.retention.sessionRetentionDays) { _, _ in model.saveSettings() }
-                    HStack {
-                        Button("导出脱敏统计") {
-                            model.exportData(redacted: true)
-                        }
-                        Button("导出完整本地统计") {
-                            model.exportData(redacted: false)
-                        }
-                        Button("删除所有本地数据", role: .destructive) {
-                            model.deleteAllData()
-                        }
-                    }
-                    if let exportURL = model.exportURL {
-                        Text(exportURL.path)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .dashboardCard()
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("关于", systemImage: "info.circle.fill")
-                        .font(.headline)
-                    Text("Focus Pet 使用前台 App、窗口标题分类、输入空闲和专注/休息会话判断状态。所有数据保存在本机。")
-                        .foregroundStyle(.secondary)
-                }
-                .dashboardCard()
             }
         }
         .onAppear {
             model.refreshPetPacks()
         }
+    }
+}
+
+private struct PetSettingsPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+    @State private var previewAction: PetAction = .idle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("桌宠设置", systemImage: "pawprint.fill")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    model.chooseAndImportPetPack()
+                } label: {
+                    Label("导入", systemImage: "square.and.arrow.down")
+                }
+                Button {
+                    model.refreshPetPacks()
+                } label: {
+                    Label("刷新", systemImage: "arrow.clockwise")
+                }
+            }
+            .buttonStyle(.bordered)
+
+            PetPackSelectionGrid()
+
+            if let message = model.petImportMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let message = model.petImportErrorMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if let record = model.availablePetPacks.first(where: { $0.id == model.settings.pet.selectedPackID }) {
+                PetPackSummaryView(record: record)
+                ActionPreviewStrip(record: record, previewAction: $previewAction)
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
+                TogglePillButton(
+                    title: "显示桌宠",
+                    symbol: "pawprint.fill",
+                    isOn: Binding(
+                        get: { !model.settings.pet.hidden },
+                        set: { value in
+                            model.settings.pet.hidden = !value
+                            model.saveSettings()
+                        }
+                    ),
+                    tint: .green
+                )
+                TogglePillButton(title: "动画", symbol: "sparkles", isOn: $model.settings.pet.animationEnabled, tint: .purple)
+                    .onChange(of: model.settings.pet.animationEnabled) { _, _ in model.saveSettings() }
+                TogglePillButton(title: "悬浮状态弹窗", symbol: "text.bubble.fill", isOn: $model.settings.pet.hoverStatusEnabled, tint: .blue)
+                    .onChange(of: model.settings.pet.hoverStatusEnabled) { _, _ in model.saveSettings() }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("位置")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                SlidingSegmentedPicker(
+                    options: petPlacementOptions(),
+                    selection: Binding(
+                        get: { model.settings.pet.placement },
+                        set: { model.setPetPlacement($0) }
+                    ),
+                    compact: true
+                )
+            }
+
+            if model.settings.pet.placement == .custom,
+               let x = model.settings.pet.customOriginX,
+               let y = model.settings.pet.customOriginY {
+                Text("自定义位置：x \(Int(x)), y \(Int(y))。拖动桌宠可更新。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 8)], spacing: 8) {
+                ControlSliderRow(title: "大小", value: $model.settings.pet.size, range: 96...260, suffix: "px", tint: .purple)
+                    .onChange(of: model.settings.pet.size) { _, _ in model.saveSettings() }
+                ControlSliderRow(title: "透明度", value: $model.settings.pet.opacity, range: 0.35...1, suffix: "%", tint: .blue)
+                    .onChange(of: model.settings.pet.opacity) { _, _ in model.saveSettings() }
+            }
+        }
+        .dashboardCard()
+    }
+}
+
+private struct ActionPreviewStrip: View {
+    @EnvironmentObject private var model: FocusPetModel
+    var record: PetPackRecord
+    @Binding var previewAction: PetAction
+
+    private var options: [SlidingSegmentOption<PetAction>] {
+        let available = previewablePetActions.filter { action in
+            if record.rootURL == nil {
+                return PetActionResolver().animationKey(for: action, in: record.pack) != nil
+            }
+            return !record.frameURLs(for: action).isEmpty
+        }
+        let actions = available.isEmpty ? [.idle] : available
+        return actions.map { action in
+            SlidingSegmentOption(
+                value: action,
+                title: action.title,
+                symbol: action.symbolName,
+                tint: action.tint
+            )
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("动作预览")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    model.previewPetAction(previewAction)
+                } label: {
+                    Label("预览", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            SlidingSegmentedPicker(
+                options: options,
+                selection: $previewAction,
+                compact: true
+            )
+            .onAppear {
+                if !options.map(\.value).contains(previewAction) {
+                    previewAction = options.first?.value ?? .idle
+                }
+            }
+        }
+    }
+}
+
+private struct ReminderSettingsPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("提醒设置", systemImage: "bell.badge.fill")
+                .font(.headline)
+            TogglePillButton(title: "桌宠气泡提醒", symbol: "bubble.left.and.bubble.right.fill", isOn: $model.settings.reminder.enablePetBubbles, tint: .blue)
+                .onChange(of: model.settings.reminder.enablePetBubbles) { _, _ in model.saveSettings() }
+            TogglePillButton(title: "系统通知", symbol: "bell.fill", isOn: $model.settings.reminder.enableSystemNotifications, tint: .orange)
+                .onChange(of: model.settings.reminder.enableSystemNotifications) { _, _ in model.saveSettings() }
+            HStack {
+                Text(model.reminderPauseTitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                if let pauseUntil = model.settings.reminder.pauseUntil, pauseUntil > Date() {
+                    Button("恢复") { model.resumeReminders() }
+                } else {
+                    Button("暂停 30 分钟") { model.pauseReminders() }
+                }
+            }
+        }
+        .dashboardCard()
+    }
+}
+
+private struct PrivacySettingsPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("隐私设置", systemImage: "lock.shield.fill")
+                .font(.headline)
+            TogglePillButton(title: "暂停所有记录", symbol: "pause.circle.fill", isOn: $model.settings.privacy.pauseActivityRecording, tint: .orange)
+                .onChange(of: model.settings.privacy.pauseActivityRecording) { _, _ in model.saveSettings() }
+            Text(model.recordingStatusTitle)
+                .font(.caption)
+                .foregroundStyle(model.settings.privacy.pauseActivityRecording ? .orange : .secondary)
+            TogglePillButton(title: "只保存分类结果", symbol: "tag.fill", isOn: $model.settings.privacy.storeOnlyCategoryResult, tint: .blue)
+                .onChange(of: model.settings.privacy.storeOnlyCategoryResult) { _, enabled in
+                    if enabled {
+                        model.settings.privacy.storeRawTitle = false
+                    }
+                    model.saveSettings()
+                }
+            TogglePillButton(title: "保存完整窗口标题", symbol: "text.alignleft", isOn: $model.settings.privacy.storeRawTitle, tint: .purple)
+                .disabled(model.settings.privacy.storeOnlyCategoryResult)
+                .opacity(model.settings.privacy.storeOnlyCategoryResult ? 0.45 : 1)
+                .onChange(of: model.settings.privacy.storeRawTitle) { _, enabled in
+                    if enabled {
+                        model.settings.privacy.storeOnlyCategoryResult = false
+                    }
+                    model.saveSettings()
+                }
+            Text("默认只保存 App、分类、状态和时间，并持久化脱敏标题线索。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .dashboardCard()
+    }
+}
+
+private struct RetentionSettingsPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("数据留存", systemImage: "externaldrive.fill")
+                .font(.headline)
+            NumberStepperControl(title: "状态片段", value: $model.settings.retention.stateRetentionDays, range: 1...365, suffix: "天", tint: .blue)
+                .onChange(of: model.settings.retention.stateRetentionDays) { _, _ in model.saveSettings() }
+            NumberStepperControl(title: "App 统计", value: $model.settings.retention.appUsageRetentionDays, range: 1...365, suffix: "天", tint: .green)
+                .onChange(of: model.settings.retention.appUsageRetentionDays) { _, _ in model.saveSettings() }
+            NumberStepperControl(title: "会话", value: $model.settings.retention.sessionRetentionDays, range: 1...365, suffix: "天", tint: .purple)
+                .onChange(of: model.settings.retention.sessionRetentionDays) { _, _ in model.saveSettings() }
+            HStack {
+                Button("导出脱敏统计") { model.exportData(redacted: true) }
+                Button("导出完整统计") { model.exportData(redacted: false) }
+                Button("删除数据", role: .destructive) { model.deleteAllData() }
+            }
+            .buttonStyle(.bordered)
+            if let exportURL = model.exportURL {
+                Text(exportURL.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .dashboardCard()
+    }
+}
+
+private struct AboutSettingsPanel: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("关于", systemImage: "info.circle.fill")
+                .font(.headline)
+            Text("Focus Pet 使用前台 App、窗口标题分类、输入空闲和专注/休息会话判断状态。所有数据保存在本机。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .dashboardCard()
     }
 }
 
@@ -2178,68 +3252,6 @@ struct PetPackSummaryView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-        }
-    }
-}
-
-struct PetPackCoverageMatrix: View {
-    var record: PetPackRecord
-
-    private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 156), spacing: 8)]
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("动作覆盖", systemImage: "square.grid.3x3.fill")
-                .font(.headline)
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-                ForEach(record.coverage()) { item in
-                    HStack(spacing: 8) {
-                        Image(systemName: symbol(for: item.status))
-                            .foregroundStyle(color(for: item.status))
-                            .frame(width: 18)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.action.title)
-                                .font(.caption.weight(.medium))
-                            Text(detail(for: item))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(8)
-                    .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
-                }
-            }
-        }
-    }
-
-    private func detail(for item: PetActionCoverage) -> String {
-        switch item.status {
-        case .native:
-            "\(item.frameCount) 帧"
-        case .fallback:
-            "\(item.resolvedAction?.title ?? "Idle") · \(item.frameCount) 帧"
-        case .missing:
-            "无可用动画"
-        }
-    }
-
-    private func symbol(for status: PetActionCoverageStatus) -> String {
-        switch status {
-        case .native: "checkmark.circle.fill"
-        case .fallback: "arrow.triangle.branch"
-        case .missing: "xmark.circle.fill"
-        }
-    }
-
-    private func color(for status: PetActionCoverageStatus) -> Color {
-        switch status {
-        case .native: .green
-        case .fallback: .orange
-        case .missing: .red
         }
     }
 }

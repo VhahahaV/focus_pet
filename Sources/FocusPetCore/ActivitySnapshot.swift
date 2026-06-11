@@ -16,6 +16,8 @@ public struct ActivitySnapshot: Codable, Hashable, Sendable {
     public var activeAppDuration: TimeInterval
     public var isFocusSessionActive: Bool
     public var isBreakActive: Bool
+    public var isSystemSleeping: Bool
+    public var isScreenLocked: Bool
     public var source: Set<ActivitySignalSource>
 
     public init(
@@ -34,6 +36,8 @@ public struct ActivitySnapshot: Codable, Hashable, Sendable {
         activeAppDuration: TimeInterval? = nil,
         isFocusSessionActive: Bool,
         isBreakActive: Bool,
+        isSystemSleeping: Bool = false,
+        isScreenLocked: Bool = false,
         source: Set<ActivitySignalSource> = [.frontmostApplication, .windowTitle, .idleTime, .appSwitching]
     ) {
         self.timestamp = timestamp
@@ -51,40 +55,9 @@ public struct ActivitySnapshot: Codable, Hashable, Sendable {
         self.activeAppDuration = max(0, activeAppDuration ?? activeCategoryDuration)
         self.isFocusSessionActive = isFocusSessionActive
         self.isBreakActive = isBreakActive
+        self.isSystemSleeping = isSystemSleeping
+        self.isScreenLocked = isScreenLocked
         self.source = source
-    }
-}
-
-public struct RuntimeIdleResolver: Sendable {
-    public var awaySeconds: TimeInterval
-
-    public init(awaySeconds: TimeInterval = StateEngineThresholds().awaySeconds) {
-        self.awaySeconds = max(1, awaySeconds)
-    }
-
-    public func effectiveIdleSeconds(
-        reportedIdleSeconds: TimeInterval,
-        elapsedSinceLastTick: TimeInterval?
-    ) -> TimeInterval {
-        let reported = max(0, reportedIdleSeconds)
-        guard let elapsedSinceLastTick = elapsedSinceLastTick.map({ max(0, $0) }),
-              elapsedSinceLastTick >= awaySeconds else {
-            return reported
-        }
-        return max(reported, elapsedSinceLastTick)
-    }
-
-    public func effectiveTickSeconds(
-        defaultTickSeconds: TimeInterval,
-        elapsedSinceLastTick: TimeInterval?,
-        effectiveIdleSeconds: TimeInterval
-    ) -> TimeInterval {
-        let fallback = max(1, defaultTickSeconds)
-        guard let elapsedSinceLastTick = elapsedSinceLastTick.map({ max(0, $0) }),
-              effectiveIdleSeconds >= awaySeconds else {
-            return fallback
-        }
-        return max(fallback, elapsedSinceLastTick)
     }
 }
 

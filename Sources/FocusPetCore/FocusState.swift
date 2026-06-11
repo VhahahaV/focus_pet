@@ -13,7 +13,7 @@ public enum FocusState: String, Codable, Hashable, Sendable, CaseIterable, Ident
         case .focus: "专注"
         case .distracted: "走神"
         case .breakTime: "休息"
-        case .away: "离开"
+        case .away: "暂离"
         }
     }
 
@@ -52,6 +52,8 @@ public enum ActivitySignalSource: String, Codable, Hashable, Sendable, CaseItera
     case appSwitching
     case focusSession
     case breakSession
+    case systemSleep
+    case screenLock
 }
 
 public struct FocusStateSnapshot: Codable, Hashable, Sendable, Identifiable {

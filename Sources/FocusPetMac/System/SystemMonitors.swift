@@ -10,6 +10,34 @@ struct FrontmostApplicationSnapshot: Sendable {
     var windowTitle: String?
 }
 
+struct ScreenPlacementHint: Hashable, Sendable {
+    var screenFrame: CGRect
+    var visibleFrame: CGRect
+}
+
+struct SessionActivitySnapshot: Sendable {
+    var isScreenLocked: Bool
+}
+
+enum SessionActivityMonitor {
+    static func snapshot() -> SessionActivitySnapshot {
+        SessionActivitySnapshot(isScreenLocked: isScreenLocked)
+    }
+
+    static var isScreenLocked: Bool {
+        guard let dictionary = CGSessionCopyCurrentDictionary() as? [String: Any] else {
+            return false
+        }
+        if let locked = dictionary["CGSSessionScreenIsLocked"] as? Bool {
+            return locked
+        }
+        if let locked = dictionary["CGSSessionScreenIsLocked"] as? NSNumber {
+            return locked.boolValue
+        }
+        return false
+    }
+}
+
 struct ForegroundAppMonitor: Sendable {
     func snapshot() -> FrontmostApplicationSnapshot {
         let application = NSWorkspace.shared.frontmostApplication
@@ -38,6 +66,53 @@ struct ForegroundAppMonitor: Sendable {
             let title = info[kCGWindowName as String] as? String
             return title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         }
+    }
+}
+
+@MainActor
+final class MouseScreenTracker {
+    private let stabilitySeconds: TimeInterval
+    private var stableScreenKey: String?
+    private var candidateScreenKey: String?
+    private var candidateScreenSince = Date()
+
+    init(stabilitySeconds: TimeInterval = 3) {
+        self.stabilitySeconds = max(0.5, stabilitySeconds)
+    }
+
+    func update(mouseLocation: CGPoint = NSEvent.mouseLocation, now: Date = Date()) -> ScreenPlacementHint? {
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) })
+                ?? NSScreen.main
+                ?? NSScreen.screens.first else {
+            return nil
+        }
+
+        let key = Self.key(for: screen)
+        if stableScreenKey == nil {
+            stableScreenKey = key
+            candidateScreenKey = key
+            candidateScreenSince = now
+            return ScreenPlacementHint(screenFrame: screen.frame, visibleFrame: screen.visibleFrame)
+        }
+
+        if candidateScreenKey != key {
+            candidateScreenKey = key
+            candidateScreenSince = now
+            return nil
+        }
+
+        guard stableScreenKey != key,
+              now.timeIntervalSince(candidateScreenSince) >= stabilitySeconds else {
+            return nil
+        }
+
+        stableScreenKey = key
+        return ScreenPlacementHint(screenFrame: screen.frame, visibleFrame: screen.visibleFrame)
+    }
+
+    private static func key(for screen: NSScreen) -> String {
+        let frame = screen.frame
+        return "\(Int(frame.origin.x))|\(Int(frame.origin.y))|\(Int(frame.width))|\(Int(frame.height))"
     }
 }
 

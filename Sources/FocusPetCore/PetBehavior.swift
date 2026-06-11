@@ -17,6 +17,9 @@ public enum PetAction: String, Codable, Hashable, Sendable, CaseIterable, Identi
     case welcomeBack
     case dragged
     case landing
+    case run
+    case screenTransfer
+    case mouseSummon
 
     public var id: String { rawValue }
 
@@ -27,17 +30,20 @@ public enum PetAction: String, Codable, Hashable, Sendable, CaseIterable, Identi
         case .breath: "呼吸"
         case .sleep: "睡觉"
         case .wake: "醒来"
-        case .focusStart: "开始专注"
+        case .focusStart: "进入专注"
         case .focusStable: "稳定专注"
         case .stretch: "伸懒腰"
-        case .distractedLook: "观察"
+        case .distractedLook: "走神提醒"
         case .nudgeGentle: "轻提醒"
-        case .nudgeStrong: "明显提醒"
+        case .nudgeStrong: "强提醒"
         case .breakRelax: "休息"
         case .breakEnd: "休息结束"
         case .welcomeBack: "欢迎回来"
         case .dragged: "拖拽"
         case .landing: "落地"
+        case .run: "移动"
+        case .screenTransfer: "切屏"
+        case .mouseSummon: "召回"
         }
     }
 }

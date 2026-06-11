@@ -9,33 +9,19 @@ DST = Path("external_generated_packs/LuoXiaoHeiLocal")
 
 MAPPING = {
     "licking the claw.gif": ("idle", "idle"),
-    "shake-head-txt.gif": ("nudgeDistracted", "nudge_distracted"),
-    "eat-watermelon-txt.gif": ("nudgeEntertainment", "nudge_entertainment"),
+    "shake-head-txt.gif": ("distractedLook", "distracted_look"),
+    "eat-watermelon-txt.gif": ("nudgeStrong", "nudge_strong"),
     "bye.gif": ("welcomeBack", "welcome_back"),
     "play heixiu.gif": ("stretch", "stretch"),
-    "playing guitar.gif": ("idleSpecial", "idle_special"),
-    "eat drumstick.gif": ("playfulIdle", "playful_idle"),
-}
-
-ALIASES = {
-    "sleeping": "idle",
-    "blink": "idle",
-    "walkLeft": "idle",
-    "walkRight": "idle",
-    "dragged": "idle",
-    "landing": "welcomeBack",
-    "nudgeDistracted": "nudgeDistracted",
-    "nudgeEntertainment": "nudgeEntertainment",
-    "welcomeBack": "welcomeBack",
-    "stretch": "stretch",
+    "playing guitar.gif": ("breakRelax", "break_relax"),
+    "eat drumstick.gif": ("run", "run"),
 }
 
 LOOPING_ACTIONS = {
     "idle",
-    "idleSpecial",
-    "nudgeDistracted",
-    "nudgeEntertainment",
-    "playfulIdle",
+    "distractedLook",
+    "breakRelax",
+    "run",
     "stretch",
 }
 
@@ -109,12 +95,29 @@ def main() -> None:
         "defaultScale": 1.0,
         "anchor": "dockAttached",
         "hitBox": {"x": 8, "y": 8, "width": 112, "height": 112},
-        "actionAliases": ALIASES,
         "animations": animations,
     }
 
     with open(DST / "pet.json", "w", encoding="utf-8") as file:
         json.dump(manifest, file, ensure_ascii=False, indent=2)
+
+    (DST / "RESOURCE_NOTES.md").write_text(
+        """# Luo Xiaohei Local Pack Notes
+
+This pack is generated from a local checkout of `https://github.com/jiang-taibai/IXiaoHei.git`.
+
+The inspected upstream checkout contains `README.md` but no license file. Treat
+the resulting frames as local-only test assets. Do not bundle, redistribute, or
+publish these images without confirming rights from the original IP owner and
+asset author.
+
+The generated manifest keeps one semantic action per distinct animation group.
+Runtime-only states such as drag, landing, screen transfer, mouse summon, sleep,
+breathing, and break end are resolved by Focus Pet fallback rules instead of
+being duplicated in this manifest.
+""",
+        encoding="utf-8",
+    )
 
     print(f"[OK] Generated pet pack at: {DST}")
 

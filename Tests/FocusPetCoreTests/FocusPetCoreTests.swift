@@ -58,22 +58,128 @@ struct FocusPetMVPProbe {
         return StateEngine().evaluate(snapshot, previousStableState: .focus).state == .breakTime
     }
 
-    func idleFifteenMinutesIsAway() -> Bool {
+    func idleOneMinuteIsDistracted() -> Bool {
         let snapshot = ActivitySnapshot(
-            timestamp: Date(timeIntervalSince1970: 900),
+            timestamp: Date(timeIntervalSince1970: 61),
             appName: "Cursor",
             bundleID: "com.todesktop.230313mzl4w4u92",
             windowTitle: "Focus Pet project",
             category: .work,
+            idleSeconds: 61,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 61,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+
+        let decision = StateEngine().evaluate(snapshot, previousStableState: .focus)
+        return decision.state == .distracted && decision.reason.contains(.inputIdleDistracted)
+    }
+
+    func systemSleepIsAway() -> Bool {
+        let snapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 900),
+            appName: "Sleep",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
             idleSeconds: 900,
             switchCountLast5Min: 0,
             switchCountLast15Min: 0,
             activeCategoryDuration: 900,
-            isFocusSessionActive: true,
-            isBreakActive: true
+            isFocusSessionActive: false,
+            isBreakActive: true,
+            isSystemSleeping: true,
+            source: [.systemSleep]
         )
 
         return StateEngine().evaluate(snapshot, previousStableState: .breakTime).state == .away
+    }
+
+    func screenLockIsAway() -> Bool {
+        let snapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 300),
+            appName: "Locked Screen",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
+            idleSeconds: 300,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 300,
+            isFocusSessionActive: false,
+            isBreakActive: false,
+            isScreenLocked: true,
+            source: [.screenLock]
+        )
+
+        let decision = StateEngine().evaluate(snapshot, previousStableState: .distracted)
+        return decision.state == .away && decision.reason.contains(.screenLocked)
+    }
+
+    func longInputIdleIsAway() -> Bool {
+        let snapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 601),
+            appName: "Cursor",
+            bundleID: "com.todesktop.230313mzl4w4u92",
+            windowTitle: "Focus Pet project",
+            category: .work,
+            idleSeconds: 601,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 601,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+
+        let decision = StateEngine().evaluate(snapshot, previousStableState: .distracted)
+        return decision.state == .away && decision.reason.contains(.longInputIdleAway)
+    }
+
+    func incrementalAwayRecordingMergesWithoutDuplication() -> Bool {
+        let start = Date(timeIntervalSince1970: 0)
+        let firstSnapshot = ActivitySnapshot(
+            timestamp: start.addingTimeInterval(10),
+            appName: "Locked Screen",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
+            idleSeconds: 10,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 10,
+            isFocusSessionActive: false,
+            isBreakActive: false,
+            isScreenLocked: true,
+            source: [.screenLock]
+        )
+        let secondSnapshot = ActivitySnapshot(
+            timestamp: start.addingTimeInterval(15),
+            appName: "Locked Screen",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
+            idleSeconds: 15,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 15,
+            isFocusSessionActive: false,
+            isBreakActive: false,
+            isScreenLocked: true,
+            source: [.screenLock]
+        )
+        let engine = StateEngine()
+        let firstDecision = engine.evaluate(firstSnapshot, previousStableState: .distracted)
+        let secondDecision = engine.evaluate(secondSnapshot, previousStableState: .away)
+        var segments: [StateSegment] = []
+        segments = TimeTracker(tickSeconds: 10).record(decision: firstDecision, snapshot: firstSnapshot, segments: segments)
+        segments = TimeTracker(tickSeconds: 5).record(decision: secondDecision, snapshot: secondSnapshot, segments: segments)
+
+        return segments.count == 1
+            && segments[0].state == .away
+            && segments[0].appName == "Locked Screen"
+            && segments[0].durationSeconds == 15
     }
 
     func frequentSwitchingBecomesDistracted() -> Bool {
@@ -274,12 +380,9 @@ struct FocusPetMVPProbe {
             && segment.titleDisplay == nil
     }
 
-    func overnightFocusArtifactsAreRepaired() -> Bool {
-        let calendar = Calendar(identifier: .gregorian)
-        let start = calendar.date(from: DateComponents(year: 2026, month: 6, day: 11, hour: 1))!
-        let end = calendar.date(from: DateComponents(year: 2026, month: 6, day: 11, hour: 7))!
-        let nudgeTime = calendar.date(from: DateComponents(year: 2026, month: 6, day: 11, hour: 3))!
-
+    func overnightIdleIsNotHeuristicallyConvertedToAway() -> Bool {
+        let start = Date(timeIntervalSince1970: 0)
+        let end = start.addingTimeInterval(6 * 60 * 60)
         let snapshot = LocalStoreSnapshot(
             stateSegments: [
                 StateSegment(
@@ -311,7 +414,7 @@ struct FocusPetMVPProbe {
             ],
             nudges: [
                 NudgeEvent(
-                    time: nudgeTime,
+                    time: start.addingTimeInterval(2 * 60 * 60),
                     reason: .veryLongFocusRest,
                     state: .focus,
                     appName: "Cursor",
@@ -323,14 +426,11 @@ struct FocusPetMVPProbe {
             ]
         )
 
-        let repaired = snapshot.repairedOvernightFocusArtifacts(now: end)
-        return repaired.stateSegments.count == 1
-            && repaired.stateSegments[0].state == .away
-            && repaired.stateSegments[0].category == .ignore
-            && repaired.appUsage.isEmpty
-            && repaired.nudges.isEmpty
-            && repaired.focusSessions[0].effectiveFocusSeconds == 0
-            && repaired.focusSessions[0].awaySeconds == Int(end.timeIntervalSince(start))
+        return snapshot.stateSegments.count == 1
+            && snapshot.stateSegments[0].state == .focus
+            && snapshot.appUsage.count == 1
+            && snapshot.nudges.count == 1
+            && snapshot.focusSessions[0].awaySeconds == 0
     }
 }
 
@@ -339,7 +439,11 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.cursorWorkForAnHourIsFocus(), "Cursor for 60 minutes should be focus")
     precondition(probe.youtubeForTenMinutesIsDistracted(), "YouTube for 10 minutes should be distracted")
     precondition(probe.manualBreakOutranksEntertainment(), "manual break should outrank entertainment")
-    precondition(probe.idleFifteenMinutesIsAway(), "15 minutes idle should be away")
+    precondition(probe.idleOneMinuteIsDistracted(), "1+ minute without input should be distracted")
+    precondition(probe.systemSleepIsAway(), "system sleep should be away")
+    precondition(probe.screenLockIsAway(), "screen lock should be away")
+    precondition(probe.longInputIdleIsAway(), "long input idle should be away")
+    precondition(probe.incrementalAwayRecordingMergesWithoutDuplication(), "incremental away recording should not duplicate screen lock time")
     precondition(probe.frequentSwitchingBecomesDistracted(), "12+ app switches in 5 minutes should be distracted")
     precondition(probe.focusTwentyFiveMinutesTriggersRestNudge(), "25 minutes focus should trigger rest nudge")
     precondition(probe.windowTitlePrivacyDoesNotStoreRawTitleByDefault(), "default privacy should not store raw titles")
@@ -349,5 +453,5 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.focusSessionReportsCompletionAndDecodesLegacyJSON(), "focus sessions should expose completion and decode legacy JSON")
     precondition(probe.groupedRulesClassifyExpectedCategories(), "grouped rules should classify apps and title keywords")
     precondition(probe.redactedExportRemovesTitleMetadata(), "redacted export should remove title metadata")
-    precondition(probe.overnightFocusArtifactsAreRepaired(), "overnight focus artifacts should be repaired")
+    precondition(probe.overnightIdleIsNotHeuristicallyConvertedToAway(), "stored history should not be heuristically rewritten")
 }()

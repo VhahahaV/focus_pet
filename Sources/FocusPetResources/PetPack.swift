@@ -143,13 +143,13 @@ public struct PetPack: Identifiable, Codable, Hashable, Sendable {
         case "sleeping":
             return .sleep
         case "nudgeDistracted":
-            return .nudgeGentle
+            return .distractedLook
         case "nudgeEntertainment":
             return .nudgeStrong
         case "welcomeBack":
             return .welcomeBack
         case "idleSpecial", "playfulIdle":
-            return .breakRelax
+            return key == "idleSpecial" ? .breakRelax : .run
         default:
             return nil
         }
@@ -160,6 +160,14 @@ public struct PetActionResolver: Sendable {
     public init() {}
 
     public func animationKey(for action: PetAction, in pack: PetPack) -> PetAction? {
+        if let semanticKey = semanticAnimationKey(for: action, in: pack) {
+            return semanticKey
+        }
+
+        return pack.animations.keys.sorted { $0.rawValue < $1.rawValue }.first
+    }
+
+    public func semanticAnimationKey(for action: PetAction, in pack: PetPack) -> PetAction? {
         if pack.animations[action] != nil {
             return action
         }
@@ -168,26 +176,42 @@ public struct PetActionResolver: Sendable {
             return fallback
         }
 
-        return pack.animations.keys.sorted { $0.rawValue < $1.rawValue }.first
+        return nil
     }
 
     public func fallbacks(for action: PetAction) -> [PetAction] {
         switch action {
-        case .blink:
+        case .blink, .breath, .focusStable:
             return [.idle]
         case .wake:
             return [.welcomeBack, .idle]
-        case .focusStart, .focusStable, .stretch, .dragged, .landing:
+        case .focusStart:
+            return [.welcomeBack, .idle]
+        case .stretch:
             return [.idle]
+        case .dragged:
+            return [.run, .idle]
+        case .landing:
+            return [.welcomeBack, .idle]
+        case .run:
+            return [.idle]
+        case .screenTransfer:
+            return [.run, .welcomeBack, .idle]
+        case .mouseSummon:
+            return [.welcomeBack, .distractedLook, .idle]
         case .distractedLook:
-            return [.idle]
+            return [.nudgeGentle, .idle]
+        case .nudgeGentle:
+            return [.distractedLook, .idle]
         case .nudgeStrong:
-            return [.nudgeGentle, .distractedLook, .idle]
+            return [.distractedLook, .nudgeGentle, .welcomeBack, .idle]
         case .breakEnd:
+            return [.welcomeBack, .idle]
+        case .sleep:
+            return [.breakRelax, .idle]
+        case .breakRelax:
             return [.idle]
-        case .breath:
-            return [.idle]
-        case .idle, .sleep, .nudgeGentle, .breakRelax, .welcomeBack:
+        case .idle, .welcomeBack:
             return [.idle, .sleep]
         }
     }
@@ -238,57 +262,6 @@ public struct PetPackRecord: Identifiable, Codable, Hashable, Sendable {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
-    public func coverage(for actions: [PetAction] = PetAction.allCases) -> [PetActionCoverage] {
-        let resolver = PetActionResolver()
-        return actions.map { action in
-            let resolved = resolver.animationKey(for: action, in: pack)
-            let frameCount = resolved.map { frameURLs(for: $0).count } ?? 0
-            let status: PetActionCoverageStatus
-            if resolved == action {
-                status = .native
-            } else if resolved != nil {
-                status = .fallback
-            } else {
-                status = .missing
-            }
-
-            return PetActionCoverage(
-                action: action,
-                resolvedAction: resolved,
-                status: status,
-                frameCount: frameCount
-            )
-        }
-    }
-}
-
-public enum PetActionCoverageStatus: String, Codable, Hashable, Sendable {
-    case native
-    case fallback
-    case missing
-
-    public var title: String {
-        switch self {
-        case .native: "原生"
-        case .fallback: "Fallback"
-        case .missing: "缺失"
-        }
-    }
-}
-
-public struct PetActionCoverage: Identifiable, Codable, Hashable, Sendable {
-    public var id: String { action.rawValue }
-    public var action: PetAction
-    public var resolvedAction: PetAction?
-    public var status: PetActionCoverageStatus
-    public var frameCount: Int
-
-    public init(action: PetAction, resolvedAction: PetAction?, status: PetActionCoverageStatus, frameCount: Int) {
-        self.action = action
-        self.resolvedAction = resolvedAction
-        self.status = status
-        self.frameCount = max(0, frameCount)
-    }
 }
 
 private struct LegacyLicense: Codable {

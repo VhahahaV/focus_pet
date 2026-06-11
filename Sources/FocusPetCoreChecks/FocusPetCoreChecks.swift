@@ -10,7 +10,10 @@ enum FocusPetCoreChecks {
         checkStatePriority()
         checkDistractedThreshold()
         checkFrequentSwitching()
-        checkLongTickGapBecomesEffectiveIdle()
+        checkInputIdleBecomesDistracted()
+        checkScreenLockBecomesAway()
+        checkLongInputIdleBecomesAway()
+        checkIncrementalAwayRecordingMergesWithoutDuplication()
         checkNudgePolicy()
         checkOldNudgeDoesNotOverridePetState()
         checkFocusAmbientActionsCycle()
@@ -20,6 +23,7 @@ enum FocusPetCoreChecks {
         checkFocusSessionReporting()
         checkGroupedRules()
         checkPetFallback()
+        checkLocalLuoXiaoHeiActions()
         checkPetHoverPresentation()
         checkPetNonLoopFramesDoNotFreeze()
         checkPetSettingsCompatibility()
@@ -33,18 +37,20 @@ enum FocusPetCoreChecks {
     private static func checkStatePriority() {
         let snapshot = ActivitySnapshot(
             timestamp: Date(timeIntervalSince1970: 900),
-            appName: "Cursor",
-            bundleID: "cursor",
-            windowTitle: "Project",
-            category: .work,
+            appName: "Sleep",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
             idleSeconds: 900,
             switchCountLast5Min: 0,
             switchCountLast15Min: 0,
             activeCategoryDuration: 900,
             isFocusSessionActive: true,
-            isBreakActive: true
+            isBreakActive: true,
+            isSystemSleeping: true,
+            source: [.systemSleep]
         )
-        expect(StateEngine().evaluate(snapshot, previousStableState: .breakTime).state == .away, "away should outrank break and focus")
+        expect(StateEngine().evaluate(snapshot, previousStableState: .breakTime).state == .away, "system sleep should be the only automatic away state and outrank break")
     }
 
     private static func checkDistractedThreshold() {
@@ -82,16 +88,108 @@ enum FocusPetCoreChecks {
         expect(StateEngine().evaluate(snapshot, previousStableState: .focus).state == .distracted, "frequent app switching should be distracted")
     }
 
-    private static func checkLongTickGapBecomesEffectiveIdle() {
-        let resolver = RuntimeIdleResolver(awaySeconds: 10 * 60)
-        let idle = resolver.effectiveIdleSeconds(reportedIdleSeconds: 3, elapsedSinceLastTick: 8 * 60 * 60)
-        let tick = resolver.effectiveTickSeconds(
-            defaultTickSeconds: 10,
-            elapsedSinceLastTick: 8 * 60 * 60,
-            effectiveIdleSeconds: idle
+    private static func checkInputIdleBecomesDistracted() {
+        let snapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 61),
+            appName: "Cursor",
+            bundleID: "cursor",
+            windowTitle: "Project",
+            category: .work,
+            idleSeconds: 61,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 61,
+            isFocusSessionActive: false,
+            isBreakActive: false
         )
-        expect(idle >= 8 * 60 * 60, "overnight timer gaps should be treated as idle time")
-        expect(tick >= 8 * 60 * 60, "overnight timer gaps should backfill the full away segment")
+        let decision = StateEngine().evaluate(snapshot, previousStableState: .focus)
+        expect(decision.state == .distracted && decision.reason.contains(.inputIdleDistracted), "1+ minute without input should be distracted, not away")
+    }
+
+    private static func checkScreenLockBecomesAway() {
+        let snapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 300),
+            appName: "Locked Screen",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
+            idleSeconds: 300,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 300,
+            isFocusSessionActive: false,
+            isBreakActive: false,
+            isScreenLocked: true,
+            source: [.screenLock]
+        )
+        let decision = StateEngine().evaluate(snapshot, previousStableState: .distracted)
+        expect(decision.state == .away && decision.reason.contains(.screenLocked), "screen lock should be away and outrank distracted")
+    }
+
+    private static func checkLongInputIdleBecomesAway() {
+        let snapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 601),
+            appName: "Cursor",
+            bundleID: "cursor",
+            windowTitle: "Project",
+            category: .work,
+            idleSeconds: 601,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 601,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+        let decision = StateEngine().evaluate(snapshot, previousStableState: .distracted)
+        expect(decision.state == .away && decision.reason.contains(.longInputIdleAway), "10+ minutes without input should be away, not distracted")
+    }
+
+    private static func checkIncrementalAwayRecordingMergesWithoutDuplication() {
+        let start = Date(timeIntervalSince1970: 0)
+        let firstSnapshot = ActivitySnapshot(
+            timestamp: start.addingTimeInterval(10),
+            appName: "Locked Screen",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
+            idleSeconds: 10,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 10,
+            isFocusSessionActive: false,
+            isBreakActive: false,
+            isScreenLocked: true,
+            source: [.screenLock]
+        )
+        let secondSnapshot = ActivitySnapshot(
+            timestamp: start.addingTimeInterval(15),
+            appName: "Locked Screen",
+            bundleID: nil,
+            windowTitle: nil,
+            category: .ignore,
+            idleSeconds: 15,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 15,
+            isFocusSessionActive: false,
+            isBreakActive: false,
+            isScreenLocked: true,
+            source: [.screenLock]
+        )
+        let engine = StateEngine()
+        let firstDecision = engine.evaluate(firstSnapshot, previousStableState: .distracted)
+        let secondDecision = engine.evaluate(secondSnapshot, previousStableState: .away)
+        var segments: [StateSegment] = []
+        segments = TimeTracker(tickSeconds: 10).record(decision: firstDecision, snapshot: firstSnapshot, segments: segments)
+        segments = TimeTracker(tickSeconds: 5).record(decision: secondDecision, snapshot: secondSnapshot, segments: segments)
+
+        expect(
+            segments.count == 1
+                && segments[0].state == .away
+                && segments[0].appName == "Locked Screen"
+                && segments[0].durationSeconds == 15,
+            "incremental screen-lock away recording should merge without duplicated time"
+        )
     }
 
     private static func checkNudgePolicy() {
@@ -205,6 +303,28 @@ enum FocusPetCoreChecks {
     private static func checkPetFallback() {
         let pack = PetPackCatalog.fallbackPack
         expect(PetActionResolver().animationKey(for: .nudgeStrong, in: pack) == .nudgeGentle, "strong nudge should fall back to gentle nudge")
+    }
+
+    private static func checkLocalLuoXiaoHeiActions() {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("external_generated_packs/LuoXiaoHeiLocal", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: root.appendingPathComponent("pet.json").path),
+              let record = PetPackCatalog().record(at: root, isBundled: false) else {
+            return
+        }
+
+        let nativeActions = Set(record.pack.animations.keys)
+        let expectedNativeActions: Set<PetAction> = [.idle, .distractedLook, .nudgeStrong, .welcomeBack, .stretch, .breakRelax, .run]
+        expect(expectedNativeActions.isSubset(of: nativeActions), "local Luo Xiaohei pack should keep one native action per distinct animation group")
+        expect(!nativeActions.contains(.screenTransfer), "local Luo Xiaohei pack should not duplicate screenTransfer as a native animation")
+        expect(!nativeActions.contains(.mouseSummon), "local Luo Xiaohei pack should not duplicate mouseSummon as a native animation")
+        expect(!nativeActions.contains(.breakEnd), "local Luo Xiaohei pack should not duplicate breakEnd as a native animation")
+
+        for action in [PetAction.dragged, .landing, .screenTransfer, .mouseSummon, .breakEnd, .sleep, .breath] {
+            let resolved = PetActionResolver().animationKey(for: action, in: record.pack)
+            expect(resolved != nil, "local Luo Xiaohei pack should resolve \(action.rawValue) through fallback")
+            expect(!record.frameURLs(for: action).isEmpty, "local Luo Xiaohei \(action.rawValue) fallback frames should be available")
+        }
     }
 
     private static func checkPetHoverPresentation() {
