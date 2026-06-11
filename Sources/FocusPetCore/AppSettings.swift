@@ -1,0 +1,219 @@
+import Foundation
+
+public struct ReminderSettings: Codable, Hashable, Sendable {
+    public var enablePetBubbles: Bool
+    public var enableSystemNotifications: Bool
+    public var pauseUntil: Date?
+
+    public init(
+        enablePetBubbles: Bool = true,
+        enableSystemNotifications: Bool = false,
+        pauseUntil: Date? = nil
+    ) {
+        self.enablePetBubbles = enablePetBubbles
+        self.enableSystemNotifications = enableSystemNotifications
+        self.pauseUntil = pauseUntil
+    }
+}
+
+public enum PetPlacementMode: String, Codable, Hashable, Sendable, CaseIterable, Identifiable {
+    case bottomRight
+    case bottomLeft
+    case topRight
+    case topLeft
+    case dock
+    case custom
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .bottomRight: "右下角"
+        case .bottomLeft: "左下角"
+        case .topRight: "右上角"
+        case .topLeft: "左上角"
+        case .dock: "Dock 附近"
+        case .custom: "自定义"
+        }
+    }
+
+    public var symbolName: String {
+        switch self {
+        case .bottomRight: "arrow.down.right"
+        case .bottomLeft: "arrow.down.left"
+        case .topRight: "arrow.up.right"
+        case .topLeft: "arrow.up.left"
+        case .dock: "dock.rectangle"
+        case .custom: "hand.draw"
+        }
+    }
+}
+
+public struct DataRetentionSettings: Codable, Hashable, Sendable {
+    public var stateRetentionDays: Int
+    public var appUsageRetentionDays: Int
+    public var sessionRetentionDays: Int
+    public var nudgeRetentionDays: Int
+
+    public init(
+        stateRetentionDays: Int = 30,
+        appUsageRetentionDays: Int = 30,
+        sessionRetentionDays: Int = 90,
+        nudgeRetentionDays: Int = 30
+    ) {
+        self.stateRetentionDays = max(1, stateRetentionDays)
+        self.appUsageRetentionDays = max(1, appUsageRetentionDays)
+        self.sessionRetentionDays = max(1, sessionRetentionDays)
+        self.nudgeRetentionDays = max(1, nudgeRetentionDays)
+    }
+}
+
+public struct PetSettings: Codable, Hashable, Sendable {
+    public var opacity: Double
+    public var size: Double
+    public var animationEnabled: Bool
+    public var hidden: Bool
+    public var selectedPackID: String
+    public var placement: PetPlacementMode
+    public var customOriginX: Double?
+    public var customOriginY: Double?
+    public var hoverStatusEnabled: Bool
+
+    public init(
+        opacity: Double = 0.94,
+        size: Double = 150,
+        animationEnabled: Bool = true,
+        hidden: Bool = false,
+        selectedPackID: String = "luo_xiaohei_local",
+        placement: PetPlacementMode = .bottomRight,
+        customOriginX: Double? = nil,
+        customOriginY: Double? = nil,
+        hoverStatusEnabled: Bool = true
+    ) {
+        self.opacity = min(1, max(0.35, opacity))
+        self.size = min(260, max(96, size))
+        self.animationEnabled = animationEnabled
+        self.hidden = hidden
+        self.selectedPackID = selectedPackID
+        self.placement = placement
+        self.customOriginX = customOriginX
+        self.customOriginY = customOriginY
+        self.hoverStatusEnabled = hoverStatusEnabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case opacity
+        case size
+        case animationEnabled
+        case hidden
+        case selectedPackID
+        case placement
+        case customOriginX
+        case customOriginY
+        case hoverStatusEnabled
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            opacity: try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 0.94,
+            size: try container.decodeIfPresent(Double.self, forKey: .size) ?? 150,
+            animationEnabled: try container.decodeIfPresent(Bool.self, forKey: .animationEnabled) ?? true,
+            hidden: try container.decodeIfPresent(Bool.self, forKey: .hidden) ?? false,
+            selectedPackID: try container.decodeIfPresent(String.self, forKey: .selectedPackID) ?? "luo_xiaohei_local",
+            placement: try container.decodeIfPresent(PetPlacementMode.self, forKey: .placement) ?? .bottomRight,
+            customOriginX: try container.decodeIfPresent(Double.self, forKey: .customOriginX),
+            customOriginY: try container.decodeIfPresent(Double.self, forKey: .customOriginY),
+            hoverStatusEnabled: try container.decodeIfPresent(Bool.self, forKey: .hoverStatusEnabled) ?? true
+        )
+    }
+}
+
+public struct AppSettings: Codable, Hashable, Sendable {
+    public var hasCompletedOnboarding: Bool
+    public var privacy: WindowTitlePrivacy
+    public var reminder: ReminderSettings
+    public var retention: DataRetentionSettings
+    public var pet: PetSettings
+    public var focusTargetMinutes: Int
+    public var breakMinutes: Int
+    public var autoStartBreak: Bool
+
+    public init(
+        hasCompletedOnboarding: Bool = false,
+        privacy: WindowTitlePrivacy = .default,
+        reminder: ReminderSettings = ReminderSettings(),
+        retention: DataRetentionSettings = DataRetentionSettings(),
+        pet: PetSettings = PetSettings(),
+        focusTargetMinutes: Int = 25,
+        breakMinutes: Int = 5,
+        autoStartBreak: Bool = true
+    ) {
+        self.hasCompletedOnboarding = hasCompletedOnboarding
+        self.privacy = privacy
+        self.reminder = reminder
+        self.retention = retention
+        self.pet = pet
+        self.focusTargetMinutes = max(1, focusTargetMinutes)
+        self.breakMinutes = max(1, breakMinutes)
+        self.autoStartBreak = autoStartBreak
+    }
+}
+
+public struct RetentionResult: Codable, Hashable, Sendable {
+    public var removedStateSegments: Int
+    public var removedAppUsageSegments: Int
+    public var removedFocusSessions: Int
+    public var removedBreakSessions: Int
+    public var removedNudges: Int
+
+    public var totalRemoved: Int {
+        removedStateSegments + removedAppUsageSegments + removedFocusSessions + removedBreakSessions + removedNudges
+    }
+}
+
+public struct DataRetentionManager: Sendable {
+    public init() {}
+
+    public func prune(
+        now: Date,
+        settings: DataRetentionSettings,
+        stateSegments: [StateSegment],
+        appUsage: [AppUsageSegment],
+        focusSessions: [FocusSession],
+        breakSessions: [BreakSession],
+        nudges: [NudgeEvent]
+    ) -> (
+        stateSegments: [StateSegment],
+        appUsage: [AppUsageSegment],
+        focusSessions: [FocusSession],
+        breakSessions: [BreakSession],
+        nudges: [NudgeEvent],
+        result: RetentionResult
+    ) {
+        let keptState = stateSegments.filter { $0.end >= cutoff(now: now, days: settings.stateRetentionDays) }
+        let keptUsage = appUsage.filter { $0.end >= cutoff(now: now, days: settings.appUsageRetentionDays) }
+        let keptFocus = focusSessions.filter { ($0.end ?? $0.start) >= cutoff(now: now, days: settings.sessionRetentionDays) }
+        let keptBreaks = breakSessions.filter { ($0.end ?? $0.start) >= cutoff(now: now, days: settings.sessionRetentionDays) }
+        let keptNudges = nudges.filter { $0.time >= cutoff(now: now, days: settings.nudgeRetentionDays) }
+
+        return (
+            keptState,
+            keptUsage,
+            keptFocus,
+            keptBreaks,
+            keptNudges,
+            RetentionResult(
+                removedStateSegments: stateSegments.count - keptState.count,
+                removedAppUsageSegments: appUsage.count - keptUsage.count,
+                removedFocusSessions: focusSessions.count - keptFocus.count,
+                removedBreakSessions: breakSessions.count - keptBreaks.count,
+                removedNudges: nudges.count - keptNudges.count
+            )
+        )
+    }
+
+    private func cutoff(now: Date, days: Int) -> Date {
+        now.addingTimeInterval(-Double(max(1, days)) * 86_400)
+    }
+}

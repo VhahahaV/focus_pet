@@ -1,37 +1,34 @@
-# Focus Pet V0
+# Focus Pet
 
-Focus Pet 是一个本地运行的 macOS 专注桌宠原型。当前版本包含菜单栏入口、桌宠浮窗、今日报告、默认规则、隐私面板、摄像头权限入口、前台应用分类、可演示的状态融合/提醒引擎，以及默认 live 检测管线。
+Focus Pet is a local macOS productivity desktop pet. It uses local system signals to classify the user into four states: focus, distracted, break, and away.
 
-## MVP 行为
+## MVP Scope
 
-- 默认运行在 `真实检测` 模式。
-- live 管线已接入 Apple Vision `VNDetectFaceLandmarksRequest` 做本地人脸检测；无法检测时才保持 `unknown`/`missing`。
-- Demo 场景会切换到 `Demo` 模式，事件会单独标记，不计入真实日报指标。
-- 暂停检测会停止摄像头 session，并且不会继续写入状态事件。
-- 当前视觉算法只做粗粒度判断：face present、yaw 侧转、pitch 低头和 screen/off-screen/down 分类；不做人脸身份识别。
-- 本地 JSON 分开保存设置、规则、提醒和状态事件；删除数据后不会自动回填 Demo seed 数据。
+- macOS menu bar app and desktop `NSPanel` pet.
+- Local signal collection: frontmost app, bundle id, window title classification, input idle time, and app switch frequency.
+- Four-state engine with priority: away, break, focus, distracted.
+- State segments, app usage segments, focus sessions, break sessions, nudges, and daily summary.
+- Five dashboard tabs: 今日, 时间分布, 专注会话, 规则, 设置.
+- Resource pack parsing, validation, bundled pack loading, and pet action fallback.
+- Local-only storage with clean MVP schema reset.
 
-## 构建
+## Architecture
+
+SwiftPM targets:
+
+- `FocusPetCore`: pure domain logic, state engine, time tracking, nudges, settings, summaries.
+- `FocusPetStorage`: local JSON store, export, delete, and retention bootstrap.
+- `FocusPetResources`: pet pack manifests, validation, fallback, bundled pack catalog.
+- `FocusPetRenderer`: desktop pet panel and SwiftUI renderer.
+- `FocusPetMac`: macOS app entry, menu bar, monitors, model, and dashboard UI.
+
+## Build And Test
 
 ```bash
 swift build
-```
-
-## 核心校验
-
-当前机器的 Command Line Tools 没有可用的 `XCTest`/`Testing` 模块，所以核心逻辑使用一个无外部测试框架的校验入口：
-
-```bash
+swift test
 swift run FocusPetCoreChecks
-```
-
-## 运行 App 原型
-
-```bash
 ./scripts/package-macos-app.sh
-open .build/FocusPet.app
 ```
 
-打包脚本会生成带 `NSCameraUsageDescription` 的 `.app`，用于正常触发 macOS 摄像头权限说明。V0 不保存视频或图片，只保存结构化状态事件和聚合统计。
-
-当前开发环境只有 Command Line Tools，完整 `xcodebuild` 需要安装 Xcode 后再启用；本仓库默认使用 SwiftPM 构建和打包。
+The packaged app is written to `.build/FocusPet.app`.

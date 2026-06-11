@@ -1,126 +1,164 @@
+import FocusPetCore
+import FocusPetResources
 import Foundation
-@testable import FocusPetCore
 
-struct PetPackTests {
-    func actionFallbackUsesAliasBeforeIdle() -> Bool {
+struct PetPackMVPProbe {
+    func missingStrongNudgeFallsBackToGentle() -> Bool {
         let pack = PetPack(
             schemaVersion: 1,
-            id: "alias_pack",
-            name: "Alias Pack",
-            source: .userImported,
-            distribution: .localOnly,
-            style: nil,
-            license: nil,
-            defaultSize: PetPackSize(width: 128, height: 128),
-            defaultScale: 1,
-            anchor: .dockAttached,
-            hitBox: nil,
+            id: "minimal",
+            name: "Minimal",
+            author: "Focus Pet",
+            style: "minimal_2d",
+            license: "original",
+            distribution: "redistributable",
+            defaultSize: PetPackSize(width: 160, height: 160),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
             animations: [
-                .idle: PetAnimationSpec(folder: "idle", fps: 6, loop: true, frameCount: nil, renderer: .pngSequence),
-                .shakeHead: PetAnimationSpec(folder: "shake", fps: 8, loop: false, frameCount: nil, renderer: .pngSequence)
-            ],
-            actionAliases: [.nudgeDistracted: .shakeHead]
+                .idle: PetAnimationSpec(folder: "idle", fps: 6, loop: true, frameCount: 1),
+                .sleep: PetAnimationSpec(folder: "sleep", fps: 4, loop: true, frameCount: 1),
+                .nudgeGentle: PetAnimationSpec(folder: "nudgeGentle", fps: 8, loop: false, frameCount: 1),
+                .welcomeBack: PetAnimationSpec(folder: "welcomeBack", fps: 8, loop: false, frameCount: 1),
+                .breakRelax: PetAnimationSpec(folder: "breakRelax", fps: 6, loop: true, frameCount: 1)
+            ]
         )
 
-        return pack.animationKey(for: .nudgeDistracted) == .shakeHead
+        return PetActionResolver().animationKey(for: .nudgeStrong, in: pack) == .nudgeGentle
     }
 
-    func actionFallbackUsesIdleThenSleepingThenFirstAnimation() -> Bool {
-        let idlePack = PetPack.minimumForTest(id: "idle", animations: [.idle: "idle"])
-        guard idlePack.animationKey(for: .welcomeBack) == .idle else { return false }
-
-        let sleepingPack = PetPack.minimumForTest(id: "sleeping", animations: [.sleeping: "sleeping"])
-        guard sleepingPack.animationKey(for: .welcomeBack) == .sleeping else { return false }
-
-        let firstPack = PetPack.minimumForTest(id: "first", animations: [.stretch: "stretch"])
-        return firstPack.animationKey(for: .welcomeBack) == .stretch
-    }
-
-    func validatorRejectsMissingManifest() -> Bool {
-        withTemporaryDirectory { root in
-            let result = PetPackValidator().validate(rootURL: root)
-            return !result.isValid && result.errors.contains(.missingManifest)
-        }
-    }
-
-    func validatorAllowsWarningsWhenPlayableFramesExist() throws -> Bool {
-        try withTemporaryDirectory { root in
-            try FileManager.default.createDirectory(
-                at: root.appendingPathComponent("idle"),
-                withIntermediateDirectories: true
-            )
-            try Data([0x89, 0x50, 0x4E, 0x47]).write(to: root.appendingPathComponent("idle/000.png"))
-            let manifest = """
-            {
-              "schemaVersion": 1,
-              "id": "warning_pack",
-              "name": "Warning Pack",
-              "source": "userImported",
-              "distribution": "localOnly",
-              "license": {"type": "unknown"},
-              "defaultSize": {"width": 128, "height": 128},
-              "defaultScale": 1.0,
-              "anchor": "dockAttached",
-              "animations": {
-                "idle": {"folder": "idle", "fps": 8, "loop": true}
-              }
-            }
-            """
-            try manifest.data(using: .utf8)!.write(to: root.appendingPathComponent("pet.json"))
-
-            let result = PetPackValidator().validate(rootURL: root)
-            return result.isValid
-                && result.warnings.contains(.missingPreview)
-                && result.warnings.contains(.unknownLicense)
-        }
-    }
-}
-
-private let runPetPackRegressionProbe: Void = {
-    let probe = PetPackTests()
-    precondition(
-        probe.actionFallbackUsesAliasBeforeIdle(),
-        "PetPack should resolve explicit aliases before idle fallback"
-    )
-    precondition(
-        probe.actionFallbackUsesIdleThenSleepingThenFirstAnimation(),
-        "PetPack should fall back to idle, sleeping, then first available animation"
-    )
-    precondition(
-        probe.validatorRejectsMissingManifest(),
-        "PetPackValidator should reject missing pet.json"
-    )
-    precondition(
-        (try? probe.validatorAllowsWarningsWhenPlayableFramesExist()) == true,
-        "PetPackValidator should allow warnings when playable frames exist"
-    )
-}()
-
-private extension PetPack {
-    static func minimumForTest(id: String, animations: [PetAnimationKey: String]) -> PetPack {
-        PetPack(
+    func validatorRequiresMinimumActions() -> Bool {
+        let pack = PetPack(
             schemaVersion: 1,
-            id: id,
-            name: id,
-            source: .userImported,
-            distribution: .localOnly,
-            style: nil,
-            license: nil,
-            defaultSize: PetPackSize(width: 128, height: 128),
-            defaultScale: 1,
-            anchor: .dockAttached,
-            hitBox: nil,
-            animations: animations.mapValues {
-                PetAnimationSpec(folder: $0, fps: 8, loop: true, frameCount: nil, renderer: .pngSequence)
-            },
-            actionAliases: [:]
+            id: "bad",
+            name: "Bad",
+            author: "Focus Pet",
+            style: "minimal_2d",
+            license: "original",
+            distribution: "redistributable",
+            defaultSize: PetPackSize(width: 160, height: 160),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
+            animations: [.idle: PetAnimationSpec(folder: "idle", fps: 6, loop: true, frameCount: 1)]
         )
+
+        let result = PetPackValidator().validate(pack)
+        return result.isValid == false && result.errors.contains(.missingRequiredAction(.sleep))
+    }
+
+    func legacyLuoXiaoHeiManifestDecodesDuplicateBreakAliases() -> Bool {
+        let manifest = """
+        {
+          "schemaVersion": 1,
+          "id": "luo_xiaohei_local",
+          "name": "罗小黑",
+          "distribution": "localOnly",
+          "style": "anime_gif",
+          "license": {
+            "type": "unknown",
+            "note": "Local testing only."
+          },
+          "defaultSize": {"width": 128, "height": 128},
+          "anchor": "dockAttached",
+          "animations": {
+            "idle": {"folder": "idle", "fps": 8, "loop": true, "frameCount": 8, "renderer": "pngSequence"},
+            "nudgeDistracted": {"folder": "nudge_distracted", "fps": 8, "loop": true, "frameCount": 10, "renderer": "pngSequence"},
+            "idleSpecial": {"folder": "idle_special", "fps": 8, "loop": true, "frameCount": 6, "renderer": "pngSequence"},
+            "playfulIdle": {"folder": "playful_idle", "fps": 8, "loop": true, "frameCount": 22, "renderer": "pngSequence"},
+            "welcomeBack": {"folder": "welcome_back", "fps": 8, "loop": false, "frameCount": 16, "renderer": "pngSequence"}
+          }
+        }
+        """
+
+        guard let data = manifest.data(using: .utf8),
+              let pack = try? JSONDecoder().decode(PetPack.self, from: data) else {
+            return false
+        }
+
+        return pack.id == "luo_xiaohei_local"
+            && pack.animations[.nudgeGentle]?.folder == "nudge_distracted"
+            && pack.animations[.breakRelax] != nil
+            && pack.license.contains("Local testing only.")
+    }
+
+    func packCoverageReportsFallbacks() -> Bool {
+        let pack = PetPack(
+            schemaVersion: 1,
+            id: "coverage",
+            name: "Coverage",
+            author: "Focus Pet",
+            style: "minimal_2d",
+            license: "original",
+            distribution: "redistributable",
+            defaultSize: PetPackSize(width: 160, height: 160),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
+            animations: [
+                .idle: PetAnimationSpec(folder: "idle", fps: 6, loop: true, frameCount: 1),
+                .sleep: PetAnimationSpec(folder: "sleep", fps: 4, loop: true, frameCount: 1),
+                .nudgeGentle: PetAnimationSpec(folder: "nudgeGentle", fps: 8, loop: false, frameCount: 1),
+                .welcomeBack: PetAnimationSpec(folder: "welcomeBack", fps: 8, loop: false, frameCount: 1),
+                .breakRelax: PetAnimationSpec(folder: "breakRelax", fps: 6, loop: true, frameCount: 1)
+            ]
+        )
+        let record = PetPackRecord(pack: pack, rootURL: nil, isBundled: true)
+        let strong = record.coverage(for: [.nudgeStrong]).first
+        return strong?.status == .fallback && strong?.resolvedAction == .nudgeGentle
+    }
+
+    func libraryImportsValidPack() -> Bool {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-pack-test-\(UUID().uuidString)", isDirectory: true)
+        let source = tempRoot.appendingPathComponent("SourcePack", isDirectory: true)
+        let install = tempRoot.appendingPathComponent("Installed", isDirectory: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let pack = PetPack(
+            schemaVersion: 1,
+            id: "imported_test",
+            name: "Imported Test",
+            author: "Focus Pet",
+            style: "minimal_2d",
+            license: "original",
+            distribution: "localOnly",
+            defaultSize: PetPackSize(width: 160, height: 160),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
+            animations: [
+                .idle: PetAnimationSpec(folder: "idle", fps: 6, loop: true, frameCount: 1),
+                .sleep: PetAnimationSpec(folder: "sleep", fps: 4, loop: true, frameCount: 1),
+                .nudgeGentle: PetAnimationSpec(folder: "nudgeGentle", fps: 8, loop: false, frameCount: 1),
+                .welcomeBack: PetAnimationSpec(folder: "welcomeBack", fps: 8, loop: false, frameCount: 1),
+                .breakRelax: PetAnimationSpec(folder: "breakRelax", fps: 6, loop: true, frameCount: 1)
+            ]
+        )
+
+        do {
+            try fileManager.createDirectory(at: source, withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(pack)
+            try data.write(to: source.appendingPathComponent("pet.json"))
+            try Data([0]).write(to: source.appendingPathComponent("preview.png"))
+            for animation in pack.animations.values {
+                let folder = source.appendingPathComponent(animation.folder, isDirectory: true)
+                try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+                try Data([0]).write(to: folder.appendingPathComponent("000.png"))
+            }
+
+            let imported = try PetPackLibrary(installRootURL: install).importPack(from: source)
+            return imported.record.id == "imported_test"
+                && imported.record.validation.isValid
+                && fileManager.fileExists(atPath: install.appendingPathComponent("imported_test/pet.json").path)
+        } catch {
+            return false
+        }
     }
 }
 
-private func withTemporaryDirectory<T>(_ body: (URL) throws -> T) rethrows -> T {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-    try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-    return try body(root)
-}
+private let runPetPackMVPProbe: Void = {
+    let probe = PetPackMVPProbe()
+    precondition(probe.missingStrongNudgeFallsBackToGentle(), "nudgeStrong should fall back to nudgeGentle")
+    precondition(probe.validatorRequiresMinimumActions(), "validator should require minimum pet actions")
+    precondition(
+        probe.legacyLuoXiaoHeiManifestDecodesDuplicateBreakAliases(),
+        "legacy Luo Xiaohei manifest should decode without duplicate-key crashes"
+    )
+    precondition(probe.packCoverageReportsFallbacks(), "pack coverage should report fallback actions")
+    precondition(probe.libraryImportsValidPack(), "pet pack library should import valid local packs")
+}()

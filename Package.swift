@@ -1,5 +1,4 @@
 // swift-tools-version: 6.2
-// The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
 
@@ -9,29 +8,48 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "FocusPet", targets: ["FocusPet"]),
+        .executable(name: "FocusPet", targets: ["FocusPetMac"]),
         .executable(name: "FocusPetCoreChecks", targets: ["FocusPetCoreChecks"])
     ],
     targets: [
         .target(
             name: "FocusPetCore"
         ),
-        .executableTarget(
-            name: "FocusPet",
+        .target(
+            name: "FocusPetStorage",
+            dependencies: ["FocusPetCore"]
+        ),
+        .target(
+            name: "FocusPetResources",
             dependencies: ["FocusPetCore"],
             resources: [
-                .copy("Resources/Pets"),
+                .copy("Resources/Pets")
+            ]
+        ),
+        .target(
+            name: "FocusPetRenderer",
+            dependencies: ["FocusPetCore", "FocusPetResources"]
+        ),
+        .executableTarget(
+            name: "FocusPetMac",
+            dependencies: [
+                "FocusPetCore",
+                "FocusPetStorage",
+                "FocusPetResources",
+                "FocusPetRenderer"
+            ],
+            resources: [
                 .copy("Resources/AppIcon.png"),
                 .copy("Resources/AppIcon.icns")
             ]
         ),
         .executableTarget(
             name: "FocusPetCoreChecks",
-            dependencies: ["FocusPetCore"]
+            dependencies: ["FocusPetCore", "FocusPetResources", "FocusPetRenderer"]
         ),
         .testTarget(
             name: "FocusPetCoreTests",
-            dependencies: ["FocusPetCore"]
+            dependencies: ["FocusPetCore", "FocusPetResources", "FocusPetStorage"]
         )
     ]
 )
