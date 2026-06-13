@@ -102,11 +102,13 @@ public struct DailySummaryBuilder: Sendable {
         var result: [String: AppUsageSummary] = [:]
 
         for usage in appUsage where overlaps(usage.start, usage.end, bounds: bounds) {
-            let key = "\(usage.bundleID ?? usage.appName)-\(usage.category.rawValue)"
+            let category = normalizedCategory(usage.category)
+            guard category != .ignore else { continue }
+            let key = "\(usage.bundleID ?? usage.appName)-\(category.rawValue)"
             var summary = result[key] ?? AppUsageSummary(
                 appName: usage.appName,
                 bundleID: usage.bundleID,
-                category: usage.category,
+                category: category,
                 seconds: 0,
                 stateBreakdown: [:]
             )
@@ -115,11 +117,13 @@ public struct DailySummaryBuilder: Sendable {
         }
 
         for segment in segments {
-            let key = "\(segment.bundleID ?? segment.appName)-\(segment.category.rawValue)"
+            let category = normalizedCategory(segment.category)
+            guard category != .ignore else { continue }
+            let key = "\(segment.bundleID ?? segment.appName)-\(category.rawValue)"
             var summary = result[key] ?? AppUsageSummary(
                 appName: segment.appName,
                 bundleID: segment.bundleID,
-                category: segment.category,
+                category: category,
                 seconds: 0,
                 stateBreakdown: [:]
             )
@@ -149,18 +153,19 @@ public struct DailySummaryBuilder: Sendable {
         let usageInDay = appUsage.filter { overlaps($0.start, $0.end, bounds: bounds) }
         if usageInDay.isEmpty {
             for segment in segments {
-                secondsByCategory[segment.category, default: 0] += segment.durationSeconds
-                appsByCategory[segment.category, default: []].insert(segment.bundleID ?? segment.appName)
+                let category = normalizedCategory(segment.category)
+                secondsByCategory[category, default: 0] += segment.durationSeconds
+                appsByCategory[category, default: []].insert(segment.bundleID ?? segment.appName)
             }
         } else {
             for usage in usageInDay {
-                secondsByCategory[usage.category, default: 0] += clippedDuration(start: usage.start, end: usage.end, bounds: bounds)
-                appsByCategory[usage.category, default: []].insert(usage.bundleID ?? usage.appName)
+                let category = normalizedCategory(usage.category)
+                secondsByCategory[category, default: 0] += clippedDuration(start: usage.start, end: usage.end, bounds: bounds)
+                appsByCategory[category, default: []].insert(usage.bundleID ?? usage.appName)
             }
         }
 
-        return ActivityCategory.allCases
-            .filter { $0 != .neutral || secondsByCategory[$0, default: 0] > 0 }
+        return ActivityCategory.userFacingClassificationCases
             .map {
                 CategoryUsageSummary(
                     category: $0,
@@ -182,6 +187,10 @@ public struct DailySummaryBuilder: Sendable {
 
     private func clippedDuration(start: Date, end: Date, bounds: (start: Date, end: Date)) -> Int {
         max(0, Int(min(end, bounds.end).timeIntervalSince(max(start, bounds.start))))
+    }
+
+    private func normalizedCategory(_ category: ActivityCategory) -> ActivityCategory {
+        category == .neutral ? .ignore : category
     }
 
     private static func dayBounds(for date: Date) -> (start: Date, end: Date) {

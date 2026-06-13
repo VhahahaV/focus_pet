@@ -12,7 +12,7 @@ public struct LocalStoreSnapshot: Codable, Hashable, Sendable {
 
     public init(
         settings: AppSettings = AppSettings(),
-        classificationRules: [ClassificationRule] = ActivityClassifier.defaultRules,
+        classificationRules: [ClassificationRule] = [],
         stateSegments: [StateSegment] = [],
         appUsage: [AppUsageSegment] = [],
         focusSessions: [FocusSession] = [],
@@ -56,7 +56,9 @@ public struct LocalStore: Sendable {
         bootstrapCleanSchemaIfNeeded()
         return LocalStoreSnapshot(
             settings: load("settings.json", defaultValue: AppSettings()),
-            classificationRules: load("classification-rules.json", defaultValue: ActivityClassifier.defaultRules),
+            classificationRules: ActivityClassifier.userRules(
+                fromStored: load("classification-rules.json", defaultValue: [])
+            ),
             stateSegments: load("state-segments.json", defaultValue: []),
             appUsage: load("app-usage.json", defaultValue: []),
             focusSessions: load("focus-sessions.json", defaultValue: []),
@@ -65,15 +67,29 @@ public struct LocalStore: Sendable {
         )
     }
 
-    public func saveSnapshot(_ snapshot: LocalStoreSnapshot) {
+    public func saveSnapshot(_ snapshot: LocalStoreSnapshot, changedFrom previous: LocalStoreSnapshot? = nil) {
         bootstrapCleanSchemaIfNeeded()
-        save(snapshot.settings, to: "settings.json")
-        save(snapshot.classificationRules, to: "classification-rules.json")
-        save(snapshot.stateSegments, to: "state-segments.json")
-        save(snapshot.appUsage, to: "app-usage.json")
-        save(snapshot.focusSessions, to: "focus-sessions.json")
-        save(snapshot.breakSessions, to: "break-sessions.json")
-        save(snapshot.nudges, to: "nudges.json")
+        if previous?.settings != snapshot.settings {
+            save(snapshot.settings, to: "settings.json")
+        }
+        if previous?.classificationRules != snapshot.classificationRules {
+            save(snapshot.classificationRules, to: "classification-rules.json")
+        }
+        if previous?.stateSegments != snapshot.stateSegments {
+            save(snapshot.stateSegments, to: "state-segments.json")
+        }
+        if previous?.appUsage != snapshot.appUsage {
+            save(snapshot.appUsage, to: "app-usage.json")
+        }
+        if previous?.focusSessions != snapshot.focusSessions {
+            save(snapshot.focusSessions, to: "focus-sessions.json")
+        }
+        if previous?.breakSessions != snapshot.breakSessions {
+            save(snapshot.breakSessions, to: "break-sessions.json")
+        }
+        if previous?.nudges != snapshot.nudges {
+            save(snapshot.nudges, to: "nudges.json")
+        }
     }
 
     public func exportSnapshot(_ snapshot: LocalStoreSnapshot, redacted: Bool = false) -> URL? {

@@ -9,10 +9,13 @@ enum FocusPetCoreChecks {
         checkFourStateModel()
         checkStatePriority()
         checkDistractedThreshold()
-        checkFrequentSwitching()
+        checkDefaultDistractedThresholds()
+        checkFrequentSwitchingIsIgnored()
         checkInputIdleBecomesDistracted()
+        checkRecentInputRecoversFromDistracted()
         checkScreenLockBecomesAway()
         checkLongInputIdleBecomesAway()
+        checkLongIdleReclassificationBackfillsAway()
         checkIncrementalAwayRecordingMergesWithoutDuplication()
         checkNudgePolicy()
         checkOldNudgeDoesNotOverridePetState()
@@ -22,11 +25,18 @@ enum FocusPetCoreChecks {
         checkSummary()
         checkFocusSessionReporting()
         checkGroupedRules()
+        checkNeutralIsLegacyOnly()
+        checkCatalogCoverage()
+        checkExpandedCatalogRepresentativeCoverage()
+        checkBrowserWebsitePriority()
+        checkUserRulesOverrideCatalog()
+        checkStoredBuiltInsAreFiltered()
         checkPetFallback()
-        checkLocalLuoXiaoHeiActions()
+        checkLocalPetPackActions()
         checkPetHoverPresentation()
         checkPetNonLoopFramesDoNotFreeze()
         checkPetSettingsCompatibility()
+        checkAppSettingsCompatibility()
         print("FocusPetCoreChecks passed")
     }
 
@@ -71,7 +81,57 @@ enum FocusPetCoreChecks {
         expect(decision.state == .distracted, "entertainment over threshold should be distracted")
     }
 
-    private static func checkFrequentSwitching() {
+    private static func checkDefaultDistractedThresholds() {
+        let idleSnapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 60),
+            appName: "Cursor",
+            bundleID: "cursor",
+            windowTitle: "Focus Pet",
+            category: .work,
+            idleSeconds: 60,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 60,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+        let idleDecision = StateEngine().evaluate(idleSnapshot, previousStableState: .focus)
+        expect(idleDecision.state == .focus, "1 minute without input should stay focused")
+
+        let entertainmentSnapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 45),
+            appName: "Chrome",
+            bundleID: "chrome",
+            windowTitle: "YouTube",
+            category: .entertainment,
+            idleSeconds: 2,
+            switchCountLast5Min: 1,
+            switchCountLast15Min: 2,
+            activeCategoryDuration: 45,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+        let entertainmentDecision = StateEngine().evaluate(entertainmentSnapshot, previousStableState: .focus)
+        expect(entertainmentDecision.state == .focus, "45 seconds entertainment should stay in grace")
+
+        let distractedSnapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 60),
+            appName: "Chrome",
+            bundleID: "chrome",
+            windowTitle: "YouTube",
+            category: .entertainment,
+            idleSeconds: 2,
+            switchCountLast5Min: 1,
+            switchCountLast15Min: 2,
+            activeCategoryDuration: 60,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+        let distractedDecision = StateEngine().evaluate(distractedSnapshot, previousStableState: .focus)
+        expect(distractedDecision.state == .distracted, "60 seconds entertainment should be distracted")
+    }
+
+    private static func checkFrequentSwitchingIsIgnored() {
         let snapshot = ActivitySnapshot(
             timestamp: Date(timeIntervalSince1970: 300),
             appName: "Finder",
@@ -79,31 +139,69 @@ enum FocusPetCoreChecks {
             windowTitle: nil,
             category: .neutral,
             idleSeconds: 1,
-            switchCountLast5Min: 13,
-            switchCountLast15Min: 20,
+            switchCountLast5Min: 7,
+            switchCountLast15Min: 12,
             activeCategoryDuration: 60,
             isFocusSessionActive: false,
             isBreakActive: false
         )
-        expect(StateEngine().evaluate(snapshot, previousStableState: .focus).state == .distracted, "frequent app switching should be distracted")
+        let decision = StateEngine().evaluate(snapshot, previousStableState: .focus)
+        expect(decision.state == .focus && !decision.reason.contains(.frequentSwitching), "app switching alone should not be distracted")
     }
 
     private static func checkInputIdleBecomesDistracted() {
         let snapshot = ActivitySnapshot(
-            timestamp: Date(timeIntervalSince1970: 61),
+            timestamp: Date(timeIntervalSince1970: 180),
             appName: "Cursor",
             bundleID: "cursor",
             windowTitle: "Project",
             category: .work,
-            idleSeconds: 61,
+            idleSeconds: 180,
             switchCountLast5Min: 0,
             switchCountLast15Min: 0,
-            activeCategoryDuration: 61,
+            activeCategoryDuration: 180,
             isFocusSessionActive: false,
             isBreakActive: false
         )
         let decision = StateEngine().evaluate(snapshot, previousStableState: .focus)
-        expect(decision.state == .distracted && decision.reason.contains(.inputIdleDistracted), "1+ minute without input should be distracted, not away")
+        expect(decision.state == .distracted && decision.reason.contains(.inputIdleDistracted), "3 minutes without input should be distracted, not away")
+    }
+
+    private static func checkRecentInputRecoversFromDistracted() {
+        let neutralSnapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 70),
+            appName: "Finder",
+            bundleID: "finder",
+            windowTitle: nil,
+            category: .neutral,
+            idleSeconds: 1,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 10,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+        let recovered = StateEngine().evaluate(neutralSnapshot, previousStableState: .distracted)
+        expect(
+            recovered.state == .focus && recovered.reason.contains(.recentInputRecovery),
+            "recent input in a non-entertainment context should recover from distracted"
+        )
+
+        let entertainmentSnapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 80),
+            appName: "Chrome",
+            bundleID: "chrome",
+            windowTitle: "YouTube",
+            category: .entertainment,
+            idleSeconds: 1,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 10,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+        let stillDistracted = StateEngine().evaluate(entertainmentSnapshot, previousStableState: .distracted)
+        expect(stillDistracted.state == .distracted, "recent input should not hide an active entertainment context")
     }
 
     private static func checkScreenLockBecomesAway() {
@@ -142,6 +240,63 @@ enum FocusPetCoreChecks {
         )
         let decision = StateEngine().evaluate(snapshot, previousStableState: .distracted)
         expect(decision.state == .away && decision.reason.contains(.longInputIdleAway), "10+ minutes without input should be away, not distracted")
+    }
+
+    private static func checkLongIdleReclassificationBackfillsAway() {
+        let start = Date(timeIntervalSince1970: 0)
+        let segments = [
+            StateSegment(
+                start: start,
+                end: start.addingTimeInterval(60),
+                state: .focus,
+                appName: "Cursor",
+                bundleID: "cursor",
+                category: .work,
+                titleStored: false,
+                titleDisplay: nil,
+                source: [.frontmostApplication]
+            ),
+            StateSegment(
+                start: start.addingTimeInterval(60),
+                end: start.addingTimeInterval(600),
+                state: .distracted,
+                appName: "Cursor",
+                bundleID: "cursor",
+                category: .work,
+                titleStored: false,
+                titleDisplay: nil,
+                source: [.idleTime]
+            ),
+            StateSegment(
+                start: start.addingTimeInterval(600),
+                end: start.addingTimeInterval(610),
+                state: .away,
+                appName: "Cursor",
+                bundleID: "cursor",
+                category: .work,
+                titleStored: false,
+                titleDisplay: nil,
+                source: [.idleTime]
+            )
+        ]
+
+        let result = TimeTracker().reclassify(
+            segments: segments,
+            from: start,
+            to: start.addingTimeInterval(610),
+            matching: [.focus, .distracted],
+            as: .away,
+            addingSource: .idleTime
+        )
+
+        expect(
+            result.reclassifiedSeconds[.focus, default: 0] == 60
+                && result.reclassifiedSeconds[.distracted, default: 0] == 540
+                && result.segments.count == 1
+                && result.segments[0].state == .away
+                && result.segments[0].durationSeconds == 610,
+            "long idle backfill should convert the already-recorded no-input window to away"
+        )
     }
 
     private static func checkIncrementalAwayRecordingMergesWithoutDuplication() {
@@ -202,43 +357,29 @@ enum FocusPetCoreChecks {
             bundleID: "cursor"
         )
         let event = NudgePolicy().nudge(for: state, previousState: .focus, now: state.timestamp, lastTriggeredAt: [:])
-        expect(event?.reason == .longFocusRest && event?.petAction == .stretch, "25 minute focus should trigger rest nudge")
+        expect(event?.reason == .longFocusRest && event?.petIntent == .focusRestHint, "25 minute focus should trigger rest nudge intent")
     }
 
     private static func checkOldNudgeDoesNotOverridePetState() {
-        let oldNudge = NudgeEvent(
-            time: Date(timeIntervalSince1970: 0),
-            reason: .longFocusRest,
-            state: .focus,
-            appName: "Cursor",
-            category: .work,
-            petAction: .stretch,
-            cooldownSeconds: 600,
-            message: "已经专注一阵子了，要休息一下吗？"
-        )
-
-        let action = PetBehaviorPolicy().action(
+        let intent = PetBehaviorPolicy().intentKind(
             for: .away,
             previousState: .focus,
-            latestNudge: oldNudge,
             now: Date(timeIntervalSince1970: 3_600)
         )
-        expect(action == .sleep, "old nudge actions should expire and let the current pet state drive animation")
+        expect(intent == .sleep, "old nudge actions should expire and let the current pet state drive intent")
     }
 
     private static func checkFocusAmbientActionsCycle() {
         let policy = PetBehaviorPolicy()
-        let actions = [
+        let intents = [
             Date(timeIntervalSince1970: 0),
             Date(timeIntervalSince1970: 10),
             Date(timeIntervalSince1970: 90)
         ].map {
-            policy.action(for: .focus, previousState: .focus, latestNudge: nil, now: $0)
+            policy.intentKind(for: .focus, previousState: .focus, now: $0)
         }
 
-        expect(actions.contains(.blink), "stable focus should include a low-cost blink action")
-        expect(actions.contains(.breath), "stable focus should include a low-cost breathing action")
-        expect(actions.contains(.stretch), "stable focus should occasionally stretch")
+        expect(intents.allSatisfy { $0 == .quietCompanion }, "stable focus should stay on the quiet companion intent")
     }
 
     private static func checkPrivacy() {
@@ -266,6 +407,7 @@ enum FocusPetCoreChecks {
         let summary = DailySummaryBuilder().summary(for: start, segments: segments, appUsage: [], focusSessions: [], breakSessions: [], nudges: [])
         expect(summary.focusSeconds == 60 && summary.breakSeconds == 60, "summary should aggregate focus and break")
         expect(summary.categorySeconds(.work) == 60 && summary.categorySeconds(.ignore) == 60, "summary should aggregate category usage")
+        expect(summary.appUsage.map(\.appName) == ["Cursor"], "ignored apps should be excluded from app usage ranking")
     }
 
     private static func checkFocusSessionReporting() {
@@ -300,30 +442,140 @@ enum FocusPetCoreChecks {
         expect(classifier.classify(appName: "Browser", bundleID: nil, windowTitle: "Shorts - Video") == .entertainment, "entertainment keyword rules should classify entertainment")
     }
 
+    private static func checkNeutralIsLegacyOnly() {
+        expect(
+            ActivityCategory.userFacingClassificationCases == [.work, .entertainment, .ignore]
+                && !ActivityCategory.userFacingClassificationCases.contains(.neutral),
+            "neutral should not be user-facing"
+        )
+        expect(
+            ActivityClassifier().classify(appName: "Unknown App", bundleID: "example.unknown", windowTitle: nil) == .ignore,
+            "unknown apps should not create new neutral activity"
+        )
+    }
+
+    private static func checkCatalogCoverage() {
+        let categoryCounts = Dictionary(grouping: ActivityClassifier.defaultRules, by: { $0.category }).mapValues(\.count)
+        expect(ActivityClassifier.catalogEntries.count >= 35, "catalog should be split into broad maintainable groups")
+        expect(ActivityClassifier.defaultRules.count >= 1_200, "catalog should expand into a broad built-in rule set")
+        expect((categoryCounts[.work] ?? 0) >= 650, "catalog should cover mainstream work tools and sites")
+        expect((categoryCounts[.entertainment] ?? 0) >= 400, "catalog should cover mainstream distracting tools and sites")
+        expect((categoryCounts[.ignore] ?? 0) >= 150, "catalog should cover system and background utilities")
+        expect(ActivityClassifier.defaultRules.allSatisfy { $0.category != .neutral }, "catalog should not produce neutral rules")
+    }
+
+    private static func checkExpandedCatalogRepresentativeCoverage() {
+        let classifier = ActivityClassifier()
+        expect(
+            classifier.classify(appName: "Safari", bundleID: "com.apple.Safari", windowTitle: "Amazon Web Services Console") == .work,
+            "AWS should stay work despite Amazon shopping rules"
+        )
+        expect(
+            classifier.classify(appName: "Google Chrome", bundleID: "com.google.Chrome", windowTitle: "Amazon - Online Shopping") == .entertainment,
+            "shopping sites should be distracting"
+        )
+        expect(
+            classifier.classify(appName: "Google Chrome", bundleID: "com.google.Chrome", windowTitle: "Coursera Machine Learning") == .work,
+            "course platforms should be work"
+        )
+        expect(
+            classifier.classify(appName: "Xcode", bundleID: nil, windowTitle: nil) == .work,
+            "short social names should not interfere with Xcode"
+        )
+        expect(
+            classifier.classify(appName: "X", bundleID: nil, windowTitle: nil) == .ignore,
+            "single-letter app names should not drive classification"
+        )
+        expect(
+            classifier.classify(appName: "Discord", bundleID: nil, windowTitle: nil) == .entertainment,
+            "social chat apps should be covered"
+        )
+        expect(
+            classifier.classify(appName: "CleanShot X", bundleID: nil, windowTitle: nil) == .ignore,
+            "utility apps should be ignored"
+        )
+    }
+
+    private static func checkBrowserWebsitePriority() {
+        let classifier = ActivityClassifier()
+        expect(
+            classifier.classify(appName: "Google Chrome", bundleID: "com.google.Chrome", windowTitle: "YouTube - Home") == .entertainment,
+            "website/title rules should outrank browser app defaults"
+        )
+        expect(
+            classifier.classify(appName: "Safari", bundleID: "com.apple.Safari", windowTitle: "GitHub Pull Request") == .work,
+            "work website/title rules should outrank browser app defaults"
+        )
+        expect(
+            classifier.classify(appName: "Microsoft Edge", bundleID: "com.microsoft.edgemac", windowTitle: "New Tab") == .ignore,
+            "browser apps without a matching site should not actively decide focus"
+        )
+    }
+
+    private static func checkUserRulesOverrideCatalog() {
+        let classifier = ActivityClassifier(rules: [
+            ClassificationRule(matchKind: .windowTitle, pattern: "YouTube", category: .work, priority: 1)
+        ])
+        expect(
+            classifier.classify(appName: "Google Chrome", bundleID: "com.google.Chrome", windowTitle: "YouTube - Course") == .work,
+            "user exceptions should override built-in catalog rules"
+        )
+    }
+
+    private static func checkStoredBuiltInsAreFiltered() {
+        expect(
+            ActivityClassifier.userRules(fromStored: ActivityClassifier.defaultRules).isEmpty,
+            "stored built-in defaults should not be shown as user exceptions"
+        )
+    }
+
     private static func checkPetFallback() {
         let pack = PetPackCatalog.fallbackPack
         expect(PetActionResolver().animationKey(for: .nudgeStrong, in: pack) == .nudgeGentle, "strong nudge should fall back to gentle nudge")
     }
 
-    private static func checkLocalLuoXiaoHeiActions() {
+    private static func checkLocalPetPackActions() {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent("external_generated_packs/LuoXiaoHeiLocal", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: root.appendingPathComponent("pet.json").path),
-              let record = PetPackCatalog().record(at: root, isBundled: false) else {
+            .appendingPathComponent("external_generated_packs", isDirectory: true)
+        let records = PetPackCatalog().availablePacks(userRootURL: root)
+        let recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+
+        guard let luo = recordsByID[PetPackCatalog.localLuoXiaoHeiPackID],
+              let xiaodai = recordsByID[PetPackCatalog.localXiaoDaiPackID],
+              let pixel = recordsByID[PetPackCatalog.localPixelCatMemePackID] else {
             return
         }
 
-        let nativeActions = Set(record.pack.animations.keys)
-        let expectedNativeActions: Set<PetAction> = [.idle, .distractedLook, .nudgeStrong, .welcomeBack, .stretch, .breakRelax, .run]
-        expect(expectedNativeActions.isSubset(of: nativeActions), "local Luo Xiaohei pack should keep one native action per distinct animation group")
-        expect(!nativeActions.contains(.screenTransfer), "local Luo Xiaohei pack should not duplicate screenTransfer as a native animation")
-        expect(!nativeActions.contains(.mouseSummon), "local Luo Xiaohei pack should not duplicate mouseSummon as a native animation")
-        expect(!nativeActions.contains(.breakEnd), "local Luo Xiaohei pack should not duplicate breakEnd as a native animation")
+        expect(luo.validation.isValid, "local Luo Xiaohei pack should validate")
+        expect(xiaodai.validation.isValid, "local XiaoDai pack should validate")
+        expect(pixel.validation.isValid, "local Pixel Cat Meme pack should validate")
+        expect(luo.previewSourceActions.count == 7, "Luo Xiaohei should expose original GIF action names")
+        expect(xiaodai.previewSourceActions.count == 23, "XiaoDai should expose original act_conf action names")
+        expect(pixel.previewSourceActions.count == 22, "Pixel Cat should expose original act_conf action names")
+        expect(xiaodai.sourceAction(id: "patpat1") != nil, "XiaoDai should keep original patpat1 action name")
+        expect(pixel.sourceAction(id: "yb") != nil, "Pixel Cat should keep original yb action name")
 
-        for action in [PetAction.dragged, .landing, .screenTransfer, .mouseSummon, .breakEnd, .sleep, .breath] {
-            let resolved = PetActionResolver().animationKey(for: action, in: record.pack)
-            expect(resolved != nil, "local Luo Xiaohei pack should resolve \(action.rawValue) through fallback")
-            expect(!record.frameURLs(for: action).isEmpty, "local Luo Xiaohei \(action.rawValue) fallback frames should be available")
+        expect(luo.pack.animations[.run] == nil, "Luo Xiaohei should not pretend food/rest assets are run movement")
+        expect(luo.pack.animations[.screenTransfer] == nil, "Luo Xiaohei should not duplicate screen transfer without a matching source action")
+        expect(luo.pack.animations[.breakRelax]?.folder == "guitar", "Luo Xiaohei break should use the original guitar action")
+        expect(luo.pack.animations[.breakEnd]?.folder == "eat_drumstick", "Luo Xiaohei break end should use the original food action")
+
+        expect(xiaodai.pack.animations[.focusStart]?.folder == "focus", "XiaoDai work should map to the source focus action")
+        expect(xiaodai.pack.animations[.distractedLook]?.folder == "disturbed", "XiaoDai distracted state should map to disturbed")
+        expect(xiaodai.pack.animations[.screenTransfer]?.folder == "screen_transfer", "XiaoDai screen transfer should map to edge behavior")
+
+        expect(pixel.pack.animations[.focusStart]?.folder == "work", "Pixel Cat work should map to the source work action")
+        expect(pixel.pack.animations[.nudgeStrong]?.folder == "nudge_strong", "Pixel Cat strong nudge should map to ybfist")
+        expect(pixel.pack.animations[.mouseSummon]?.folder == "mouse_summon", "Pixel Cat mouse summon should map to feed interaction")
+
+        for record in [luo, xiaodai, pixel] {
+            for action in [PetAction.idle, .focusStart, .breath, .distractedLook, .nudgeGentle, .nudgeStrong, .breakRelax, .sleep, .welcomeBack, .run, .screenTransfer, .mouseSummon] {
+                expect(!record.frameURLs(for: action).isEmpty, "\(record.id) should resolve \(action.rawValue) frames")
+            }
+        }
+
+        for action in [PetAction.focusStart, .sleep, .nudgeGentle, .nudgeStrong, .breakRelax, .breakEnd, .welcomeBack, .landing, .mouseSummon] {
+            expect(pixel.audioURL(for: action) != nil, "Pixel Cat should resolve audio for \(action.rawValue)")
         }
     }
 
@@ -349,8 +601,8 @@ enum FocusPetCoreChecks {
             hoverLoops: false
         )
 
-        expect(renderState.displayAction(isHovering: false) == .focusStable, "normal presentation should keep the base pet action")
-        expect(renderState.displayAction(isHovering: true) == .welcomeBack, "hover presentation should switch to the hover action locally")
+        expect(renderState.displayIntent(isHovering: false) == .quietCompanion, "normal presentation should keep the base pet intent")
+        expect(renderState.displayIntent(isHovering: true) == .welcomeBack, "hover presentation should switch to the hover intent locally")
         expect(renderState.displayFrameURLs(isHovering: true) == [hoverFrame], "hover presentation should use hover frames without rebuilding the render state")
         expect(renderState.displayFramesPerSecond(isHovering: true) == 8, "hover presentation should use hover FPS")
         expect(renderState.displayLoops(isHovering: true) == false, "hover presentation should use hover loop setting")
@@ -397,6 +649,29 @@ enum FocusPetCoreChecks {
 
         expect(settings.placement == .bottomRight, "legacy pet settings should default to bottom-right placement")
         expect(settings.hoverStatusEnabled, "legacy pet settings should default to hover status enabled")
+        expect(settings.idleSourceActionIDByPack.isEmpty, "legacy pet settings should default to no custom idle source action")
+        expect(settings.intentSourceActionIDByPack.isEmpty, "legacy pet settings should default to no custom intent mappings")
+    }
+
+    private static func checkAppSettingsCompatibility() {
+        let legacyJSON = """
+        {
+          "hasCompletedOnboarding": true,
+          "focusTargetMinutes": 25,
+          "breakMinutes": 5,
+          "autoStartBreak": true
+        }
+        """
+        guard let data = legacyJSON.data(using: .utf8),
+              let settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {
+            expect(false, "app settings should decode legacy JSON")
+            return
+        }
+
+        expect(settings.judgment.inputIdleDistractedSeconds == 180, "legacy app settings should default input idle threshold")
+        expect(settings.judgment.entertainmentDistractedSeconds == 60, "legacy app settings should default entertainment threshold")
+        expect(settings.judgment.focusRecoverySeconds == 10, "legacy app settings should default focus recovery threshold")
+        expect(settings.judgment.idleAwaySeconds == 600, "legacy app settings should default idle away threshold")
     }
 
     private static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {

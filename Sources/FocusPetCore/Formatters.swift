@@ -1,6 +1,8 @@
 import Foundation
 
 public enum FocusPetFormatters {
+    private static let clockFormatterKey = "FocusPetFormatters.clockFormatter"
+
     public static func duration(_ seconds: Int) -> String {
         if seconds < 60 {
             return "\(seconds)秒"
@@ -20,14 +22,24 @@ public enum FocusPetFormatters {
     }
 
     public static func clock(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
+        let formatter = cachedClockFormatter()
         return formatter.string(from: date)
     }
 
     public static func percentage(_ ratio: Double) -> String {
         "\(Int((min(1, max(0, ratio)) * 100).rounded()))%"
+    }
+
+    private static func cachedClockFormatter() -> DateFormatter {
+        if let formatter = Thread.current.threadDictionary[clockFormatterKey] as? DateFormatter {
+            return formatter
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        Thread.current.threadDictionary[clockFormatterKey] = formatter
+        return formatter
     }
 }

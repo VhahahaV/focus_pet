@@ -70,6 +70,16 @@ public struct AppUsageSegment: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public struct StateReclassificationResult: Hashable, Sendable {
+    public var segments: [StateSegment]
+    public var reclassifiedSeconds: [FocusState: Int]
+
+    public init(segments: [StateSegment], reclassifiedSeconds: [FocusState: Int]) {
+        self.segments = segments
+        self.reclassifiedSeconds = reclassifiedSeconds
+    }
+}
+
 public struct TimeTracker: Sendable {
     public var tickSeconds: TimeInterval
     public var mergeGapSeconds: TimeInterval
@@ -130,11 +140,96 @@ public struct TimeTracker: Sendable {
         return updated
     }
 
+    public func reclassify(
+        segments: [StateSegment],
+        from intervalStart: Date,
+        to intervalEnd: Date,
+        matching states: Set<FocusState>,
+        as targetState: FocusState,
+        addingSource source: ActivitySignalSource
+    ) -> StateReclassificationResult {
+        guard intervalEnd > intervalStart, !states.isEmpty else {
+            return StateReclassificationResult(segments: segments, reclassifiedSeconds: [:])
+        }
+
+        var rewritten: [StateSegment] = []
+        var reclassifiedSeconds: [FocusState: Int] = [:]
+
+        for segment in segments {
+            guard segment.end > intervalStart,
+                  segment.start < intervalEnd,
+                  states.contains(segment.state),
+                  segment.state != targetState else {
+                rewritten.append(segment)
+                continue
+            }
+
+            let overlapStart = max(segment.start, intervalStart)
+            let overlapEnd = min(segment.end, intervalEnd)
+            guard overlapEnd > overlapStart else {
+                rewritten.append(segment)
+                continue
+            }
+
+            if segment.start < overlapStart {
+                rewritten.append(segmentCopy(segment, start: segment.start, end: overlapStart))
+            }
+
+            var reclassified = segmentCopy(segment, start: overlapStart, end: overlapEnd)
+            reclassified.state = targetState
+            reclassified.source.insert(source)
+            rewritten.append(reclassified)
+            reclassifiedSeconds[segment.state, default: 0] += max(0, Int(overlapEnd.timeIntervalSince(overlapStart).rounded()))
+
+            if overlapEnd < segment.end {
+                rewritten.append(segmentCopy(segment, start: overlapEnd, end: segment.end))
+            }
+        }
+
+        return StateReclassificationResult(
+            segments: mergeAdjacentStateSegments(rewritten),
+            reclassifiedSeconds: reclassifiedSeconds
+        )
+    }
+
     private func canMerge(_ segment: StateSegment, decision: StateDecision, snapshot: ActivitySnapshot) -> Bool {
         segment.state == decision.state
             && segment.category == decision.category
             && segment.appName == snapshot.appName
             && segment.bundleID == snapshot.bundleID
             && snapshot.timestamp.timeIntervalSince(segment.end) <= mergeGapSeconds
+    }
+
+    private func segmentCopy(_ segment: StateSegment, start: Date, end: Date) -> StateSegment {
+        var copy = segment
+        copy.id = UUID().uuidString
+        copy.start = start
+        copy.end = max(end, start)
+        return copy
+    }
+
+    private func mergeAdjacentStateSegments(_ segments: [StateSegment]) -> [StateSegment] {
+        var merged: [StateSegment] = []
+        for segment in segments where segment.end > segment.start {
+            guard let lastIndex = merged.indices.last,
+                  canMerge(merged[lastIndex], segment) else {
+                merged.append(segment)
+                continue
+            }
+
+            merged[lastIndex].end = max(merged[lastIndex].end, segment.end)
+            merged[lastIndex].source.formUnion(segment.source)
+        }
+        return merged
+    }
+
+    private func canMerge(_ lhs: StateSegment, _ rhs: StateSegment) -> Bool {
+        lhs.state == rhs.state
+            && lhs.category == rhs.category
+            && lhs.appName == rhs.appName
+            && lhs.bundleID == rhs.bundleID
+            && lhs.titleStored == rhs.titleStored
+            && lhs.titleDisplay == rhs.titleDisplay
+            && rhs.start.timeIntervalSince(lhs.end) <= mergeGapSeconds
     }
 }

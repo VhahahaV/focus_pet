@@ -68,49 +68,102 @@ public struct DataRetentionSettings: Codable, Hashable, Sendable {
     }
 }
 
+public struct JudgmentSettings: Codable, Hashable, Sendable {
+    public var inputIdleDistractedSeconds: Int
+    public var entertainmentDistractedSeconds: Int
+    public var focusRecoverySeconds: Int
+    public var idleAwaySeconds: Int
+
+    public init(
+        inputIdleDistractedSeconds: Int = 180,
+        entertainmentDistractedSeconds: Int = 60,
+        focusRecoverySeconds: Int = 10,
+        idleAwaySeconds: Int = 10 * 60
+    ) {
+        self.inputIdleDistractedSeconds = min(900, max(30, inputIdleDistractedSeconds))
+        self.entertainmentDistractedSeconds = min(900, max(15, entertainmentDistractedSeconds))
+        self.focusRecoverySeconds = min(120, max(1, focusRecoverySeconds))
+        self.idleAwaySeconds = min(3_600, max(self.inputIdleDistractedSeconds, max(180, idleAwaySeconds)))
+    }
+
+    public var stateEngineThresholds: StateEngineThresholds {
+        StateEngineThresholds(
+            uiStabilitySeconds: TimeInterval(focusRecoverySeconds),
+            idleDistractedSeconds: TimeInterval(inputIdleDistractedSeconds),
+            idleAwaySeconds: TimeInterval(idleAwaySeconds),
+            distractedSeconds: TimeInterval(entertainmentDistractedSeconds)
+        )
+    }
+
+    public mutating func normalize() {
+        self = JudgmentSettings(
+            inputIdleDistractedSeconds: inputIdleDistractedSeconds,
+            entertainmentDistractedSeconds: entertainmentDistractedSeconds,
+            focusRecoverySeconds: focusRecoverySeconds,
+            idleAwaySeconds: idleAwaySeconds
+        )
+    }
+}
+
 public struct PetSettings: Codable, Hashable, Sendable {
     public var opacity: Double
     public var size: Double
     public var animationEnabled: Bool
+    public var audioEnabled: Bool
     public var hidden: Bool
     public var selectedPackID: String
     public var placement: PetPlacementMode
     public var customOriginX: Double?
     public var customOriginY: Double?
     public var hoverStatusEnabled: Bool
+    public var idleSourceActionIDByPack: [String: String]
+    public var intentSourceActionIDByPack: [String: [String: String]]
 
     public init(
         opacity: Double = 0.94,
         size: Double = 150,
         animationEnabled: Bool = true,
+        audioEnabled: Bool = true,
         hidden: Bool = false,
         selectedPackID: String = "luo_xiaohei_local",
         placement: PetPlacementMode = .bottomRight,
         customOriginX: Double? = nil,
         customOriginY: Double? = nil,
-        hoverStatusEnabled: Bool = true
+        hoverStatusEnabled: Bool = true,
+        idleSourceActionIDByPack: [String: String] = [:],
+        intentSourceActionIDByPack: [String: [String: String]] = [:]
     ) {
         self.opacity = min(1, max(0.35, opacity))
         self.size = min(260, max(96, size))
         self.animationEnabled = animationEnabled
+        self.audioEnabled = audioEnabled
         self.hidden = hidden
         self.selectedPackID = selectedPackID
         self.placement = placement
         self.customOriginX = customOriginX
         self.customOriginY = customOriginY
         self.hoverStatusEnabled = hoverStatusEnabled
+        self.idleSourceActionIDByPack = idleSourceActionIDByPack
+        self.intentSourceActionIDByPack = intentSourceActionIDByPack
+        for (packID, sourceActionID) in idleSourceActionIDByPack
+            where self.intentSourceActionIDByPack[packID]?[PetIntentKind.quietCompanion.rawValue] == nil {
+            self.intentSourceActionIDByPack[packID, default: [:]][PetIntentKind.quietCompanion.rawValue] = sourceActionID
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
         case opacity
         case size
         case animationEnabled
+        case audioEnabled
         case hidden
         case selectedPackID
         case placement
         case customOriginX
         case customOriginY
         case hoverStatusEnabled
+        case idleSourceActionIDByPack
+        case intentSourceActionIDByPack
     }
 
     public init(from decoder: Decoder) throws {
@@ -119,13 +172,37 @@ public struct PetSettings: Codable, Hashable, Sendable {
             opacity: try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 0.94,
             size: try container.decodeIfPresent(Double.self, forKey: .size) ?? 150,
             animationEnabled: try container.decodeIfPresent(Bool.self, forKey: .animationEnabled) ?? true,
+            audioEnabled: try container.decodeIfPresent(Bool.self, forKey: .audioEnabled) ?? true,
             hidden: try container.decodeIfPresent(Bool.self, forKey: .hidden) ?? false,
             selectedPackID: try container.decodeIfPresent(String.self, forKey: .selectedPackID) ?? "luo_xiaohei_local",
             placement: try container.decodeIfPresent(PetPlacementMode.self, forKey: .placement) ?? .bottomRight,
             customOriginX: try container.decodeIfPresent(Double.self, forKey: .customOriginX),
             customOriginY: try container.decodeIfPresent(Double.self, forKey: .customOriginY),
-            hoverStatusEnabled: try container.decodeIfPresent(Bool.self, forKey: .hoverStatusEnabled) ?? true
+            hoverStatusEnabled: try container.decodeIfPresent(Bool.self, forKey: .hoverStatusEnabled) ?? true,
+            idleSourceActionIDByPack: try container.decodeIfPresent([String: String].self, forKey: .idleSourceActionIDByPack) ?? [:],
+            intentSourceActionIDByPack: try container.decodeIfPresent([String: [String: String]].self, forKey: .intentSourceActionIDByPack) ?? [:]
         )
+    }
+
+    public func sourceActionID(for intent: PetIntentKind, packID: String) -> String? {
+        intentSourceActionIDByPack[packID]?[intent.rawValue]
+    }
+
+    public mutating func setSourceActionID(_ sourceActionID: String?, for intent: PetIntentKind, packID: String) {
+        if let sourceActionID {
+            intentSourceActionIDByPack[packID, default: [:]][intent.rawValue] = sourceActionID
+            if intent == .quietCompanion {
+                idleSourceActionIDByPack[packID] = sourceActionID
+            }
+        } else {
+            intentSourceActionIDByPack[packID]?[intent.rawValue] = nil
+            if intentSourceActionIDByPack[packID]?.isEmpty == true {
+                intentSourceActionIDByPack[packID] = nil
+            }
+            if intent == .quietCompanion {
+                idleSourceActionIDByPack[packID] = nil
+            }
+        }
     }
 }
 
@@ -134,6 +211,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var privacy: WindowTitlePrivacy
     public var reminder: ReminderSettings
     public var retention: DataRetentionSettings
+    public var judgment: JudgmentSettings
     public var pet: PetSettings
     public var focusTargetMinutes: Int
     public var breakMinutes: Int
@@ -144,6 +222,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
         privacy: WindowTitlePrivacy = .default,
         reminder: ReminderSettings = ReminderSettings(),
         retention: DataRetentionSettings = DataRetentionSettings(),
+        judgment: JudgmentSettings = JudgmentSettings(),
         pet: PetSettings = PetSettings(),
         focusTargetMinutes: Int = 25,
         breakMinutes: Int = 5,
@@ -153,10 +232,38 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.privacy = privacy
         self.reminder = reminder
         self.retention = retention
+        self.judgment = judgment
         self.pet = pet
         self.focusTargetMinutes = max(1, focusTargetMinutes)
         self.breakMinutes = max(1, breakMinutes)
         self.autoStartBreak = autoStartBreak
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case hasCompletedOnboarding
+        case privacy
+        case reminder
+        case retention
+        case judgment
+        case pet
+        case focusTargetMinutes
+        case breakMinutes
+        case autoStartBreak
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            hasCompletedOnboarding: try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false,
+            privacy: try container.decodeIfPresent(WindowTitlePrivacy.self, forKey: .privacy) ?? .default,
+            reminder: try container.decodeIfPresent(ReminderSettings.self, forKey: .reminder) ?? ReminderSettings(),
+            retention: try container.decodeIfPresent(DataRetentionSettings.self, forKey: .retention) ?? DataRetentionSettings(),
+            judgment: try container.decodeIfPresent(JudgmentSettings.self, forKey: .judgment) ?? JudgmentSettings(),
+            pet: try container.decodeIfPresent(PetSettings.self, forKey: .pet) ?? PetSettings(),
+            focusTargetMinutes: try container.decodeIfPresent(Int.self, forKey: .focusTargetMinutes) ?? 25,
+            breakMinutes: try container.decodeIfPresent(Int.self, forKey: .breakMinutes) ?? 5,
+            autoStartBreak: try container.decodeIfPresent(Bool.self, forKey: .autoStartBreak) ?? true
+        )
     }
 }
 

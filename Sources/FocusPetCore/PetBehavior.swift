@@ -55,6 +55,27 @@ public struct PetBehaviorPolicy: Sendable {
         self.nudgeActionVisibleSeconds = max(1, nudgeActionVisibleSeconds)
     }
 
+    public func intentKind(
+        for state: FocusState,
+        previousState: FocusState?,
+        now: Date = Date()
+    ) -> PetIntentKind {
+        if previousState == .away, state != .away {
+            return .welcomeBack
+        }
+
+        switch state {
+        case .focus:
+            return .quietCompanion
+        case .distracted:
+            return .distractedObserve
+        case .breakTime:
+            return .breakCompanion
+        case .away:
+            return .sleep
+        }
+    }
+
     public func action(
         for state: FocusState,
         previousState: FocusState?,
@@ -70,27 +91,6 @@ public struct PetBehaviorPolicy: Sendable {
             return latestNudge.petAction
         }
 
-        switch state {
-        case .focus:
-            return previousState == .focus ? focusAmbientAction(now: now) : .focusStart
-        case .distracted:
-            return .distractedLook
-        case .breakTime:
-            return .breakRelax
-        case .away:
-            return .sleep
-        }
-    }
-
-    private func focusAmbientAction(now: Date) -> PetAction {
-        let slot = Int(now.timeIntervalSince1970 / 10) % 12
-        switch slot {
-        case 0, 6:
-            return .blink
-        case 9:
-            return .stretch
-        default:
-            return .breath
-        }
+        return intentKind(for: state, previousState: previousState, now: now).legacyPetAction
     }
 }

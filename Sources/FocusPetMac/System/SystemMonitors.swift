@@ -19,6 +19,12 @@ struct SessionActivitySnapshot: Sendable {
     var isScreenLocked: Bool
 }
 
+struct ActivitySamplerSnapshot: Sendable {
+    var session: SessionActivitySnapshot
+    var frontmostApplication: FrontmostApplicationSnapshot
+    var idleSeconds: TimeInterval
+}
+
 enum SessionActivityMonitor {
     static func snapshot() -> SessionActivitySnapshot {
         SessionActivitySnapshot(isScreenLocked: isScreenLocked)
@@ -39,12 +45,12 @@ enum SessionActivityMonitor {
 }
 
 struct ForegroundAppMonitor: Sendable {
-    func snapshot() -> FrontmostApplicationSnapshot {
+    func snapshot(includeWindowTitle: Bool = true) -> FrontmostApplicationSnapshot {
         let application = NSWorkspace.shared.frontmostApplication
         return FrontmostApplicationSnapshot(
             appName: application?.localizedName ?? "Unknown",
             bundleID: application?.bundleIdentifier,
-            windowTitle: frontWindowTitle(for: application?.processIdentifier)
+            windowTitle: includeWindowTitle ? frontWindowTitle(for: application?.processIdentifier) : nil
         )
     }
 
@@ -66,6 +72,56 @@ struct ForegroundAppMonitor: Sendable {
             let title = info[kCGWindowName as String] as? String
             return title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         }
+    }
+}
+
+actor ActivitySampler {
+    private let foregroundMonitor = ForegroundAppMonitor()
+    private var lastFrontmostApplication: FrontmostApplicationSnapshot?
+    private var lastWindowTitleSampleAt = Date.distantPast
+
+    func snapshot(now: Date, windowTitleRefreshInterval: TimeInterval = 10) -> ActivitySamplerSnapshot {
+        let session = SessionActivityMonitor.snapshot()
+        if session.isScreenLocked {
+            return ActivitySamplerSnapshot(
+                session: session,
+                frontmostApplication: FrontmostApplicationSnapshot(
+                    appName: "Locked Screen",
+                    bundleID: nil,
+                    windowTitle: nil
+                ),
+                idleSeconds: IdleMonitor.idleSeconds()
+            )
+        }
+
+        let appOnly = foregroundMonitor.snapshot(includeWindowTitle: false)
+        let currentIdentity = Self.identity(for: appOnly)
+        let previousIdentity = lastFrontmostApplication.map(Self.identity(for:))
+        let shouldRefreshWindowTitle = previousIdentity != currentIdentity
+            || now.timeIntervalSince(lastWindowTitleSampleAt) >= windowTitleRefreshInterval
+
+        let frontmostApplication: FrontmostApplicationSnapshot
+        if shouldRefreshWindowTitle {
+            frontmostApplication = foregroundMonitor.snapshot(includeWindowTitle: true)
+            lastWindowTitleSampleAt = now
+        } else {
+            frontmostApplication = FrontmostApplicationSnapshot(
+                appName: appOnly.appName,
+                bundleID: appOnly.bundleID,
+                windowTitle: lastFrontmostApplication?.windowTitle
+            )
+        }
+
+        lastFrontmostApplication = frontmostApplication
+        return ActivitySamplerSnapshot(
+            session: session,
+            frontmostApplication: frontmostApplication,
+            idleSeconds: IdleMonitor.idleSeconds()
+        )
+    }
+
+    private static func identity(for snapshot: FrontmostApplicationSnapshot) -> String {
+        "\(snapshot.bundleID ?? "")|\(snapshot.appName)"
     }
 }
 
@@ -173,7 +229,7 @@ enum IdleMonitor {
 @MainActor
 final class AppSwitchTracker {
     private var currentIdentity: String?
-    private var currentCategory: ActivityCategory = .neutral
+    private var currentCategory: ActivityCategory = .ignore
     private var currentAppSince = Date()
     private var currentCategorySince = Date()
     private var switchHistory: [Date] = []

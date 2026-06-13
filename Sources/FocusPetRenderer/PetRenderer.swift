@@ -27,12 +27,14 @@ public struct PetScreenHint: Hashable, Sendable {
 
 public struct PetRenderState: Hashable, Sendable {
     public var focusState: FocusPetCore.FocusState
-    public var action: PetAction
+    public var intent: PetIntentKind
     public var message: String?
     public var hoverMessage: String?
     public var hoverStatusEnabled: Bool
     public var hoverDetails: [PetHoverContextItem]
     public var hoverBreakButtonTitle: String
+    public var activeIntentTitle: String?
+    public var mappedActionTitle: String?
     public var breakEndsAt: Date?
     public var size: Double
     public var opacity: Double
@@ -44,12 +46,68 @@ public struct PetRenderState: Hashable, Sendable {
     public var frameURLs: [URL]
     public var framesPerSecond: Double
     public var loops: Bool
-    public var hoverAction: PetAction?
+    public var hoverIntent: PetIntentKind?
     public var hoverFrameURLs: [URL]
     public var hoverFramesPerSecond: Double
     public var hoverLoops: Bool
     public var animationStartedAt: Date
     public var screenHint: PetScreenHint?
+
+    public init(
+        focusState: FocusPetCore.FocusState,
+        intent: PetIntentKind,
+        message: String?,
+        hoverMessage: String? = nil,
+        hoverStatusEnabled: Bool = true,
+        hoverDetails: [PetHoverContextItem] = [],
+        hoverBreakButtonTitle: String = "开始休息",
+        activeIntentTitle: String? = nil,
+        mappedActionTitle: String? = nil,
+        breakEndsAt: Date? = nil,
+        size: Double,
+        opacity: Double,
+        animationEnabled: Bool,
+        packName: String,
+        placement: PetPlacementMode = .bottomRight,
+        customOriginX: Double? = nil,
+        customOriginY: Double? = nil,
+        frameURLs: [URL] = [],
+        framesPerSecond: Double = 8,
+        loops: Bool = true,
+        hoverIntent: PetIntentKind? = nil,
+        hoverFrameURLs: [URL] = [],
+        hoverFramesPerSecond: Double = 8,
+        hoverLoops: Bool = true,
+        animationStartedAt: Date = Date(),
+        screenHint: PetScreenHint? = nil
+    ) {
+        self.focusState = focusState
+        self.intent = intent
+        self.message = message
+        self.hoverMessage = hoverMessage
+        self.hoverStatusEnabled = hoverStatusEnabled
+        self.hoverDetails = hoverDetails
+        self.hoverBreakButtonTitle = hoverBreakButtonTitle
+        self.activeIntentTitle = activeIntentTitle
+        self.mappedActionTitle = mappedActionTitle
+        self.breakEndsAt = breakEndsAt
+        self.size = size
+        self.opacity = opacity
+        self.animationEnabled = animationEnabled
+        self.packName = packName
+        self.placement = placement
+        self.customOriginX = customOriginX
+        self.customOriginY = customOriginY
+        self.frameURLs = frameURLs
+        self.framesPerSecond = max(1, framesPerSecond)
+        self.loops = loops
+        self.hoverIntent = hoverIntent
+        self.hoverFrameURLs = hoverFrameURLs
+        self.hoverFramesPerSecond = max(1, hoverFramesPerSecond)
+        self.hoverLoops = hoverLoops
+        self.animationStartedAt = animationStartedAt
+        self.screenHint = screenHint
+    }
 
     public init(
         focusState: FocusPetCore.FocusState,
@@ -59,6 +117,7 @@ public struct PetRenderState: Hashable, Sendable {
         hoverStatusEnabled: Bool = true,
         hoverDetails: [PetHoverContextItem] = [],
         hoverBreakButtonTitle: String = "开始休息",
+        idleActionTitle: String? = nil,
         breakEndsAt: Date? = nil,
         size: Double,
         opacity: Double,
@@ -77,40 +136,46 @@ public struct PetRenderState: Hashable, Sendable {
         animationStartedAt: Date = Date(),
         screenHint: PetScreenHint? = nil
     ) {
-        self.focusState = focusState
-        self.action = action
-        self.message = message
-        self.hoverMessage = hoverMessage
-        self.hoverStatusEnabled = hoverStatusEnabled
-        self.hoverDetails = hoverDetails
-        self.hoverBreakButtonTitle = hoverBreakButtonTitle
-        self.breakEndsAt = breakEndsAt
-        self.size = size
-        self.opacity = opacity
-        self.animationEnabled = animationEnabled
-        self.packName = packName
-        self.placement = placement
-        self.customOriginX = customOriginX
-        self.customOriginY = customOriginY
-        self.frameURLs = frameURLs
-        self.framesPerSecond = max(1, framesPerSecond)
-        self.loops = loops
-        self.hoverAction = hoverAction
-        self.hoverFrameURLs = hoverFrameURLs
-        self.hoverFramesPerSecond = max(1, hoverFramesPerSecond)
-        self.hoverLoops = hoverLoops
-        self.animationStartedAt = animationStartedAt
-        self.screenHint = screenHint
+        self.init(
+            focusState: focusState,
+            intent: PetIntentKind(legacyAction: action),
+            message: message,
+            hoverMessage: hoverMessage,
+            hoverStatusEnabled: hoverStatusEnabled,
+            hoverDetails: hoverDetails,
+            hoverBreakButtonTitle: hoverBreakButtonTitle,
+            activeIntentTitle: PetIntentKind(legacyAction: action).title,
+            mappedActionTitle: idleActionTitle,
+            breakEndsAt: breakEndsAt,
+            size: size,
+            opacity: opacity,
+            animationEnabled: animationEnabled,
+            packName: packName,
+            placement: placement,
+            customOriginX: customOriginX,
+            customOriginY: customOriginY,
+            frameURLs: frameURLs,
+            framesPerSecond: framesPerSecond,
+            loops: loops,
+            hoverIntent: hoverAction.map(PetIntentKind.init(legacyAction:)),
+            hoverFrameURLs: hoverFrameURLs,
+            hoverFramesPerSecond: hoverFramesPerSecond,
+            hoverLoops: hoverLoops,
+            animationStartedAt: animationStartedAt,
+            screenHint: screenHint
+        )
     }
 
     public static let initial = PetRenderState(
         focusState: FocusPetCore.FocusState.focus,
-        action: PetAction.idle,
+        intent: PetIntentKind.quietCompanion,
         message: Optional<String>.none,
         hoverMessage: Optional<String>.none,
         hoverStatusEnabled: true,
         hoverDetails: [],
         hoverBreakButtonTitle: "开始休息",
+        activeIntentTitle: nil,
+        mappedActionTitle: nil,
         breakEndsAt: nil,
         size: 150,
         opacity: 0.94,
@@ -122,7 +187,7 @@ public struct PetRenderState: Hashable, Sendable {
         frameURLs: [],
         framesPerSecond: 8,
         loops: true,
-        hoverAction: PetAction.welcomeBack,
+        hoverIntent: PetIntentKind.welcomeBack,
         hoverFrameURLs: [],
         hoverFramesPerSecond: 8,
         hoverLoops: false,
@@ -130,8 +195,12 @@ public struct PetRenderState: Hashable, Sendable {
         screenHint: nil
     )
 
+    public func displayIntent(isHovering: Bool) -> PetIntentKind {
+        isHovering ? (hoverIntent ?? intent) : intent
+    }
+
     public func displayAction(isHovering: Bool) -> PetAction {
-        isHovering ? (hoverAction ?? action) : action
+        displayIntent(isHovering: isHovering).legacyPetAction
     }
 
     public func displayFrameURLs(isHovering: Bool) -> [URL] {
@@ -162,6 +231,7 @@ public struct PetPanelInteractions {
     public var openSettings: () -> Void
     public var startBreak: () -> Void
     public var pauseReminders: () -> Void
+    public var cycleIntentAction: () -> Void
     public var setHovering: (Bool) -> Void
     public var toggleHidden: () -> Void
     public var setPlacement: (PetPlacementMode) -> Void
@@ -174,6 +244,7 @@ public struct PetPanelInteractions {
         openSettings: @escaping () -> Void = {},
         startBreak: @escaping () -> Void = {},
         pauseReminders: @escaping () -> Void = {},
+        cycleIntentAction: @escaping () -> Void = {},
         setHovering: @escaping (Bool) -> Void = { _ in },
         toggleHidden: @escaping () -> Void = {},
         setPlacement: @escaping (PetPlacementMode) -> Void = { _ in },
@@ -185,12 +256,34 @@ public struct PetPanelInteractions {
         self.openSettings = openSettings
         self.startBreak = startBreak
         self.pauseReminders = pauseReminders
+        self.cycleIntentAction = cycleIntentAction
         self.setHovering = setHovering
         self.toggleHidden = toggleHidden
         self.setPlacement = setPlacement
         self.dragBegan = dragBegan
         self.dragEnded = dragEnded
     }
+}
+
+public enum PetPanelAnchorEdge: Hashable, Sendable {
+    case left
+    case right
+    case top
+    case bottom
+    case bottomLeft
+}
+
+private enum PetDockEdge {
+    case bottom
+    case left
+    case right
+}
+
+private struct PetPanelSafeInsets {
+    var top: CGFloat = 12
+    var left: CGFloat = 12
+    var bottom: CGFloat = 12
+    var right: CGFloat = 12
 }
 
 @MainActor
@@ -237,9 +330,20 @@ public final class PetPanelController {
     }
 
     public func update(_ renderState: PetRenderState) {
+        let previousRenderState = model.renderState
+        let previousScreenHint = model.renderState.screenHint
+        let placementChanged = previousRenderState.placement != renderState.placement
+            || previousRenderState.customOriginX != renderState.customOriginX
+            || previousRenderState.customOriginY != renderState.customOriginY
         model.renderState = renderState
-        if panel?.isVisible == true, !isDragging && !model.isHovering && temporaryFrameIsExpired {
-            positionPanel()
+        if placementChanged {
+            temporaryFrame = nil
+            temporaryFrameExpiresAt = nil
+            lastPlacedFrame = nil
+        }
+        let shouldReposition = !model.isHovering || placementChanged
+        if panel?.isVisible == true, !isDragging && shouldReposition && temporaryFrameIsExpired {
+            positionPanel(animate: previousScreenHint == renderState.screenHint)
         }
     }
 
@@ -269,7 +373,38 @@ public final class PetPanelController {
             if self.temporaryFrameIsExpired {
                 self.temporaryFrame = nil
                 self.temporaryFrameExpiresAt = nil
-                self.positionPanel()
+                self.positionPanel(animate: false)
+            }
+        }
+    }
+
+    public func summon(
+        near targetFrame: CGRect,
+        preferredEdge: PetPanelAnchorEdge = .right,
+        duration: TimeInterval = 10
+    ) {
+        if panel == nil {
+            panel = makePanel()
+        }
+        guard let panel else { return }
+        let panelSize = resolvedPanelSize()
+        let target = NSRect(x: targetFrame.origin.x, y: targetFrame.origin.y, width: targetFrame.width, height: targetFrame.height)
+        let visibleFrame = visibleFrame(containing: target)
+        let frame = clamped(
+            NSRect(origin: anchorOrigin(near: target, panelSize: panelSize, preferredEdge: preferredEdge), size: panelSize),
+            preferredVisibleFrame: visibleFrame
+        )
+        temporaryFrame = frame
+        temporaryFrameExpiresAt = Date().addingTimeInterval(max(2, duration))
+        lastPlacedFrame = nil
+        panel.setFrame(frame, display: true, animate: false)
+        panel.orderFrontRegardless()
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(max(2, duration) * 1_000_000_000))
+            if self.temporaryFrameIsExpired {
+                self.temporaryFrame = nil
+                self.temporaryFrameExpiresAt = nil
+                self.positionPanel(animate: false)
             }
         }
     }
@@ -349,13 +484,10 @@ public final class PetPanelController {
     }
 
     private func resolvedPanelFrame() -> NSRect {
-        let size = CGFloat(model.renderState.size)
-        let width = max(size, min(280, size + 110))
-        let height = size + statusAreaHeight
+        let panelSize = resolvedPanelSize()
         let frames = preferredFrames()
         let screenFrame = frames.screen
         let visibleFrame = frames.visible
-        let panelSize = CGSize(width: width, height: height)
         let margin: CGFloat = 24
         let dockMargin: CGFloat = 8
 
@@ -381,6 +513,13 @@ public final class PetPanelController {
         return clamped(NSRect(origin: origin, size: panelSize), preferredVisibleFrame: visibleFrame)
     }
 
+    private func resolvedPanelSize() -> CGSize {
+        let size = CGFloat(model.renderState.size)
+        let width = max(size, min(280, size + 110))
+        let height = size + statusAreaHeight
+        return CGSize(width: width, height: height)
+    }
+
     private var temporaryFrameIsExpired: Bool {
         guard let temporaryFrameExpiresAt else { return true }
         return temporaryFrameExpiresAt <= Date()
@@ -388,21 +527,30 @@ public final class PetPanelController {
 
     private func preferredFrames() -> (screen: NSRect, visible: NSRect) {
         if let hint = model.renderState.screenHint {
-            return (
-                NSRect(x: hint.screenFrame.origin.x, y: hint.screenFrame.origin.y, width: hint.screenFrame.width, height: hint.screenFrame.height),
-                NSRect(x: hint.visibleFrame.origin.x, y: hint.visibleFrame.origin.y, width: hint.visibleFrame.width, height: hint.visibleFrame.height)
+            let screenFrame = NSRect(
+                x: hint.screenFrame.origin.x,
+                y: hint.screenFrame.origin.y,
+                width: hint.screenFrame.width,
+                height: hint.screenFrame.height
             )
+            let visibleFrame = NSRect(
+                x: hint.visibleFrame.origin.x,
+                y: hint.visibleFrame.origin.y,
+                width: hint.visibleFrame.width,
+                height: hint.visibleFrame.height
+            )
+            return (screenFrame, safeVisibleFrame(screenFrame: screenFrame, visibleFrame: visibleFrame))
         }
         if model.renderState.placement == .custom,
            let x = model.renderState.customOriginX,
            let y = model.renderState.customOriginY,
            let screen = NSScreen.screens.first(where: { $0.frame.contains(CGPoint(x: x, y: y)) }) {
-            return (screen.frame, screen.visibleFrame)
+            return (screen.frame, safeVisibleFrame(screenFrame: screen.frame, visibleFrame: screen.visibleFrame))
         }
         let screen = NSScreen.main ?? NSScreen.screens.first
         let screenFrame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
         let visibleFrame = screen?.visibleFrame ?? screenFrame
-        return (screenFrame, visibleFrame)
+        return (screenFrame, safeVisibleFrame(screenFrame: screenFrame, visibleFrame: visibleFrame))
     }
 
     private func dockOrigin(screenFrame: NSRect, visibleFrame: NSRect, panelSize: CGSize, margin: CGFloat) -> CGPoint {
@@ -418,17 +566,125 @@ public final class PetPanelController {
         return CGPoint(x: visibleFrame.maxX - panelSize.width - 24, y: visibleFrame.minY + 24)
     }
 
+    private func anchorOrigin(near targetFrame: NSRect, panelSize: CGSize, preferredEdge: PetPanelAnchorEdge) -> CGPoint {
+        let gap: CGFloat = 10
+        switch preferredEdge {
+        case .left:
+            return CGPoint(x: targetFrame.minX - panelSize.width + panelSize.width * 0.34, y: targetFrame.midY - panelSize.height * 0.50)
+        case .right:
+            return CGPoint(x: targetFrame.maxX - panelSize.width * 0.34 - gap, y: targetFrame.midY - panelSize.height * 0.50)
+        case .top:
+            return CGPoint(x: targetFrame.midX - panelSize.width * 0.50, y: targetFrame.maxY - panelSize.height * 0.30)
+        case .bottom:
+            return CGPoint(x: targetFrame.midX - panelSize.width * 0.50, y: targetFrame.minY - panelSize.height * 0.70)
+        case .bottomLeft:
+            return CGPoint(x: targetFrame.minX + 18, y: targetFrame.minY + 18)
+        }
+    }
+
+    private func visibleFrame(containing frame: NSRect) -> NSRect {
+        let targetPoint = CGPoint(x: frame.midX, y: frame.midY)
+        let screen = NSScreen.screens.first { $0.frame.contains(targetPoint) }
+            ?? NSScreen.screens.first { $0.frame.intersects(frame) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return NSRect(x: 0, y: 0, width: 1280, height: 800) }
+        return safeVisibleFrame(screenFrame: screen.frame, visibleFrame: screen.visibleFrame)
+    }
+
     private func clamped(_ frame: NSRect, preferredVisibleFrame: NSRect? = nil) -> NSRect {
         if let visible = preferredVisibleFrame {
-            let x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
-            let y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
+            let x = clampedOrigin(frame.origin.x, lower: visible.minX, upper: visible.maxX - frame.width)
+            let y = clampedOrigin(frame.origin.y, lower: visible.minY, upper: visible.maxY - frame.height)
             return NSRect(x: x, y: y, width: frame.width, height: frame.height)
         }
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) } ?? NSScreen.main ?? NSScreen.screens.first
-        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
-        let y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
+        let screenFrame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        let rawVisible = screen?.visibleFrame ?? screenFrame
+        let visible = safeVisibleFrame(screenFrame: screenFrame, visibleFrame: rawVisible)
+        let x = clampedOrigin(frame.origin.x, lower: visible.minX, upper: visible.maxX - frame.width)
+        let y = clampedOrigin(frame.origin.y, lower: visible.minY, upper: visible.maxY - frame.height)
         return NSRect(x: x, y: y, width: frame.width, height: frame.height)
+    }
+
+    private func clampedOrigin(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+        guard upper >= lower else { return lower }
+        return min(max(value, lower), upper)
+    }
+
+    private func safeVisibleFrame(screenFrame: NSRect, visibleFrame: NSRect) -> NSRect {
+        var insets = PetPanelSafeInsets()
+        switch currentDockEdge() {
+        case .bottom:
+            if visibleFrame.minY - screenFrame.minY < 8 {
+                insets.bottom = 96
+            }
+        case .left:
+            if visibleFrame.minX - screenFrame.minX < 8 {
+                insets.left = 88
+            }
+        case .right:
+            if screenFrame.maxX - visibleFrame.maxX < 8 {
+                insets.right = 88
+            }
+        }
+
+        return insetFrame(visibleFrame, by: insets)
+    }
+
+    private func insetFrame(_ frame: NSRect, by insets: PetPanelSafeInsets) -> NSRect {
+        let maxHorizontalInset = max(0, (frame.width - 1) / 2)
+        let maxVerticalInset = max(0, (frame.height - 1) / 2)
+        let left = min(max(0, insets.left), maxHorizontalInset)
+        let right = min(max(0, insets.right), maxHorizontalInset)
+        let bottom = min(max(0, insets.bottom), maxVerticalInset)
+        let top = min(max(0, insets.top), maxVerticalInset)
+        return NSRect(
+            x: frame.minX + left,
+            y: frame.minY + bottom,
+            width: max(1, frame.width - left - right),
+            height: max(1, frame.height - top - bottom)
+        )
+    }
+
+    private func currentDockEdge() -> PetDockEdge {
+        let orientation = UserDefaults.standard
+            .persistentDomain(forName: "com.apple.dock")?["orientation"] as? String
+        switch orientation {
+        case "left":
+            return .left
+        case "right":
+            return .right
+        default:
+            return .bottom
+        }
+    }
+}
+
+private enum PetFrameImageCache {
+    private nonisolated(unsafe) static let cache: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 240
+        cache.totalCostLimit = 64 * 1024 * 1024
+        return cache
+    }()
+
+    static func image(for url: URL) -> NSImage? {
+        let key = url as NSURL
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
+        guard let image = NSImage(contentsOf: url) else {
+            return nil
+        }
+        cache.setObject(image, forKey: key, cost: image.cacheCost)
+        return image
+    }
+}
+
+private extension NSImage {
+    var cacheCost: Int {
+        max(1, Int(size.width * size.height * 4))
     }
 }
 
@@ -447,9 +703,12 @@ private struct PetBubbleSurface: View {
     var hoverTitle: String?
     var hoverDetails: [PetHoverContextItem]
     var breakButtonTitle: String
+    var activeIntentTitle: String?
+    var mappedActionTitle: String?
     var breakEndsAt: Date?
     var showsHoverContext: Bool
     var startBreak: () -> Void
+    var cycleIntentAction: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -480,24 +739,39 @@ private struct PetBubbleSurface: View {
                     }
                 }
 
-                TimelineView(.periodic(from: Date(), by: 1)) { context in
-                    Button(action: startBreak) {
-                        HStack(spacing: 6) {
-                            Image(systemName: breakEndsAt == nil ? "cup.and.saucer.fill" : "stop.fill")
-                                .font(.caption.weight(.bold))
-                            Text(buttonTitle(at: context.date))
-                                .font(.caption.weight(.semibold))
-                            Spacer(minLength: 0)
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.bold))
+                HStack(spacing: 6) {
+                    TimelineView(.periodic(from: Date(), by: 1)) { context in
+                        Button(action: startBreak) {
+                            HStack(spacing: 6) {
+                                Image(systemName: breakEndsAt == nil ? "cup.and.saucer.fill" : "stop.fill")
+                                    .font(.caption.weight(.bold))
+                                Text(buttonTitle(at: context.date))
+                                    .font(.caption.weight(.semibold))
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.bold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(Color.accentColor.gradient, in: Capsule())
                         }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(Color.accentColor.gradient, in: Capsule())
+                        .buttonStyle(.plain)
+                        .contentShape(Capsule())
                     }
-                    .buttonStyle(.plain)
-                    .contentShape(Capsule())
+
+                    if let mappedActionTitle {
+                        Button(action: cycleIntentAction) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 28, height: 28)
+                                .background(Color.accentColor.opacity(0.86), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .contentShape(Circle())
+                        .help("切换\(activeIntentTitle ?? "当前")动作：\(mappedActionTitle)")
+                    }
                 }
             } else {
                 HStack(alignment: .top, spacing: 7) {
@@ -525,18 +799,18 @@ private struct PetBubbleSurface: View {
         .padding(.horizontal, 11)
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.92), in: RoundedRectangle(cornerRadius: 16))
         .overlay {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(.primary.opacity(0.10), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
         .overlay(alignment: .bottom) {
             BubbleTail()
-                .fill(.ultraThinMaterial)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.92))
                 .frame(width: 18, height: 10)
                 .offset(y: 8)
-                .shadow(color: .black.opacity(0.08), radius: 4, y: 2)
+                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
         }
     }
 
@@ -571,10 +845,10 @@ private struct PetRendererView: View {
     var body: some View {
         let renderState = model.renderState
         let isHovering = model.isHovering
-        let displayAction = renderState.displayAction(isHovering: isHovering)
+        let displayIntent = renderState.displayIntent(isHovering: isHovering)
         let showsHoverContext = isHovering && renderState.hoverStatusEnabled
         let hasStatusSurface = renderState.message != nil || showsHoverContext
-        let frameInterval = 1 / max(1, max(renderState.framesPerSecond, renderState.hoverFramesPerSecond))
+        let frameInterval = 1 / min(10, max(1, max(renderState.framesPerSecond, renderState.hoverFramesPerSecond)))
         let bubbleWidth = max(196, min(236, renderState.size + 86))
         let bubbleHeight: CGFloat = showsHoverContext ? 118 : 54
         let panelWidth = max(renderState.size, bubbleWidth)
@@ -585,9 +859,12 @@ private struct PetRendererView: View {
                 hoverTitle: renderState.hoverMessage,
                 hoverDetails: renderState.hoverDetails,
                 breakButtonTitle: renderState.hoverBreakButtonTitle,
+                activeIntentTitle: renderState.activeIntentTitle,
+                mappedActionTitle: renderState.mappedActionTitle,
                 breakEndsAt: renderState.breakEndsAt,
                 showsHoverContext: showsHoverContext,
-                startBreak: model.interactions.startBreak
+                startBreak: model.interactions.startBreak,
+                cycleIntentAction: model.interactions.cycleIntentAction
             )
             .frame(width: bubbleWidth, height: bubbleHeight)
             .opacity(hasStatusSurface ? 1 : 0)
@@ -596,27 +873,12 @@ private struct PetRendererView: View {
             .animation(renderState.animationEnabled ? .easeOut(duration: 0.18) : nil, value: hasStatusSurface)
             .allowsHitTesting(hasStatusSurface)
 
-            TimelineView(.periodic(from: renderState.animationStartedAt, by: frameInterval)) { context in
-                let actionAge = context.date.timeIntervalSince(renderState.animationStartedAt)
-                ZStack {
-                    if let frameURL = renderState.frameURL(at: context.date, isHovering: isHovering),
-                       let image = NSImage(contentsOf: frameURL) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .interpolation(.none)
-                            .scaledToFit()
-                            .opacity(renderState.opacity)
-                            .frame(width: renderState.size, height: renderState.size)
-                            .accessibilityLabel(renderState.packName)
-                    } else {
-                        DinoBody(state: renderState.focusState, action: displayAction, phase: actionAge)
-                            .opacity(renderState.opacity)
-                            .frame(width: renderState.size, height: renderState.size)
-                            .animation(renderState.animationEnabled ? .easeInOut(duration: 0.28) : nil, value: displayAction)
-                    }
-                }
-                .shadow(color: isHovering ? Color.accentColor.opacity(0.35) : .clear, radius: isHovering ? 12 : 0)
-            }
+            petVisual(
+                renderState: renderState,
+                isHovering: isHovering,
+                displayIntent: displayIntent,
+                frameInterval: frameInterval
+            )
             .contentShape(Rectangle())
             .gesture(tapGesture)
             .simultaneousGesture(dragGesture)
@@ -647,6 +909,11 @@ private struct PetRendererView: View {
             Button(model.renderState.hoverBreakButtonTitle) {
                 model.interactions.startBreak()
             }
+            if let mappedActionTitle = model.renderState.mappedActionTitle {
+                Button("切换\(model.renderState.activeIntentTitle ?? "当前")动作：\(mappedActionTitle)") {
+                    model.interactions.cycleIntentAction()
+                }
+            }
             Button("暂停提醒 30 分钟") {
                 model.interactions.pauseReminders()
             }
@@ -666,6 +933,59 @@ private struct PetRendererView: View {
                 NSApp.terminate(nil)
             }
         }
+    }
+
+    @ViewBuilder
+    private func petVisual(
+        renderState: PetRenderState,
+        isHovering: Bool,
+        displayIntent: PetIntentKind,
+        frameInterval: TimeInterval
+    ) -> some View {
+        if renderState.animationEnabled {
+            TimelineView(.periodic(from: renderState.animationStartedAt, by: frameInterval)) { context in
+                petFrame(
+                    renderState: renderState,
+                    isHovering: isHovering,
+                    displayIntent: displayIntent,
+                    date: context.date
+                )
+            }
+        } else {
+            petFrame(
+                renderState: renderState,
+                isHovering: isHovering,
+                displayIntent: displayIntent,
+                date: renderState.animationStartedAt
+            )
+        }
+    }
+
+    private func petFrame(
+        renderState: PetRenderState,
+        isHovering: Bool,
+        displayIntent: PetIntentKind,
+        date: Date
+    ) -> some View {
+        let actionAge = date.timeIntervalSince(renderState.animationStartedAt)
+        return ZStack {
+            if let frameURL = renderState.frameURL(at: date, isHovering: isHovering),
+               let image = PetFrameImageCache.image(for: frameURL) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .opacity(renderState.opacity)
+                    .frame(width: renderState.size, height: renderState.size)
+                    .accessibilityLabel(renderState.packName)
+            } else {
+                DinoBody(state: renderState.focusState, intent: displayIntent, phase: actionAge)
+                    .opacity(renderState.opacity)
+                    .frame(width: renderState.size, height: renderState.size)
+                    .animation(renderState.animationEnabled ? .easeInOut(duration: 0.28) : nil, value: displayIntent)
+            }
+        }
+        .shadow(color: isHovering ? Color.accentColor.opacity(0.12) : .clear, radius: isHovering ? 3 : 0)
     }
 
     private var tapGesture: some Gesture {
@@ -704,7 +1024,7 @@ private struct PetRendererView: View {
 
 private struct DinoBody: View {
     var state: FocusPetCore.FocusState
-    var action: PetAction
+    var intent: PetIntentKind
     var phase: TimeInterval
 
     var body: some View {
@@ -744,7 +1064,7 @@ private struct DinoBody: View {
                     .offset(x: 50, y: -62 + bounce * 3)
             }
 
-            if action == .stretch {
+            if intent == .focusRestHint {
                 Image(systemName: "sparkles")
                     .font(.system(size: 26, weight: .semibold))
                     .foregroundStyle(.yellow)
@@ -752,7 +1072,7 @@ private struct DinoBody: View {
                     .offset(x: -50, y: -58 - abs(bounce) * 5)
             }
 
-            if action == .welcomeBack {
+            if intent == .welcomeBack || intent == .dashboardGuide {
                 Image(systemName: "hand.wave.fill")
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(.cyan)
@@ -760,8 +1080,8 @@ private struct DinoBody: View {
                     .offset(x: 46, y: -54 + bounce * 3)
             }
 
-            if action == .screenTransfer || action == .mouseSummon {
-                Image(systemName: action == .screenTransfer ? "arrow.left.arrow.right.circle.fill" : "cursorarrow.motionlines")
+            if isMoving || intent == .mouseSummon {
+                Image(systemName: isMoving ? "arrow.left.arrow.right.circle.fill" : "cursorarrow.motionlines")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.purple)
                     .scaleEffect(1 + abs(bounce) * 0.08)
@@ -796,7 +1116,7 @@ private struct DinoBody: View {
 
     private var isBlinking: Bool {
         let cycle = phase.truncatingRemainder(dividingBy: 4.2)
-        return cycle > 3.92 || action == .blink
+        return cycle > 3.92 || intent == .quietCompanion
     }
 
     private var eyeHeight: CGFloat {
@@ -807,14 +1127,14 @@ private struct DinoBody: View {
     }
 
     private var headTilt: Double {
-        switch action {
-        case .distractedLook, .nudgeGentle, .nudgeStrong:
+        switch intent {
+        case .distractedObserve, .nudgeGentle, .nudgeStrong:
             return sin(phase * 3.0) * 6
-        case .stretch:
+        case .focusRestHint:
             return -5
-        case .welcomeBack, .wake:
+        case .welcomeBack, .dashboardGuide:
             return sin(phase * 6.0) * 4
-        case .run, .screenTransfer, .mouseSummon:
+        case .moveLeft, .moveRight, .moveUp, .moveDown, .mouseSummon:
             return sin(phase * 8.0) * 5
         default:
             return 0
@@ -822,12 +1142,12 @@ private struct DinoBody: View {
     }
 
     private var headLift: CGFloat {
-        switch action {
-        case .stretch:
+        switch intent {
+        case .focusRestHint:
             return -5 - abs(breath) * 2
-        case .welcomeBack, .wake:
+        case .welcomeBack, .dashboardGuide:
             return -abs(bounce) * 5
-        case .run, .screenTransfer, .mouseSummon:
+        case .moveLeft, .moveRight, .moveUp, .moveDown, .mouseSummon:
             return -abs(bounce) * 8
         default:
             return breath * 1.5
@@ -835,12 +1155,12 @@ private struct DinoBody: View {
     }
 
     private var mouthWidth: CGFloat {
-        switch action {
-        case .welcomeBack, .wake:
+        switch intent {
+        case .welcomeBack, .dashboardGuide:
             return 38
-        case .distractedLook, .nudgeGentle, .nudgeStrong:
+        case .distractedObserve, .nudgeGentle, .nudgeStrong:
             return 20
-        case .run, .screenTransfer, .mouseSummon:
+        case .moveLeft, .moveRight, .moveUp, .moveDown, .mouseSummon:
             return 34
         default:
             return 30
@@ -848,14 +1168,14 @@ private struct DinoBody: View {
     }
 
     private var baseScale: CGFloat {
-        switch action {
-        case .welcomeBack, .wake:
+        switch intent {
+        case .welcomeBack, .dashboardGuide:
             return 1.04 + abs(bounce) * 0.02
-        case .stretch:
+        case .focusRestHint:
             return 1.03 + abs(breath) * 0.02
         case .sleep:
             return 0.98 + breath * 0.01
-        case .run, .screenTransfer, .mouseSummon:
+        case .moveLeft, .moveRight, .moveUp, .moveDown, .mouseSummon:
             return 1.02 + abs(bounce) * 0.035
         default:
             return 1.0 + breath * 0.008
@@ -863,10 +1183,12 @@ private struct DinoBody: View {
     }
 
     private var bodyOffsetX: CGFloat {
-        switch action {
-        case .run:
+        switch intent {
+        case .moveLeft:
+            return -abs(CGFloat(sin(phase * 8.0))) * 8
+        case .moveRight:
             return CGFloat(sin(phase * 8.0)) * 8
-        case .screenTransfer:
+        case .moveUp, .moveDown:
             return CGFloat(sin(phase * 10.0)) * 12
         case .mouseSummon:
             return CGFloat(sin(phase * 6.0)) * 5
@@ -876,15 +1198,28 @@ private struct DinoBody: View {
     }
 
     private var bodyOffsetY: CGFloat {
-        switch action {
-        case .welcomeBack, .wake:
+        switch intent {
+        case .welcomeBack, .dashboardGuide:
             return -abs(bounce) * 5
         case .sleep:
             return 3
-        case .run, .screenTransfer, .mouseSummon:
+        case .moveUp:
+            return -abs(bounce) * 8
+        case .moveDown:
+            return abs(bounce) * 8
+        case .moveLeft, .moveRight, .mouseSummon:
             return -abs(bounce) * 5
         default:
             return 0
+        }
+    }
+
+    private var isMoving: Bool {
+        switch intent {
+        case .moveLeft, .moveRight, .moveUp, .moveDown:
+            return true
+        default:
+            return false
         }
     }
 

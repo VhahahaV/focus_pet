@@ -42,6 +42,63 @@ public struct PetAnimationSpec: Codable, Hashable, Sendable {
     }
 }
 
+public struct PetAudioSpec: Codable, Hashable, Sendable {
+    public var file: String
+    public var volume: Double
+
+    public init(file: String, volume: Double = 0.55) {
+        self.file = file
+        self.volume = min(1, max(0, volume))
+    }
+
+    public init(from decoder: Decoder) throws {
+        if let container = try? decoder.singleValueContainer(),
+           let file = try? container.decode(String.self) {
+            self.init(file: file)
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            file: try container.decode(String.self, forKey: .file),
+            volume: try container.decodeIfPresent(Double.self, forKey: .volume) ?? 0.55
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case file
+        case volume
+    }
+}
+
+public struct PetSourceActionSpec: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var title: String
+    public var folder: String
+    public var fps: Double
+    public var loop: Bool
+    public var frameCount: Int?
+    public var audio: PetAudioSpec?
+
+    public init(
+        id: String,
+        title: String,
+        folder: String,
+        fps: Double,
+        loop: Bool,
+        frameCount: Int?,
+        audio: PetAudioSpec? = nil
+    ) {
+        self.id = id
+        self.title = title.isEmpty ? id : title
+        self.folder = folder
+        self.fps = max(1, fps)
+        self.loop = loop
+        self.frameCount = frameCount.map { max(0, $0) }
+        self.audio = audio
+    }
+}
+
 public struct PetPack: Identifiable, Codable, Hashable, Sendable {
     public var schemaVersion: Int
     public var id: String
@@ -53,6 +110,9 @@ public struct PetPack: Identifiable, Codable, Hashable, Sendable {
     public var defaultSize: PetPackSize
     public var anchor: PetPackAnchor
     public var animations: [PetAction: PetAnimationSpec]
+    public var audio: [PetAction: PetAudioSpec]
+    public var sourceActions: [PetSourceActionSpec]
+    public var idleSourceActionIDs: [String]
 
     public init(
         schemaVersion: Int,
@@ -64,7 +124,10 @@ public struct PetPack: Identifiable, Codable, Hashable, Sendable {
         distribution: String,
         defaultSize: PetPackSize,
         anchor: PetPackAnchor,
-        animations: [PetAction: PetAnimationSpec]
+        animations: [PetAction: PetAnimationSpec],
+        audio: [PetAction: PetAudioSpec] = [:],
+        sourceActions: [PetSourceActionSpec] = [],
+        idleSourceActionIDs: [String] = []
     ) {
         self.schemaVersion = schemaVersion
         self.id = id
@@ -76,6 +139,9 @@ public struct PetPack: Identifiable, Codable, Hashable, Sendable {
         self.defaultSize = defaultSize
         self.anchor = anchor
         self.animations = animations
+        self.audio = audio
+        self.sourceActions = sourceActions
+        self.idleSourceActionIDs = idleSourceActionIDs
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -89,6 +155,9 @@ public struct PetPack: Identifiable, Codable, Hashable, Sendable {
         case defaultSize
         case anchor
         case animations
+        case audio
+        case sourceActions
+        case idleSourceActionIDs
     }
 
     public init(from decoder: Decoder) throws {
@@ -121,6 +190,18 @@ public struct PetPack: Identifiable, Codable, Hashable, Sendable {
             }
             result[action] = value
         }
+
+        let keyedAudio = (try? container.decodeIfPresent([String: PetAudioSpec].self, forKey: .audio)) ?? [:]
+        audio = keyedAudio.reduce(into: [:]) { result, item in
+            let (key, value) = item
+            guard let action = PetAction(rawValue: key) ?? Self.legacyAction(for: key),
+                  result[action] == nil else {
+                return
+            }
+            result[action] = value
+        }
+        sourceActions = try container.decodeIfPresent([PetSourceActionSpec].self, forKey: .sourceActions) ?? []
+        idleSourceActionIDs = try container.decodeIfPresent([String].self, forKey: .idleSourceActionIDs) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -136,6 +217,16 @@ public struct PetPack: Identifiable, Codable, Hashable, Sendable {
         try container.encode(anchor, forKey: .anchor)
         let keyedAnimations = Dictionary(uniqueKeysWithValues: animations.map { ($0.key.rawValue, $0.value) })
         try container.encode(keyedAnimations, forKey: .animations)
+        if !audio.isEmpty {
+            let keyedAudio = Dictionary(uniqueKeysWithValues: audio.map { ($0.key.rawValue, $0.value) })
+            try container.encode(keyedAudio, forKey: .audio)
+        }
+        if !sourceActions.isEmpty {
+            try container.encode(sourceActions, forKey: .sourceActions)
+        }
+        if !idleSourceActionIDs.isEmpty {
+            try container.encode(idleSourceActionIDs, forKey: .idleSourceActionIDs)
+        }
     }
 
     private static func legacyAction(for key: String) -> PetAction? {
@@ -248,20 +339,229 @@ public struct PetPackRecord: Identifiable, Codable, Hashable, Sendable {
             return []
         }
 
-        let folderURL = rootURL.appendingPathComponent(spec.folder, isDirectory: true)
-        guard let urls = try? FileManager.default.contentsOfDirectory(
-            at: folderURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else {
+        return PetPackFrameURLCache.frameURLs(rootURL: rootURL, folder: spec.folder)
+    }
+
+    public var previewSourceActions: [PetSourceActionSpec] {
+        if !pack.sourceActions.isEmpty {
+            return pack.sourceActions
+        }
+
+        return pack.animations
+            .sorted { $0.key.rawValue < $1.key.rawValue }
+            .map { action, animation in
+                PetSourceActionSpec(
+                    id: action.rawValue,
+                    title: action.title,
+                    folder: animation.folder,
+                    fps: animation.fps,
+                    loop: animation.loop,
+                    frameCount: animation.frameCount
+                )
+            }
+    }
+
+    public var idleSourceActions: [PetSourceActionSpec] {
+        let sourceActions = previewSourceActions
+        guard !pack.idleSourceActionIDs.isEmpty else {
+            return sourceActions.filter { $0.loop }
+        }
+
+        let actionByID = Dictionary(uniqueKeysWithValues: sourceActions.map { ($0.id, $0) })
+        let selected = pack.idleSourceActionIDs.compactMap { actionByID[$0] }
+        return selected.isEmpty ? sourceActions.filter { $0.loop } : selected
+    }
+
+    public var playableSourceActions: [PetSourceActionSpec] {
+        let available = previewSourceActions.filter {
+            !frameURLs(forSourceActionID: $0.id).isEmpty
+        }
+        let candidates = available.isEmpty ? previewSourceActions : available
+        return deduplicatedSourceActions(candidates)
+    }
+
+    public func defaultSourceAction(for intent: PetIntentKind) -> PetSourceActionSpec? {
+        let actions = playableSourceActions
+        guard !actions.isEmpty else { return nil }
+
+        let normalizedPreferred = intent.preferredSourceActionIDs.map(Self.normalizedActionKey)
+        for preferred in normalizedPreferred {
+            if let exact = actions.first(where: { Self.normalizedActionKey($0.id) == preferred }) {
+                return exact
+            }
+        }
+
+        for preferred in normalizedPreferred {
+            if let titleMatch = actions.first(where: {
+                Self.normalizedActionKey($0.title).contains(preferred)
+                    || preferred.contains(Self.normalizedActionKey($0.title))
+            }) {
+                return titleMatch
+            }
+        }
+
+        switch intent {
+        case .quietCompanion, .distractedObserve:
+            return actions.first(where: \.loop) ?? actions.first
+        case .sleep:
+            return actions.first(where: { Self.normalizedActionKey($0.id).contains("sleep") })
+                ?? actions.first(where: \.loop)
+                ?? actions.first
+        case .breakCompanion:
+            return actions.first(where: { Self.normalizedActionKey($0.id).contains("break") })
+                ?? actions.first(where: \.loop)
+                ?? actions.first
+        default:
+            return actions.first
+        }
+    }
+
+    public func sourceAction(
+        for intent: PetIntentKind,
+        mappedSourceActionID: String?
+    ) -> PetSourceActionSpec? {
+        if let mappedSourceActionID,
+           let mapped = sourceAction(id: mappedSourceActionID),
+           !frameURLs(forSourceActionID: mapped.id).isEmpty {
+            return mapped
+        }
+
+        return defaultSourceAction(for: intent)
+    }
+
+    public func sourceAction(id: String) -> PetSourceActionSpec? {
+        previewSourceActions.first { $0.id == id }
+    }
+
+    public func frameURLs(forSourceActionID id: String) -> [URL] {
+        guard let action = sourceAction(id: id) else {
             return []
         }
 
-        return urls
-            .filter { $0.pathExtension.lowercased() == "png" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        return frameURLs(forFolder: action.folder)
     }
 
+    public func frameURLs(forFolder folder: String) -> [URL] {
+        guard let rootURL else {
+            return []
+        }
+
+        return PetPackFrameURLCache.frameURLs(rootURL: rootURL, folder: folder)
+    }
+
+    private func deduplicatedSourceActions(_ actions: [PetSourceActionSpec]) -> [PetSourceActionSpec] {
+        var seenRenderKeys = Set<String>()
+        var result: [PetSourceActionSpec] = []
+
+        for action in actions {
+            let key = sourceActionRenderKey(action)
+            guard !seenRenderKeys.contains(key) else { continue }
+            seenRenderKeys.insert(key)
+            result.append(action)
+        }
+
+        return result
+    }
+
+    private func sourceActionRenderKey(_ action: PetSourceActionSpec) -> String {
+        let frames = frameURLs(forSourceActionID: action.id)
+        guard !frames.isEmpty else {
+            return "folder|\(action.folder.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
+        }
+
+        return frames
+            .map { $0.standardizedFileURL.path }
+            .joined(separator: "|")
+    }
+
+    public func audioSpec(for action: PetAction) -> PetAudioSpec? {
+        if let spec = pack.audio[action] {
+            return spec
+        }
+
+        let resolver = PetActionResolver()
+        if let animationKey = resolver.animationKey(for: action, in: pack),
+           let spec = pack.audio[animationKey] {
+            return spec
+        }
+
+        for fallback in resolver.fallbacks(for: action) where pack.audio[fallback] != nil {
+            return pack.audio[fallback]
+        }
+
+        return nil
+    }
+
+    public func audioURL(for action: PetAction) -> URL? {
+        guard let rootURL,
+              let spec = audioSpec(for: action) else {
+            return nil
+        }
+
+        let url = rootURL.appendingPathComponent(spec.file)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    public func audioURL(forSourceActionID id: String) -> URL? {
+        guard let rootURL,
+              let action = sourceAction(id: id),
+              let spec = action.audio else {
+            return nil
+        }
+
+        let url = rootURL.appendingPathComponent(spec.file)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+}
+
+enum PetPackFrameURLCache {
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var urlsByKey: [String: [URL]] = [:]
+
+    static func frameURLs(rootURL: URL, folder: String) -> [URL] {
+        let key = cacheKey(rootURL: rootURL, folder: folder)
+        lock.lock()
+        if let cached = urlsByKey[key] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let folderURL = rootURL.appendingPathComponent(folder, isDirectory: true)
+        let urls = ((try? FileManager.default.contentsOfDirectory(
+            at: folderURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? [])
+            .filter { $0.pathExtension.lowercased() == "png" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        lock.lock()
+        urlsByKey[key] = urls
+        lock.unlock()
+        return urls
+    }
+
+    static func invalidate(rootURL: URL) {
+        let pathPrefix = rootURL.standardizedFileURL.path + "|"
+        lock.lock()
+        urlsByKey = urlsByKey.filter { !$0.key.hasPrefix(pathPrefix) }
+        lock.unlock()
+    }
+
+    private static func cacheKey(rootURL: URL, folder: String) -> String {
+        "\(rootURL.standardizedFileURL.path)|\(folder)"
+    }
+}
+
+private extension PetPackRecord {
+    static func normalizedActionKey(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+    }
 }
 
 private struct LegacyLicense: Codable {

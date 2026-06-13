@@ -3,16 +3,13 @@ import Foundation
 public struct PetPackCatalog: Sendable {
     public static let bundledPackID = "focus_dino"
     public static let localLuoXiaoHeiPackID = "luo_xiaohei_local"
+    public static let localXiaoDaiPackID = "xiaodai_local"
+    public static let localPixelCatMemePackID = "pixel_cat_meme_local"
 
     public init() {}
 
     public func bundledPacks() -> [PetPackRecord] {
-        guard let root = Bundle.module.url(forResource: "FocusDino", withExtension: nil, subdirectory: "Pets"),
-              let pack = loadPack(at: root) else {
-            return [PetPackRecord(pack: Self.fallbackPack, rootURL: nil, isBundled: true)]
-        }
-
-        return [PetPackRecord(pack: pack, rootURL: root, isBundled: true)]
+        []
     }
 
     public func availablePacks(userRootURL: URL = PetPackLibrary.defaultInstallRootURL()) -> [PetPackRecord] {
@@ -20,10 +17,7 @@ public struct PetPackCatalog: Sendable {
 
         result.append(contentsOf: records(in: userRootURL, isBundled: false))
 
-        if let localRoot = localLuoXiaoHeiRoot(),
-           let pack = loadPack(at: localRoot) {
-            result.append(PetPackRecord(pack: pack, rootURL: localRoot, isBundled: false))
-        }
+        result.append(contentsOf: localGeneratedPackRecords())
 
         result.append(contentsOf: bundledPacks())
 
@@ -59,20 +53,40 @@ public struct PetPackCatalog: Sendable {
         return urls.compactMap { record(at: $0, isBundled: isBundled) }
     }
 
-    private func localLuoXiaoHeiRoot() -> URL? {
+    private func localGeneratedPackRecords() -> [PetPackRecord] {
+        localGeneratedPackRoots().flatMap { records(in: $0, isBundled: false) }
+    }
+
+    private func localGeneratedPackRoots() -> [URL] {
         let fileManager = FileManager.default
+        let workingDirectory = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
+        let environmentRoot = ProcessInfo.processInfo.environment["FOCUS_PET_LOCAL_PACKS_ROOT"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
         let candidates: [URL?] = [
             Bundle.main.resourceURL?
-                .appendingPathComponent("LocalPetPacks", isDirectory: true)
-                .appendingPathComponent("LuoXiaoHeiLocal", isDirectory: true),
-            URL(fileURLWithPath: fileManager.currentDirectoryPath)
-                .appendingPathComponent("external_generated_packs", isDirectory: true)
-                .appendingPathComponent("LuoXiaoHeiLocal", isDirectory: true),
-            URL(fileURLWithPath: "/Users/vhahahav/Code/focus_pet/external_generated_packs/LuoXiaoHeiLocal", isDirectory: true)
+                .appendingPathComponent("LocalPetPacks", isDirectory: true),
+            Bundle.module.resourceURL?
+                .appendingPathComponent("LocalPetPacks", isDirectory: true),
+            workingDirectory
+                .appendingPathComponent("external_generated_packs", isDirectory: true),
+            workingDirectory
+                .appendingPathComponent("LocalPetPacks", isDirectory: true),
+            environmentRoot
         ]
 
-        return candidates.compactMap { $0 }.first { url in
-            fileManager.fileExists(atPath: url.appendingPathComponent("pet.json").path)
+        var seen = Set<String>()
+        return candidates.compactMap { $0 }.filter { url in
+            guard fileManager.fileExists(atPath: url.path) else {
+                return false
+            }
+
+            let path = url.standardizedFileURL.path
+            guard !seen.contains(path) else {
+                return false
+            }
+
+            seen.insert(path)
+            return true
         }
     }
 

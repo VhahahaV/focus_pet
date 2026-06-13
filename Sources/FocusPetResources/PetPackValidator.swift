@@ -5,6 +5,7 @@ public enum PetPackValidationError: Codable, Hashable, Sendable {
     case unsupportedSchema
     case missingID
     case missingName
+    case missingSourceActions
     case missingRequiredAction(PetAction)
     case invalidFrameCount(PetAction)
     case missingAnimationFolder(PetAction)
@@ -18,6 +19,8 @@ public enum PetPackValidationError: Codable, Hashable, Sendable {
             "缺少 ID"
         case .missingName:
             "缺少名称"
+        case .missingSourceActions:
+            "缺少可播放动作"
         case .missingRequiredAction(let action):
             "缺少必要动作：\(action.title)"
         case .invalidFrameCount(let action):
@@ -59,7 +62,7 @@ public struct PetPackValidationResult: Codable, Hashable, Sendable {
 public struct PetPackValidator: Sendable {
     public var requiredActions: [PetAction]
 
-    public init(requiredActions: [PetAction] = [.idle, .sleep, .nudgeGentle, .welcomeBack, .breakRelax]) {
+    public init(requiredActions: [PetAction] = []) {
         self.requiredActions = requiredActions
     }
 
@@ -80,6 +83,9 @@ public struct PetPackValidator: Sendable {
         }
         if pack.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             errors.append(.missingName)
+        }
+        if pack.sourceActions.isEmpty && pack.animations.isEmpty {
+            errors.append(.missingSourceActions)
         }
         let resolver = PetActionResolver()
         for action in requiredActions where resolver.semanticAnimationKey(for: action, in: pack) == nil {

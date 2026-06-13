@@ -69,6 +69,7 @@ public struct PetPackLibrary: Sendable {
                 }
                 try FileManager.default.copyItem(at: sourceRoot, to: destinationURL)
             }
+            PetPackFrameURLCache.invalidate(rootURL: destinationURL)
         } catch {
             throw PetPackImportError.copyFailed(error.localizedDescription)
         }
@@ -84,6 +85,7 @@ public struct PetPackLibrary: Sendable {
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
         }
+        PetPackFrameURLCache.invalidate(rootURL: url)
     }
 
     private func sourceRootURL(from selectedURL: URL) -> URL {

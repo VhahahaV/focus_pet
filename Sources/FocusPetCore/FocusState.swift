@@ -35,12 +35,23 @@ public enum ActivityCategory: String, Codable, Hashable, Sendable, CaseIterable,
 
     public var id: String { rawValue }
 
+    public static let userFacingClassificationCases: [ActivityCategory] = [.work, .entertainment, .ignore]
+
     public var title: String {
         switch self {
-        case .work: "工作"
-        case .entertainment: "娱乐"
-        case .ignore: "忽略"
-        case .neutral: "普通"
+        case .work: "工作工具"
+        case .entertainment: "容易分心"
+        case .ignore: "不参与判断"
+        case .neutral: "旧数据"
+        }
+    }
+
+    public var correctionTitle: String {
+        switch self {
+        case .work: "通常用于工作"
+        case .entertainment: "容易让我分心"
+        case .ignore: "不参与判断"
+        case .neutral: "旧数据"
         }
     }
 }

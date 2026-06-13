@@ -116,6 +116,44 @@ struct PetPackMVPProbe {
             && pack.license.contains("Local testing only.")
     }
 
+    func manifestDecodesOptionalActionAudio() -> Bool {
+        let manifest = """
+        {
+          "schemaVersion": 1,
+          "id": "audio_pack",
+          "name": "Audio Pack",
+          "distribution": "localOnly",
+          "style": "pixel",
+          "license": "local",
+          "defaultSize": {"width": 128, "height": 128},
+          "anchor": {"x": 0.5, "y": 1.0},
+          "animations": {
+            "idle": {"folder": "idle", "fps": 6, "loop": true, "frameCount": 4}
+          },
+          "audio": {
+            "focusStart": {"file": "audio/work.wav", "volume": 0.25},
+            "nudgeDistracted": "audio/legacy.wav"
+          },
+          "sourceActions": [
+            {"id": "work", "title": "work", "folder": "work", "fps": 8, "loop": true, "frameCount": 4}
+          ],
+          "idleSourceActionIDs": ["work"]
+        }
+        """
+
+        guard let data = manifest.data(using: .utf8),
+              let pack = try? JSONDecoder().decode(PetPack.self, from: data) else {
+            return false
+        }
+
+        return pack.audio[.focusStart]?.file == "audio/work.wav"
+            && pack.audio[.focusStart]?.volume == 0.25
+            && pack.audio[.distractedLook]?.file == "audio/legacy.wav"
+            && pack.audio[.distractedLook]?.volume == 0.55
+            && pack.sourceActions.first?.id == "work"
+            && pack.idleSourceActionIDs == ["work"]
+    }
+
     func libraryImportsValidPack() -> Bool {
         let fileManager = FileManager.default
         let tempRoot = fileManager.temporaryDirectory
@@ -162,6 +200,30 @@ struct PetPackMVPProbe {
             return false
         }
     }
+
+    func playableActionsDeduplicateIdenticalFolders() -> Bool {
+        let pack = PetPack(
+            schemaVersion: 1,
+            id: "dedupe_pack",
+            name: "Dedupe Pack",
+            author: "Focus Pet",
+            style: "pixel",
+            license: "local",
+            distribution: "localOnly",
+            defaultSize: PetPackSize(width: 128, height: 128),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
+            animations: [:],
+            sourceActions: [
+                PetSourceActionSpec(id: "default", title: "default", folder: "stand", fps: 5, loop: true, frameCount: 1),
+                PetSourceActionSpec(id: "up", title: "up", folder: "stand", fps: 5, loop: false, frameCount: 1),
+                PetSourceActionSpec(id: "down", title: "down", folder: "stand", fps: 5, loop: false, frameCount: 1),
+                PetSourceActionSpec(id: "sleep", title: "sleep", folder: "sleep", fps: 5, loop: true, frameCount: 1)
+            ]
+        )
+        let record = PetPackRecord(pack: pack, rootURL: nil, isBundled: false)
+        return record.previewSourceActions.map(\.id) == ["default", "up", "down", "sleep"]
+            && record.playableSourceActions.map(\.id) == ["default", "sleep"]
+    }
 }
 
 private let runPetPackMVPProbe: Void = {
@@ -174,5 +236,7 @@ private let runPetPackMVPProbe: Void = {
         probe.legacyLuoXiaoHeiManifestDecodesDistinctActionNames(),
         "legacy Luo Xiaohei manifest should decode into distinct action names"
     )
+    precondition(probe.manifestDecodesOptionalActionAudio(), "pet pack manifest should decode optional action audio")
     precondition(probe.libraryImportsValidPack(), "pet pack library should import valid local packs")
+    precondition(probe.playableActionsDeduplicateIdenticalFolders(), "playable action list should hide duplicate render folders")
 }()

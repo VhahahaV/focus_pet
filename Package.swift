@@ -13,7 +13,10 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "FocusPetCore"
+            name: "FocusPetCore",
+            resources: [
+                .process("Resources/AppClassificationCatalog.json")
+            ]
         ),
         .target(
             name: "FocusPetStorage",
@@ -40,7 +43,8 @@ let package = Package(
             ],
             resources: [
                 .copy("Resources/AppIcon.png"),
-                .copy("Resources/AppIcon.icns")
+                .copy("Resources/AppIcon.icns"),
+                .copy("Resources/StatusIcon.png")
             ]
         ),
         .executableTarget(

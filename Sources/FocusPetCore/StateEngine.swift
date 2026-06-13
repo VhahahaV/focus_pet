@@ -14,6 +14,7 @@ public enum StateReason: String, Codable, Hashable, Sendable, CaseIterable {
     case ignoredActivity
     case previousStateHeld
     case neutralDefault
+    case recentInputRecovery
 }
 
 public struct StateEngineThresholds: Codable, Hashable, Sendable {
@@ -21,20 +22,17 @@ public struct StateEngineThresholds: Codable, Hashable, Sendable {
     public var idleDistractedSeconds: TimeInterval
     public var idleAwaySeconds: TimeInterval
     public var distractedSeconds: TimeInterval
-    public var frequentSwitchesLast5Min: Int
 
     public init(
         uiStabilitySeconds: TimeInterval = 10,
-        idleDistractedSeconds: TimeInterval = 60,
+        idleDistractedSeconds: TimeInterval = 180,
         idleAwaySeconds: TimeInterval = 10 * 60,
-        distractedSeconds: TimeInterval = 60,
-        frequentSwitchesLast5Min: Int = 8
+        distractedSeconds: TimeInterval = 60
     ) {
         self.uiStabilitySeconds = uiStabilitySeconds
         self.idleDistractedSeconds = idleDistractedSeconds
         self.idleAwaySeconds = max(idleDistractedSeconds, idleAwaySeconds)
         self.distractedSeconds = distractedSeconds
-        self.frequentSwitchesLast5Min = frequentSwitchesLast5Min
     }
 }
 
@@ -163,6 +161,16 @@ public struct StateEngine: Sendable {
                 stableDuration: snapshot.activeCategoryDuration
             )
         case .ignore:
+            if previousStableState == .distracted && snapshot.idleSeconds <= thresholds.uiStabilitySeconds {
+                return decision(
+                    snapshot,
+                    state: .focus,
+                    confidence: 0.62,
+                    reason: [.recentInputRecovery],
+                    stableDuration: snapshot.activeCategoryDuration
+                )
+            }
+
             return decision(
                 snapshot,
                 state: activeCarryState,
@@ -171,12 +179,12 @@ public struct StateEngine: Sendable {
                 stableDuration: snapshot.activeCategoryDuration
             )
         case .neutral:
-            if snapshot.switchCountLast5Min > thresholds.frequentSwitchesLast5Min {
+            if previousStableState == .distracted && snapshot.idleSeconds <= thresholds.uiStabilitySeconds {
                 return decision(
                     snapshot,
-                    state: .distracted,
-                    confidence: 0.76,
-                    reason: [.frequentSwitching],
+                    state: .focus,
+                    confidence: 0.64,
+                    reason: [.recentInputRecovery],
                     stableDuration: snapshot.activeCategoryDuration
                 )
             }

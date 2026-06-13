@@ -58,23 +58,80 @@ struct FocusPetMVPProbe {
         return StateEngine().evaluate(snapshot, previousStableState: .focus).state == .breakTime
     }
 
-    func idleOneMinuteIsDistracted() -> Bool {
+    func idleThreeMinutesIsDistracted() -> Bool {
         let snapshot = ActivitySnapshot(
-            timestamp: Date(timeIntervalSince1970: 61),
+            timestamp: Date(timeIntervalSince1970: 180),
             appName: "Cursor",
             bundleID: "com.todesktop.230313mzl4w4u92",
             windowTitle: "Focus Pet project",
             category: .work,
-            idleSeconds: 61,
+            idleSeconds: 180,
             switchCountLast5Min: 0,
             switchCountLast15Min: 0,
-            activeCategoryDuration: 61,
+            activeCategoryDuration: 180,
             isFocusSessionActive: false,
             isBreakActive: false
         )
 
         let decision = StateEngine().evaluate(snapshot, previousStableState: .focus)
         return decision.state == .distracted && decision.reason.contains(.inputIdleDistracted)
+    }
+
+    func idleOneMinuteStaysFocused() -> Bool {
+        let snapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 60),
+            appName: "Cursor",
+            bundleID: "com.todesktop.230313mzl4w4u92",
+            windowTitle: "Focus Pet project",
+            category: .work,
+            idleSeconds: 60,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 60,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+
+        let decision = StateEngine().evaluate(snapshot, previousStableState: .focus)
+        return decision.state == .focus && !decision.reason.contains(.inputIdleDistracted)
+    }
+
+    func entertainmentFortyFiveSecondsStaysInGrace() -> Bool {
+        let snapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 45),
+            appName: "Google Chrome",
+            bundleID: "com.google.Chrome",
+            windowTitle: "YouTube",
+            category: .entertainment,
+            idleSeconds: 4,
+            switchCountLast5Min: 1,
+            switchCountLast15Min: 2,
+            activeCategoryDuration: 45,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+
+        let decision = StateEngine().evaluate(snapshot, previousStableState: .focus)
+        return decision.state == .focus && decision.reason.contains(.entertainmentGrace)
+    }
+
+    func entertainmentOneMinuteIsDistracted() -> Bool {
+        let snapshot = ActivitySnapshot(
+            timestamp: Date(timeIntervalSince1970: 60),
+            appName: "Google Chrome",
+            bundleID: "com.google.Chrome",
+            windowTitle: "YouTube",
+            category: .entertainment,
+            idleSeconds: 4,
+            switchCountLast5Min: 1,
+            switchCountLast15Min: 2,
+            activeCategoryDuration: 60,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+
+        let decision = StateEngine().evaluate(snapshot, previousStableState: .focus)
+        return decision.state == .distracted && decision.reason.contains(.entertainmentStable)
     }
 
     func systemSleepIsAway() -> Bool {
@@ -137,6 +194,60 @@ struct FocusPetMVPProbe {
         return decision.state == .away && decision.reason.contains(.longInputIdleAway)
     }
 
+    func longIdleBackfillConvertsNoInputWindowToAway() -> Bool {
+        let start = Date(timeIntervalSince1970: 0)
+        let segments = [
+            StateSegment(
+                start: start,
+                end: start.addingTimeInterval(60),
+                state: .focus,
+                appName: "Cursor",
+                bundleID: "cursor",
+                category: .work,
+                titleStored: false,
+                titleDisplay: nil,
+                source: [.frontmostApplication]
+            ),
+            StateSegment(
+                start: start.addingTimeInterval(60),
+                end: start.addingTimeInterval(600),
+                state: .distracted,
+                appName: "Cursor",
+                bundleID: "cursor",
+                category: .work,
+                titleStored: false,
+                titleDisplay: nil,
+                source: [.idleTime]
+            ),
+            StateSegment(
+                start: start.addingTimeInterval(600),
+                end: start.addingTimeInterval(610),
+                state: .away,
+                appName: "Cursor",
+                bundleID: "cursor",
+                category: .work,
+                titleStored: false,
+                titleDisplay: nil,
+                source: [.idleTime]
+            )
+        ]
+
+        let result = TimeTracker().reclassify(
+            segments: segments,
+            from: start,
+            to: start.addingTimeInterval(610),
+            matching: [.focus, .distracted],
+            as: .away,
+            addingSource: .idleTime
+        )
+
+        return result.reclassifiedSeconds[.focus, default: 0] == 60
+            && result.reclassifiedSeconds[.distracted, default: 0] == 540
+            && result.segments.count == 1
+            && result.segments[0].state == .away
+            && result.segments[0].durationSeconds == 610
+    }
+
     func incrementalAwayRecordingMergesWithoutDuplication() -> Bool {
         let start = Date(timeIntervalSince1970: 0)
         let firstSnapshot = ActivitySnapshot(
@@ -182,7 +293,7 @@ struct FocusPetMVPProbe {
             && segments[0].durationSeconds == 15
     }
 
-    func frequentSwitchingBecomesDistracted() -> Bool {
+    func frequentSwitchingDoesNotBecomeDistracted() -> Bool {
         let snapshot = ActivitySnapshot(
             timestamp: Date(timeIntervalSince1970: 300),
             appName: "Finder",
@@ -190,15 +301,15 @@ struct FocusPetMVPProbe {
             windowTitle: nil,
             category: .neutral,
             idleSeconds: 3,
-            switchCountLast5Min: 13,
-            switchCountLast15Min: 24,
+            switchCountLast5Min: 7,
+            switchCountLast15Min: 12,
             activeCategoryDuration: 120,
             isFocusSessionActive: false,
             isBreakActive: false
         )
 
         let decision = StateEngine().evaluate(snapshot, previousStableState: .focus)
-        return decision.state == .distracted && decision.reason.contains(.frequentSwitching)
+        return decision.state == .focus && !decision.reason.contains(.frequentSwitching)
     }
 
     func focusTwentyFiveMinutesTriggersRestNudge() -> Bool {
@@ -218,7 +329,7 @@ struct FocusPetMVPProbe {
             lastTriggeredAt: [:]
         )
 
-        return event?.reason == .longFocusRest && event?.petAction == .stretch
+        return event?.reason == .longFocusRest && event?.petIntent == .focusRestHint
     }
 
     func windowTitlePrivacyDoesNotStoreRawTitleByDefault() -> Bool {
@@ -255,6 +366,20 @@ struct FocusPetMVPProbe {
             && summary.categorySeconds(.ignore) == 900
     }
 
+    func ignoredAppsAreExcludedFromAppUsageRanking() -> Bool {
+        let start = Date(timeIntervalSince1970: 0)
+        let appUsage = [
+            AppUsageSegment(start: start, end: start.addingTimeInterval(3_600), appName: "Locked Screen", bundleID: nil, category: .ignore),
+            AppUsageSegment(start: start, end: start.addingTimeInterval(900), appName: "Cursor", bundleID: "cursor", category: .work)
+        ]
+
+        let summary = DailySummaryBuilder().summary(for: start, segments: [], appUsage: appUsage, focusSessions: [], breakSessions: [], nudges: [])
+        return summary.appUsage.count == 1
+            && summary.appUsage.first?.appName == "Cursor"
+            && summary.categorySeconds(.ignore) == 3_600
+            && summary.categorySeconds(.work) == 900
+    }
+
     func legacyPetSettingsDefaultToInteractivePlacement() -> Bool {
         let legacyJSON = """
         {
@@ -274,6 +399,27 @@ struct FocusPetMVPProbe {
             && settings.customOriginX == nil
             && settings.customOriginY == nil
             && settings.hoverStatusEnabled
+            && settings.intentSourceActionIDByPack.isEmpty
+    }
+
+    func legacyAppSettingsDefaultJudgmentParameters() -> Bool {
+        let legacyJSON = """
+        {
+          "hasCompletedOnboarding": true,
+          "focusTargetMinutes": 25,
+          "breakMinutes": 5,
+          "autoStartBreak": true
+        }
+        """
+        guard let data = legacyJSON.data(using: .utf8),
+              let settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {
+            return false
+        }
+
+        return settings.judgment.inputIdleDistractedSeconds == 180
+            && settings.judgment.entertainmentDistractedSeconds == 60
+            && settings.judgment.focusRecoverySeconds == 10
+            && settings.judgment.idleAwaySeconds == 600
     }
 
     func focusSessionReportsCompletionAndDecodesLegacyJSON() -> Bool {
@@ -334,6 +480,95 @@ struct FocusPetMVPProbe {
             && classifier.classify(appName: "Keychain Access", bundleID: nil, windowTitle: nil) == .ignore
             && classifier.classify(appName: "Browser", bundleID: nil, windowTitle: "Research Brief Draft") == .work
             && classifier.classify(appName: "Browser", bundleID: nil, windowTitle: "Shorts - Video") == .entertainment
+    }
+
+    func neutralIsLegacyOnlyAndHiddenFromUserChoices() -> Bool {
+        ActivityCategory.userFacingClassificationCases == [.work, .entertainment, .ignore]
+            && !ActivityCategory.userFacingClassificationCases.contains(.neutral)
+            && ActivityClassifier().classify(appName: "Unknown App", bundleID: "example.unknown", windowTitle: nil) == .ignore
+    }
+
+    func catalogIsLoadedAndBroadEnough() -> Bool {
+        let categoryCounts = Dictionary(grouping: ActivityClassifier.defaultRules, by: { $0.category }).mapValues(\.count)
+        return ActivityClassifier.catalogEntries.count >= 35
+            && ActivityClassifier.defaultRules.count >= 1_200
+            && (categoryCounts[.work] ?? 0) >= 650
+            && (categoryCounts[.entertainment] ?? 0) >= 400
+            && (categoryCounts[.ignore] ?? 0) >= 150
+            && ActivityClassifier.defaultRules.allSatisfy { $0.category != .neutral }
+    }
+
+    func expandedCatalogClassifiesRepresentativeCoverage() -> Bool {
+        let classifier = ActivityClassifier()
+        return classifier.classify(
+            appName: "Safari",
+            bundleID: "com.apple.Safari",
+            windowTitle: "Amazon Web Services Console"
+        ) == .work
+            && classifier.classify(
+                appName: "Google Chrome",
+                bundleID: "com.google.Chrome",
+                windowTitle: "Amazon - Online Shopping"
+            ) == .entertainment
+            && classifier.classify(
+                appName: "Google Chrome",
+                bundleID: "com.google.Chrome",
+                windowTitle: "Coursera Machine Learning"
+            ) == .work
+            && classifier.classify(
+                appName: "Xcode",
+                bundleID: nil,
+                windowTitle: nil
+            ) == .work
+            && classifier.classify(
+                appName: "X",
+                bundleID: nil,
+                windowTitle: nil
+            ) == .ignore
+            && classifier.classify(
+                appName: "Discord",
+                bundleID: nil,
+                windowTitle: nil
+            ) == .entertainment
+            && classifier.classify(
+                appName: "CleanShot X",
+                bundleID: nil,
+                windowTitle: nil
+            ) == .ignore
+    }
+
+    func browserWebsiteRulesOutrankBrowserAppRules() -> Bool {
+        let classifier = ActivityClassifier()
+        return classifier.classify(
+            appName: "Google Chrome",
+            bundleID: "com.google.Chrome",
+            windowTitle: "YouTube - Home"
+        ) == .entertainment
+            && classifier.classify(
+                appName: "Safari",
+                bundleID: "com.apple.Safari",
+                windowTitle: "GitHub Pull Request"
+            ) == .work
+            && classifier.classify(
+                appName: "Microsoft Edge",
+                bundleID: "com.microsoft.edgemac",
+                windowTitle: "New Tab"
+            ) == .ignore
+    }
+
+    func userRuleOverridesCatalog() -> Bool {
+        let classifier = ActivityClassifier(rules: [
+            ClassificationRule(matchKind: .windowTitle, pattern: "YouTube", category: .work, priority: 1)
+        ])
+        return classifier.classify(
+            appName: "Google Chrome",
+            bundleID: "com.google.Chrome",
+            windowTitle: "YouTube - Course"
+        ) == .work
+    }
+
+    func builtInRulesAreFilteredFromStoredUserRules() -> Bool {
+        ActivityClassifier.userRules(fromStored: ActivityClassifier.defaultRules).isEmpty
     }
 
     func redactedExportRemovesTitleMetadata() -> Bool {
@@ -419,7 +654,7 @@ struct FocusPetMVPProbe {
                     state: .focus,
                     appName: "Cursor",
                     category: .work,
-                    petAction: .stretch,
+                    petIntent: .focusRestHint,
                     cooldownSeconds: 600,
                     message: "已经专注很久了，要休息一下吗？"
                 )
@@ -439,19 +674,31 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.cursorWorkForAnHourIsFocus(), "Cursor for 60 minutes should be focus")
     precondition(probe.youtubeForTenMinutesIsDistracted(), "YouTube for 10 minutes should be distracted")
     precondition(probe.manualBreakOutranksEntertainment(), "manual break should outrank entertainment")
-    precondition(probe.idleOneMinuteIsDistracted(), "1+ minute without input should be distracted")
+    precondition(probe.idleThreeMinutesIsDistracted(), "3 minutes without input should be distracted")
+    precondition(probe.idleOneMinuteStaysFocused(), "1 minute without input should stay focused")
+    precondition(probe.entertainmentFortyFiveSecondsStaysInGrace(), "45 seconds entertainment should stay in grace")
+    precondition(probe.entertainmentOneMinuteIsDistracted(), "1 minute entertainment should be distracted")
     precondition(probe.systemSleepIsAway(), "system sleep should be away")
     precondition(probe.screenLockIsAway(), "screen lock should be away")
     precondition(probe.longInputIdleIsAway(), "long input idle should be away")
+    precondition(probe.longIdleBackfillConvertsNoInputWindowToAway(), "long idle backfill should convert the no-input window to away")
     precondition(probe.incrementalAwayRecordingMergesWithoutDuplication(), "incremental away recording should not duplicate screen lock time")
-    precondition(probe.frequentSwitchingBecomesDistracted(), "12+ app switches in 5 minutes should be distracted")
+    precondition(probe.frequentSwitchingDoesNotBecomeDistracted(), "app switching alone should not be distracted")
     precondition(probe.focusTwentyFiveMinutesTriggersRestNudge(), "25 minutes focus should trigger rest nudge")
     precondition(probe.windowTitlePrivacyDoesNotStoreRawTitleByDefault(), "default privacy should not store raw titles")
     precondition(probe.onlyCategoryPrivacyStoresNoTitleMetadata(), "category-only privacy should remove title metadata")
     precondition(probe.timelineTracksFourStateTotals(), "daily summary should aggregate all four states")
+    precondition(probe.ignoredAppsAreExcludedFromAppUsageRanking(), "ignored apps should be excluded from app usage ranking")
     precondition(probe.legacyPetSettingsDefaultToInteractivePlacement(), "legacy pet settings should decode with interaction defaults")
+    precondition(probe.legacyAppSettingsDefaultJudgmentParameters(), "legacy app settings should decode judgment defaults")
     precondition(probe.focusSessionReportsCompletionAndDecodesLegacyJSON(), "focus sessions should expose completion and decode legacy JSON")
     precondition(probe.groupedRulesClassifyExpectedCategories(), "grouped rules should classify apps and title keywords")
+    precondition(probe.neutralIsLegacyOnlyAndHiddenFromUserChoices(), "neutral should be hidden from user-facing classification choices")
+    precondition(probe.catalogIsLoadedAndBroadEnough(), "built-in classification catalog should load and cover mainstream app classes")
+    precondition(probe.expandedCatalogClassifiesRepresentativeCoverage(), "expanded classification catalog should cover representative work, entertainment, and utility cases")
+    precondition(probe.browserWebsiteRulesOutrankBrowserAppRules(), "website/title rules should outrank browser app defaults")
+    precondition(probe.userRuleOverridesCatalog(), "user exceptions should override the built-in catalog")
+    precondition(probe.builtInRulesAreFilteredFromStoredUserRules(), "stored built-in defaults should not become user exceptions")
     precondition(probe.redactedExportRemovesTitleMetadata(), "redacted export should remove title metadata")
     precondition(probe.overnightIdleIsNotHeuristicallyConvertedToAway(), "stored history should not be heuristically rewritten")
 }()

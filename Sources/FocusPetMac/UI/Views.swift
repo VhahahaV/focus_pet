@@ -3,38 +3,642 @@ import FocusPetCore
 import FocusPetResources
 import SwiftUI
 
+private enum DashboardLayout {
+    static let sidebarWidth: CGFloat = 218
+    static let contentInset: CGFloat = 14
+    static let shellCornerRadius: CGFloat = 16
+    static let titlebarClearance: CGFloat = 10
+    static let cardGap: CGFloat = 14
+    static let todayCanvasMinHeight: CGFloat = 640
+}
+
+private enum DashboardInteraction {
+    static let contentSwitchDelayNanoseconds: UInt64 = 45_000_000
+}
+
 struct MainDashboardView: View {
-    @EnvironmentObject private var model: FocusPetModel
-    @Environment(\.openWindow) private var openWindow
+    @State private var contentTab: DashboardTab = .today
+    @State private var pendingContentTab: DashboardTab?
 
     var body: some View {
-        TabView(selection: $model.selectedTab) {
-            TodayView()
-                .tabItem { Label(DashboardTab.today.title, systemImage: DashboardTab.today.symbolName) }
-                .tag(DashboardTab.today)
+        ZStack {
+            DashboardLiquidBackground()
+            HStack(spacing: DashboardLayout.cardGap) {
+                DashboardSidebar(currentSelection: contentTab) { tab in
+                    scheduleContentSwitch(to: tab)
+                }
+                    .frame(width: DashboardLayout.sidebarWidth)
 
-            SessionsView()
-                .tabItem { Label(DashboardTab.sessions.title, systemImage: DashboardTab.sessions.symbolName) }
-                .tag(DashboardTab.sessions)
+                VStack(alignment: .leading, spacing: 0) {
+                    currentTabView
+                        .padding(DashboardLayout.contentInset)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background {
+                    RoundedRectangle(cornerRadius: DashboardLayout.shellCornerRadius, style: .continuous)
+                        .fill(DashboardPalette.contentFill)
+                        .overlay(alignment: .top) {
+                            Rectangle()
+                                .fill(Color.white.opacity(0.52))
+                                .frame(height: 1)
+                                .padding(.horizontal, 14)
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: DashboardLayout.shellCornerRadius, style: .continuous)
+                                .stroke(DashboardPalette.border, lineWidth: 1)
+                        }
+                        .shadow(color: DashboardPalette.shadow.opacity(0.22), radius: 5, x: 0, y: 2)
+                }
+                .padding(.top, DashboardLayout.titlebarClearance)
+                .padding(.trailing, 16)
+                .padding(.bottom, 16)
+                .dashboardPetAnchor(.dashboardPanel)
+            }
 
-            RulesView()
-                .tabItem { Label(DashboardTab.rules.title, systemImage: DashboardTab.rules.symbolName) }
-                .tag(DashboardTab.rules)
-
-            SettingsView()
-                .tabItem { Label(DashboardTab.settings.title, systemImage: DashboardTab.settings.symbolName) }
-                .tag(DashboardTab.settings)
+            DashboardEventBridge(contentTab: $contentTab)
         }
-        .padding(18)
-        .onAppear {
-            model.registerOpenDashboardRequest { tab in
-                model.selectedTab = tab
-                openWindow(id: "dashboard")
+        .foregroundStyle(DashboardPalette.primaryText)
+        .tint(DashboardPalette.accent)
+        .preferredColorScheme(.light)
+        .onChange(of: contentTab) { _, tab in
+            if pendingContentTab != nil && pendingContentTab != tab {
+                pendingContentTab = nil
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .focusPetOpenDashboardRequested)) { notification in
-            model.openDashboard(tab: notification.object as? DashboardTab ?? model.selectedTab)
+    }
+
+    @ViewBuilder
+    private var currentTabView: some View {
+        switch contentTab {
+        case .today:
+            TodayView()
+        case .sessions:
+            SessionsView()
+        case .pet:
+            PetView()
+        case .settings:
+            SettingsView()
         }
+    }
+
+    private func scheduleContentSwitch(to tab: DashboardTab) {
+        guard contentTab != tab else { return }
+        pendingContentTab = tab
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: DashboardInteraction.contentSwitchDelayNanoseconds)
+            guard pendingContentTab == tab else { return }
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                contentTab = tab
+            }
+            pendingContentTab = nil
+        }
+    }
+}
+
+private struct DashboardEventBridge: View {
+    @EnvironmentObject private var model: FocusPetModel
+    @Environment(\.openWindow) private var openWindow
+    @Binding var contentTab: DashboardTab
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onAppear {
+                contentTab = model.selectedTab
+                model.registerOpenDashboardRequest { tab in
+                    contentTab = tab
+                    model.selectedTab = tab
+                    openWindow(id: "dashboard")
+                }
+            }
+            .onChange(of: contentTab) { _, tab in
+                guard model.selectedTab != tab else { return }
+                model.selectedTab = tab
+            }
+            .onChange(of: model.selectedTab) { _, tab in
+                guard contentTab != tab else { return }
+                contentTab = tab
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .focusPetOpenDashboardRequested)) { notification in
+                model.openDashboard(tab: notification.object as? DashboardTab ?? model.selectedTab)
+            }
+    }
+}
+
+private struct DashboardPetAnchorModifier: ViewModifier {
+    @EnvironmentObject private var model: FocusPetModel
+    var anchor: DashboardPetAnchor
+
+    func body(content: Content) -> some View {
+        content.background {
+            DashboardPetAnchorReporter(anchor: anchor, model: model)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+private struct DashboardPetAnchorReporter: NSViewRepresentable {
+    var anchor: DashboardPetAnchor
+    weak var model: FocusPetModel?
+
+    func makeNSView(context: Context) -> DashboardPetAnchorReportingView {
+        let view = DashboardPetAnchorReportingView()
+        view.anchor = anchor
+        view.report = { [weak model] anchor, frame in
+            Task { @MainActor in
+                model?.updateDashboardPetAnchor(anchor, frame: frame)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: DashboardPetAnchorReportingView, context: Context) {
+        nsView.anchor = anchor
+        nsView.reportFrameSoon()
+    }
+}
+
+@MainActor
+private final class DashboardPetAnchorReportingView: NSView {
+    var anchor: DashboardPetAnchor = .todayFocusCard
+    var report: (DashboardPetAnchor, CGRect) -> Void = { _, _ in }
+    private nonisolated(unsafe) var observerTokens: [NSObjectProtocol] = []
+
+    override func layout() {
+        super.layout()
+        reportFrameSoon()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        configureWindowObservers()
+        reportFrameSoon()
+    }
+
+    deinit {
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
+    func reportFrameSoon() {
+        DispatchQueue.main.async { [weak self] in
+            self?.reportFrame()
+        }
+    }
+
+    private func reportFrame() {
+        guard let window, bounds.width > 1, bounds.height > 1 else { return }
+        let frameInWindow = convert(bounds, to: nil)
+        let frameInScreen = window.convertToScreen(frameInWindow)
+        report(anchor, frameInScreen)
+    }
+
+    private func configureWindowObservers() {
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        observerTokens = []
+        guard let window else { return }
+        let names: [Notification.Name] = [
+            NSWindow.didMoveNotification,
+            NSWindow.didResizeNotification,
+            NSWindow.didBecomeKeyNotification
+        ]
+        observerTokens = names.map { name in
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.reportFrameSoon()
+                }
+            }
+        }
+    }
+}
+
+private enum DashboardPalette {
+    static let backgroundTop = Color(red: 0.96, green: 0.985, blue: 1.0)
+    static let backgroundMiddle = Color(red: 0.90, green: 0.95, blue: 1.0)
+    static let backgroundBottom = Color(red: 0.96, green: 0.94, blue: 1.0)
+    static let sidebarFill = Color.white.opacity(0.46)
+    static let contentFill = Color.white.opacity(0.64)
+    static let cardFill = Color.white.opacity(0.74)
+    static let elevatedCardFill = Color.white.opacity(0.84)
+    static let sidebarButtonHoverFill = Color.white.opacity(0.42)
+    static let sidebarSelectedGradient = LinearGradient(
+        colors: [
+            Color.white.opacity(0.92),
+            Color(red: 0.88, green: 0.95, blue: 1.0).opacity(0.84),
+            Color(red: 0.92, green: 0.96, blue: 0.91).opacity(0.70)
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+    static let controlFill = Color.white.opacity(0.58)
+    static let rowFill = Color.white.opacity(0.42)
+    static let trackFill = Color(red: 0.62, green: 0.68, blue: 0.78).opacity(0.20)
+    static let border = Color.white.opacity(0.72)
+    static let strongBorder = Color.white.opacity(0.92)
+    static let innerStroke = Color(red: 0.48, green: 0.57, blue: 0.70).opacity(0.16)
+    static let glassRim = Color.white.opacity(0.94)
+    static let glassInnerShadow = Color(red: 0.20, green: 0.32, blue: 0.52).opacity(0.12)
+    static let glassRefractionBlue = Color(red: 0.46, green: 0.68, blue: 1.0).opacity(0.24)
+    static let glassRefractionViolet = Color(red: 0.67, green: 0.58, blue: 0.96).opacity(0.16)
+    static let primaryText = Color(red: 0.15, green: 0.18, blue: 0.24)
+    static let secondaryText = Color(red: 0.35, green: 0.40, blue: 0.50).opacity(0.82)
+    static let mutedText = Color(red: 0.48, green: 0.54, blue: 0.63).opacity(0.70)
+    static let accent = Color(red: 0.14, green: 0.46, blue: 0.92)
+    static let gold = Color(red: 0.78, green: 0.49, blue: 0.10)
+    static let focusBlue = Color(red: 0.10, green: 0.49, blue: 0.88)
+    static let distractedPeach = Color(red: 0.88, green: 0.43, blue: 0.23)
+    static let distractedRed = Color(red: 0.88, green: 0.16, blue: 0.19)
+    static let restGreen = Color(red: 0.13, green: 0.62, blue: 0.34)
+    static let awayPurple = Color(red: 0.47, green: 0.36, blue: 0.84)
+    static let pauseGray = Color(red: 0.63, green: 0.68, blue: 0.74)
+    static let shadow = Color(red: 0.26, green: 0.34, blue: 0.48).opacity(0.10)
+    static let focusTint = Color(red: 0.14, green: 0.52, blue: 0.95)
+    static let focusInk = Color(red: 0.05, green: 0.23, blue: 0.45)
+    static let warmFocus = Color(red: 0.98, green: 0.70, blue: 0.23)
+    static let surfaceHighlight = LinearGradient(
+        colors: [
+            Color.white.opacity(0.72),
+            Color.white.opacity(0.24),
+            Color.white.opacity(0.02)
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+}
+
+private struct DashboardLiquidBackground: View {
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        DashboardPalette.backgroundTop,
+                        DashboardPalette.backgroundMiddle,
+                        DashboardPalette.backgroundBottom
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                Path { path in
+                    let height = proxy.size.height
+                    let width = proxy.size.width
+                    path.move(to: CGPoint(x: -width * 0.05, y: height * 0.18))
+                    path.addCurve(
+                        to: CGPoint(x: width * 1.05, y: height * 0.11),
+                        control1: CGPoint(x: width * 0.26, y: height * 0.03),
+                        control2: CGPoint(x: width * 0.70, y: height * 0.25)
+                    )
+                    path.addLine(to: CGPoint(x: width * 1.05, y: height * 0.36))
+                    path.addCurve(
+                        to: CGPoint(x: -width * 0.05, y: height * 0.44),
+                        control1: CGPoint(x: width * 0.70, y: height * 0.28),
+                        control2: CGPoint(x: width * 0.26, y: height * 0.50)
+                    )
+                    path.closeSubpath()
+                }
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            DashboardPalette.focusBlue.opacity(0.24),
+                            Color.white.opacity(0.20),
+                            DashboardPalette.awayPurple.opacity(0.12)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .opacity(0.68)
+
+                Path { path in
+                    let height = proxy.size.height
+                    let width = proxy.size.width
+                    path.move(to: CGPoint(x: 0, y: height * 0.72))
+                    path.addCurve(
+                        to: CGPoint(x: width, y: height * 0.60),
+                        control1: CGPoint(x: width * 0.22, y: height * 0.56),
+                        control2: CGPoint(x: width * 0.58, y: height * 0.78)
+                    )
+                    path.addLine(to: CGPoint(x: width, y: height))
+                    path.addLine(to: CGPoint(x: 0, y: height))
+                    path.closeSubpath()
+                }
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.34),
+                            DashboardPalette.restGreen.opacity(0.13),
+                            DashboardPalette.focusBlue.opacity(0.11)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .opacity(0.82)
+            }
+            .ignoresSafeArea()
+        }
+    }
+}
+
+private struct DashboardSidebar: View {
+    var currentSelection: DashboardTab
+    var onSelect: (DashboardTab) -> Void
+    @State private var selection: DashboardTab = .today
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear
+                .frame(height: 30)
+
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.86),
+                                    DashboardPalette.restGreen.opacity(0.22),
+                                    DashboardPalette.focusBlue.opacity(0.16)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .stroke(DashboardPalette.border, lineWidth: 1)
+                        }
+                    Image(systemName: "leaf.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(DashboardPalette.restGreen)
+                }
+                .frame(width: 46, height: 46)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Focus Pet")
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+                    Text("专注仪表盘")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 20)
+            .padding(.bottom, 24)
+
+            VStack(spacing: 10) {
+                ForEach(DashboardTab.allCases) { tab in
+                    DashboardSidebarButton(tab: tab, isSelected: selection == tab) {
+                        guard selection != tab else { return }
+                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+                        withAnimation(.snappy(duration: 0.16, extraBounce: 0.02)) {
+                            selection = tab
+                        }
+                        onSelect(tab)
+                    }
+                }
+            }
+            .padding(.horizontal, 18)
+
+            Spacer(minLength: 24)
+        }
+        .frame(maxHeight: .infinity, alignment: .leading)
+        .background {
+            Rectangle()
+                .fill(DashboardPalette.sidebarFill)
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(DashboardPalette.innerStroke)
+                        .frame(width: 1)
+                }
+        }
+        .onAppear {
+            selection = currentSelection
+        }
+        .onChange(of: currentSelection) { _, tab in
+            guard selection != tab else { return }
+            withAnimation(.snappy(duration: 0.16, extraBounce: 0.02)) {
+                selection = tab
+            }
+        }
+    }
+}
+
+private struct DashboardSidebarButton: View {
+    var tab: DashboardTab
+    var isSelected: Bool
+    var action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 13) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(iconFill)
+                    Image(systemName: tab.symbolName)
+                        .font(.system(size: 17, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .frame(width: 34, height: 34)
+
+                Text(tab.title)
+                    .font(.system(size: 16.5, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+
+                if isSelected {
+                    Circle()
+                        .fill(DashboardPalette.accent.opacity(0.78))
+                        .frame(width: 6, height: 6)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .foregroundStyle(isSelected ? DashboardPalette.primaryText : DashboardPalette.secondaryText)
+            .padding(.horizontal, 12)
+            .frame(height: 54)
+            .background {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(backgroundFill)
+                    .opacity(isSelected || isHovering ? 1 : 0)
+                    .overlay {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(DashboardPalette.border, lineWidth: 1)
+                        }
+                    }
+                    .overlay(alignment: .topLeading) {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(DashboardPalette.surfaceHighlight)
+                                .opacity(0.28)
+                        }
+                    }
+                    .overlay(alignment: .leading) {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                                .fill(DashboardPalette.accent.opacity(0.78))
+                                .frame(width: 4)
+                                .padding(.vertical, 11)
+                                .padding(.leading, 2)
+                        }
+                    }
+                    .shadow(color: DashboardPalette.shadow.opacity(isSelected ? 0.12 : 0.04), radius: isSelected ? 3 : 1, x: 0, y: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(DashboardSidebarButtonPressStyle())
+        .onHover { inside in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = inside
+            }
+        }
+        .help(tab.title)
+    }
+
+    private var backgroundFill: AnyShapeStyle {
+        if isSelected {
+            return AnyShapeStyle(DashboardPalette.sidebarSelectedGradient)
+        }
+        return AnyShapeStyle(DashboardPalette.sidebarButtonHoverFill)
+    }
+
+    private var iconFill: AnyShapeStyle {
+        if isSelected {
+            return AnyShapeStyle(
+                LinearGradient(
+                    colors: [
+                        DashboardPalette.accent.opacity(0.18),
+                        DashboardPalette.restGreen.opacity(0.13)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        }
+        return AnyShapeStyle(Color.white.opacity(isHovering ? 0.52 : 0.26))
+    }
+}
+
+private struct DashboardSidebarButtonPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.982 : 1)
+            .brightness(configuration.isPressed ? -0.018 : 0)
+            .animation(.linear(duration: 0.045), value: configuration.isPressed)
+    }
+}
+
+private enum DashboardDateFormatters {
+    private static let todayFormatterKey = "FocusPetDashboard.todayFormatter"
+
+    static func todayLabel(for date: Date = Date()) -> String {
+        if let formatter = Thread.current.threadDictionary[todayFormatterKey] as? DateFormatter {
+            return formatter.string(from: date)
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 EEEE"
+        Thread.current.threadDictionary[todayFormatterKey] = formatter
+        return formatter.string(from: date)
+    }
+}
+
+private struct DashboardPageHeader: View {
+    var tab: DashboardTab
+
+    var body: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(tab.title)
+                    .font(.system(size: 31, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                Text(tab.subtitle)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 24)
+
+            HStack(spacing: 20) {
+                HeaderSkyMark()
+                    .frame(width: 104, height: 44)
+                Label(todayLabel, systemImage: "calendar")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(DashboardPalette.primaryText)
+                    .lineLimit(1)
+            }
+            .padding(.top, 8)
+        }
+    }
+
+    private var todayLabel: String {
+        DashboardDateFormatters.todayLabel()
+    }
+}
+
+private struct HeaderSkyMark: View {
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Path { path in
+                    path.move(to: CGPoint(x: proxy.size.width * 0.06, y: proxy.size.height * 0.70))
+                    path.addLine(to: CGPoint(x: proxy.size.width * 0.18, y: proxy.size.height * 0.60))
+                    path.addLine(to: CGPoint(x: proxy.size.width * 0.32, y: proxy.size.height * 0.66))
+                    path.addLine(to: CGPoint(x: proxy.size.width * 0.46, y: proxy.size.height * 0.54))
+                    path.addLine(to: CGPoint(x: proxy.size.width * 0.70, y: proxy.size.height * 0.70))
+                    path.closeSubpath()
+                }
+                .fill(DashboardPalette.focusBlue.opacity(0.16))
+
+                CloudShape()
+                    .fill(Color.white.opacity(0.46))
+                    .frame(width: proxy.size.width * 0.56, height: proxy.size.height * 0.44)
+                    .position(x: proxy.size.width * 0.55, y: proxy.size.height * 0.48)
+
+                ShootingStar()
+                    .stroke(DashboardPalette.gold.opacity(0.86), style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+                    .frame(width: proxy.size.width * 0.36, height: proxy.size.height * 0.30)
+                    .position(x: proxy.size.width * 0.20, y: proxy.size.height * 0.30)
+            }
+        }
+    }
+}
+
+private struct CloudShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.addEllipse(in: CGRect(x: rect.minX + rect.width * 0.05, y: rect.midY - rect.height * 0.20, width: rect.width * 0.34, height: rect.height * 0.42))
+        path.addEllipse(in: CGRect(x: rect.minX + rect.width * 0.25, y: rect.minY + rect.height * 0.05, width: rect.width * 0.38, height: rect.height * 0.56))
+        path.addEllipse(in: CGRect(x: rect.minX + rect.width * 0.48, y: rect.midY - rect.height * 0.14, width: rect.width * 0.38, height: rect.height * 0.42))
+        path.addRoundedRect(in: CGRect(x: rect.minX + rect.width * 0.12, y: rect.midY - rect.height * 0.02, width: rect.width * 0.76, height: rect.height * 0.32), cornerSize: CGSize(width: rect.height * 0.16, height: rect.height * 0.16))
+        return path
+    }
+}
+
+private struct ShootingStar: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        return path
     }
 }
 
@@ -123,9 +727,9 @@ private struct MenuStatusStrip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                MenuMetricChip(title: "走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), tint: .orange)
-                MenuMetricChip(title: "休息", value: FocusPetFormatters.duration(model.summary.breakSeconds), tint: .blue)
-                MenuMetricChip(title: "暂离", value: FocusPetFormatters.duration(model.summary.awaySeconds), tint: .indigo)
+                MenuMetricChip(title: "走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), tint: FocusPetCore.FocusState.distracted.timelineColor)
+                MenuMetricChip(title: "休息", value: FocusPetFormatters.duration(model.summary.breakSeconds), tint: FocusPetCore.FocusState.breakTime.timelineColor)
+                MenuMetricChip(title: "暂离", value: FocusPetFormatters.duration(model.summary.awaySeconds), tint: FocusPetCore.FocusState.away.timelineColor)
             }
 
             MenuStateStripBar(
@@ -160,7 +764,11 @@ private struct MenuMetricChip: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .frame(maxWidth: .infinity)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
     }
 }
 
@@ -172,7 +780,7 @@ private struct MenuStateStripBar: View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(.quaternary.opacity(0.45))
+                    .fill(DashboardPalette.trackFill)
                 HStack(spacing: 2) {
                     ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                         if segment.seconds > 0 {
@@ -206,22 +814,12 @@ private struct MenuActionGrid: View {
                 model.openDashboard(tab: .settings)
             }
 
-            if model.activeFocusSession == nil {
-                MenuActionButton(title: "专注 \(model.settings.focusTargetMinutes) 分钟", symbol: "timer", tint: .green) {
-                    model.startFocusSession(taskName: "专注任务", minutes: model.settings.focusTargetMinutes)
-                }
-            } else {
-                MenuActionButton(title: "结束专注", symbol: "stop.fill", tint: .green) {
-                    model.finishCurrentFocusSession()
-                }
-            }
-
             if model.activeBreakSession == nil {
-                MenuActionButton(title: "休息 \(model.settings.breakMinutes) 分钟", symbol: "cup.and.saucer.fill", tint: .blue) {
+                MenuActionButton(title: "休息 \(model.settings.breakMinutes) 分钟", symbol: "cup.and.saucer.fill", tint: DashboardPalette.restGreen) {
                     model.toggleBreakFromPet()
                 }
             } else {
-                MenuActionButton(title: "结束休息", symbol: "checkmark.circle.fill", tint: .blue) {
+                MenuActionButton(title: "结束休息", symbol: "checkmark.circle.fill", tint: DashboardPalette.restGreen) {
                     model.toggleBreakFromPet()
                 }
             }
@@ -268,7 +866,11 @@ private struct MenuActionButton: View {
             }
             .padding(8)
             .frame(maxWidth: .infinity, minHeight: 42)
-            .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+            .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+            }
         }
         .buttonStyle(.plain)
         .help(title)
@@ -276,24 +878,334 @@ private struct MenuActionButton: View {
 }
 
 struct TodayView: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let canvasHeight = max(proxy.size.height, DashboardLayout.todayCanvasMinHeight)
+            ScrollView(.vertical) {
+                TodayDashboardCanvas(size: CGSize(width: proxy.size.width, height: canvasHeight))
+                    .frame(width: proxy.size.width, height: canvasHeight, alignment: .topLeading)
+            }
+            .scrollIndicators(.automatic)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
+private struct TodayDashboardCanvas: View {
+    @EnvironmentObject private var model: FocusPetModel
+    var size: CGSize
+
+    var body: some View {
+        let spacing = DashboardLayout.cardGap
+        let contentHeight = max(0, size.height)
+        let rowSpace = max(0, contentHeight - spacing * 3)
+        let topHeight = clamped(rowSpace * 0.34, min: 214, max: 258)
+        let stateHeight: CGFloat = 78
+        let timelineHeight: CGFloat = 108
+        let insightsHeight = max(220, rowSpace - topHeight - stateHeight - timelineHeight)
+        let breakWidth = clamped(size.width * 0.31, min: 300, max: 390)
+
+        VStack(alignment: .leading, spacing: spacing) {
+            HStack(alignment: .top, spacing: spacing) {
+                TodayFocusFeatureCard()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                BreakDurationControl()
+                    .frame(width: min(breakWidth, max(260, size.width * 0.42)), height: topHeight)
+            }
+            .frame(maxWidth: .infinity, minHeight: topHeight, maxHeight: topHeight)
+
+            HStack(spacing: spacing) {
+                TodayStateRibbonCard(item: StateDurationItem(state: .distracted, seconds: model.summary.distractedSeconds))
+                TodayStateRibbonCard(item: StateDurationItem(state: .breakTime, seconds: model.summary.breakSeconds))
+                TodayStateRibbonCard(item: StateDurationItem(state: .away, seconds: model.summary.awaySeconds))
+            }
+            .frame(maxWidth: .infinity, minHeight: stateHeight, maxHeight: stateHeight)
+
+            TimelinePanel()
+                .frame(maxWidth: .infinity, minHeight: timelineHeight, maxHeight: timelineHeight)
+                .dashboardPetAnchor(.todayTimeline)
+
+            TodayInsightsGrid()
+                .frame(maxWidth: .infinity, minHeight: insightsHeight, maxHeight: insightsHeight)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+    }
+
+    private func clamped(_ value: CGFloat, min minimum: CGFloat, max maximum: CGFloat) -> CGFloat {
+        Swift.max(minimum, Swift.min(maximum, value))
+    }
+}
+
+private struct TodayFocusFeatureCard: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                TodayHeroPanel()
-                TimelinePanel()
-                TodayAppUsageBarChartPanel()
-                NudgePanel()
+        ZStack(alignment: .leading) {
+            DashboardMoonLandscape()
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("专注")
+                        .font(.system(size: 21, weight: .semibold, design: .rounded))
+                        .foregroundStyle(DashboardPalette.focusInk)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(FocusPetFormatters.duration(model.summary.focusSeconds))
+                            .font(.system(size: 36, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(DashboardPalette.warmFocus)
+                            .minimumScaleFactor(0.68)
+                            .lineLimit(1)
+                    }
+                    Text(focusSubtitle)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 18)
+
+                HStack(spacing: 10) {
+                    Label(model.currentDecision.state.title, systemImage: model.currentDecision.state.symbolName)
+                        .foregroundStyle(model.currentDecision.state.timelineColor)
+                    Text(model.currentSnapshot.appName)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text("切换 \(model.summary.switchCount) 次")
+                        .monospacedDigit()
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(DashboardPalette.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(DashboardPalette.border, lineWidth: 1)
+                }
+                .liquidGlassSurface(cornerRadius: 8)
+            }
+            .padding(20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(DashboardPalette.focusTint.opacity(0.86))
+                .frame(width: 5)
+                .padding(.vertical, 18)
+                .padding(.leading, 2)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(DashboardPalette.focusTint.opacity(0.42), lineWidth: 1)
+        }
+        .liquidGlassSurface(cornerRadius: 12)
+        .dashboardPetAnchor(.todayFocusCard)
+        .shadow(color: DashboardPalette.shadow.opacity(0.14), radius: 3, x: 0, y: 1)
+    }
+
+    private var focusSubtitle: String {
+        if model.summary.focusSeconds == 0 {
+            return "开始记录后会在这里显示今日专注时间"
+        }
+        return "当前节奏稳定，继续保持"
+    }
+}
+
+private struct TodayStateSummaryStrip: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    private var items: [StateDurationItem] {
+        [
+            StateDurationItem(state: .distracted, seconds: model.summary.distractedSeconds),
+            StateDurationItem(state: .breakTime, seconds: model.summary.breakSeconds),
+            StateDurationItem(state: .away, seconds: model.summary.awaySeconds)
+        ]
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) {
+                ForEach(items) { item in
+                    TodayStateRibbonCard(item: item)
+                }
+            }
+
+            VStack(spacing: 10) {
+                ForEach(items) { item in
+                    TodayStateRibbonCard(item: item)
+                }
             }
         }
     }
 }
 
-struct TodayHeroPanel: View {
+private struct TodayStateRibbonCard: View {
+    var item: StateDurationItem
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: item.state.symbolName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 32, height: 32)
+                .background(item.state.timelineColor.opacity(0.72), in: Circle())
+                .overlay {
+                    Circle().stroke(Color.white.opacity(0.22), lineWidth: 1)
+                }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.state.title)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(DashboardPalette.primaryText)
+                    .lineLimit(1)
+                Text(FocusPetFormatters.duration(item.seconds))
+                    .font(.title3.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(DashboardPalette.primaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    item.state.timelineColor.opacity(0.34),
+                    item.state.timelineColor.opacity(0.12),
+                    DashboardPalette.elevatedCardFill
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(item.state.timelineColor.opacity(0.86))
+                .frame(width: 4)
+                .padding(.vertical, 10)
+                .padding(.leading, 1)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(item.state.timelineColor.opacity(0.36), lineWidth: 1)
+        }
+        .liquidGlassSurface(cornerRadius: 12)
+        .shadow(color: DashboardPalette.shadow.opacity(0.10), radius: 2, x: 0, y: 1)
+    }
+}
+
+private struct TodayInsightsGrid: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let spacing = DashboardLayout.cardGap
+            let rightWidth = min(max(proxy.size.width * 0.27, 300), 380)
+            let rhythmHeight = min(max(104, proxy.size.height * 0.38), proxy.size.height * 0.48)
+
+            HStack(alignment: .top, spacing: spacing) {
+                TodayAppUsageBarChartPanel()
+                    .layoutPriority(1)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                VStack(alignment: .leading, spacing: spacing) {
+                    CurrentRhythmPanel()
+                        .frame(maxWidth: .infinity, minHeight: rhythmHeight, maxHeight: rhythmHeight)
+                    TodayDistributionPanel()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(width: rightWidth)
+                .frame(maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
+private struct CurrentRhythmPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
-    private var stateItems: [StateDurationItem] {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 9) {
+                Image(systemName: model.currentDecision.state.symbolName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(model.currentDecision.state.timelineColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("当前节奏")
+                        .font(.headline.weight(.semibold))
+                    Text(model.currentDecision.state == .focus ? "还不错，保持平稳" : rhythmSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 8) {
+                Text(model.currentDecision.state.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(model.currentDecision.state.timelineColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(model.currentDecision.state.timelineColor.opacity(0.10), in: Capsule())
+                Text(model.currentSnapshot.appName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            model.currentDecision.state.timelineColor.opacity(0.12),
+                            DashboardPalette.elevatedCardFill
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        }
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(model.currentDecision.state.timelineColor.opacity(0.86))
+                .frame(width: 4)
+                .padding(.vertical, 12)
+                .padding(.leading, 1)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(model.currentDecision.state.timelineColor.opacity(0.36), lineWidth: 1)
+        }
+        .liquidGlassSurface(cornerRadius: 12)
+        .dashboardPetAnchor(.todayBreakControl)
+    }
+
+    private var rhythmSubtitle: String {
+        switch model.currentDecision.state {
+        case .focus: "还不错，保持平稳"
+        case .distracted: "正在走神，适合收束窗口"
+        case .breakTime: "正在休息，恢复后再继续"
+        case .away: "暂离中，回来后自动恢复"
+        }
+    }
+}
+
+private struct TodayDistributionPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    private var items: [StateDurationItem] {
         [
             StateDurationItem(state: .focus, seconds: model.summary.focusSeconds),
             StateDurationItem(state: .distracted, seconds: model.summary.distractedSeconds),
@@ -303,92 +1215,122 @@ struct TodayHeroPanel: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 16) {
-                heroIdentity
-                stateDurationGrid
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                BreakDurationControl()
-                    .frame(width: 260)
-            }
+        HStack(alignment: .top, spacing: 12) {
+            StateDonutChart(items: items, total: model.summary.totalSeconds)
+                .frame(width: 92, height: 92)
 
-            VStack(alignment: .leading, spacing: 14) {
-                heroIdentity
-                stateDurationGrid
-                BreakDurationControl()
-            }
-        }
-        .dashboardCard()
-    }
+            VStack(alignment: .leading, spacing: 12) {
+                Text("今日分布")
+                    .font(.headline.weight(.semibold))
 
-    private var heroIdentity: some View {
-        HStack(alignment: .center, spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(model.currentDecision.state.timelineColor.opacity(0.14))
-                Image(systemName: model.currentDecision.state.symbolName)
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(model.currentDecision.state.timelineColor)
-            }
-            .frame(width: 58, height: 58)
-
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(model.currentDecision.state.title)
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(items) { item in
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(item.state.timelineColor)
+                                .frame(width: 9, height: 9)
+                            Text(item.state.title)
+                                .frame(width: 34, alignment: .leading)
+                            Spacer(minLength: 6)
+                            Text(FocusPetFormatters.percentage(ratio(for: item)))
+                                .monospacedDigit()
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                    }
                 }
-                Text(model.currentSnapshot.appName)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text("今日状态")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
             }
-            .frame(minWidth: 210, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .dashboardCard(12, tint: DashboardPalette.awayPurple)
     }
 
-    private var stateDurationGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 136), spacing: 8)], alignment: .leading, spacing: 8) {
-            ForEach(stateItems) { item in
-                TodayHeroMetric(
-                    title: item.state.title,
-                    value: FocusPetFormatters.duration(item.seconds),
-                    symbol: item.state.symbolName,
-                    tint: item.state.timelineColor
-                )
-            }
-        }
-        .frame(maxWidth: .infinity)
+    private func ratio(for item: StateDurationItem) -> Double {
+        guard model.summary.totalSeconds > 0 else { return 0 }
+        return Double(item.seconds) / Double(model.summary.totalSeconds)
     }
 }
 
-private struct TodayHeroMetric: View {
-    var title: String
-    var value: String
-    var symbol: String
-    var tint: Color
+private struct DashboardMoonLandscape: View {
+    var compact = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 24, height: 24)
-                .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(value)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text(title)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+        GeometryReader { proxy in
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.70),
+                        DashboardPalette.focusBlue.opacity(0.22),
+                        DashboardPalette.awayPurple.opacity(0.12)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                RoundedRectangle(cornerRadius: compact ? 26 : 54, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.64),
+                                DashboardPalette.gold.opacity(0.22),
+                                DashboardPalette.focusBlue.opacity(0.18)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: compact ? 130 : 280, height: compact ? 58 : 132)
+                    .rotationEffect(.degrees(-8))
+                    .position(x: proxy.size.width * (compact ? 0.78 : 0.70), y: proxy.size.height * (compact ? 0.42 : 0.50))
+                    .opacity(0.82)
+
+                CloudShape()
+                    .fill(Color.white.opacity(0.36))
+                    .frame(width: compact ? 84 : 132, height: compact ? 34 : 50)
+                    .position(x: proxy.size.width * 0.86, y: proxy.size.height * 0.40)
+
+                Path { path in
+                    let width = proxy.size.width
+                    let height = proxy.size.height
+                    path.move(to: CGPoint(x: 0, y: height * 0.82))
+                    path.addCurve(
+                        to: CGPoint(x: width, y: height * 0.68),
+                        control1: CGPoint(x: width * 0.22, y: height * 0.62),
+                        control2: CGPoint(x: width * 0.58, y: height * 0.88)
+                    )
+                    path.addLine(to: CGPoint(x: width, y: height))
+                    path.addLine(to: CGPoint(x: 0, y: height))
+                    path.closeSubpath()
+                }
+                .fill(DashboardPalette.focusBlue.opacity(0.18))
+
+                Path { path in
+                    let width = proxy.size.width
+                    let height = proxy.size.height
+                    path.move(to: CGPoint(x: 0, y: height * 0.90))
+                    path.addCurve(
+                        to: CGPoint(x: width, y: height * 0.82),
+                        control1: CGPoint(x: width * 0.35, y: height * 0.76),
+                        control2: CGPoint(x: width * 0.66, y: height * 0.95)
+                    )
+                    path.addLine(to: CGPoint(x: width, y: height))
+                    path.addLine(to: CGPoint(x: 0, y: height))
+                    path.closeSubpath()
+                }
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.46),
+                            DashboardPalette.restGreen.opacity(0.18),
+                            DashboardPalette.focusBlue.opacity(0.16)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
             }
-            Spacer(minLength: 0)
         }
-        .padding(8)
-        .frame(minHeight: 48)
-        .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -396,69 +1338,95 @@ private struct BreakDurationControl: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
-        TimelineView(.periodic(from: Date(), by: 1)) { context in
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .center, spacing: 10) {
-                    Image(systemName: model.activeBreakSession == nil ? "cup.and.saucer.fill" : "timer")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.blue)
-                        .frame(width: 30, height: 30)
-                        .background(.blue.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(model.activeBreakSession == nil ? "休息计时" : "正在休息")
-                            .font(.caption.weight(.semibold))
-                        Text(statusSubtitle(at: context.date))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                    Text(primaryTimeText(at: context.date))
-                        .font(.title3.monospacedDigit().weight(.semibold))
+        Group {
+            if model.activeBreakSession == nil {
+                content(at: Date())
+            } else {
+                TimelineView(.periodic(from: Date(), by: 1)) { context in
+                    content(at: context.date)
                 }
-
-                if let progress = activeBreakProgress(at: context.date) {
-                    CompactMeter(ratio: progress, tint: .blue, height: 8)
-                } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Slider(value: breakMinutesBinding, in: 1...30, step: 1)
-                            .tint(.blue)
-                        HStack {
-                            Text("1")
-                            Spacer()
-                            Text("15")
-                            Spacer()
-                            Text("30 分钟")
-                        }
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                    }
-                }
-
-                Button {
-                    model.toggleBreakFromPet()
-                } label: {
-                    Label(model.activeBreakSession == nil ? "开始休息" : "结束休息", systemImage: model.activeBreakSession == nil ? "play.fill" : "stop.fill")
-                        .font(.caption.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(model.activeBreakSession == nil ? .blue : .orange)
-            }
-            .padding(12)
-            .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(.blue.opacity(0.16), lineWidth: 1)
             }
         }
     }
 
-    private var breakMinutesBinding: Binding<Double> {
+    private func content(at date: Date) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(model.activeBreakSession == nil ? "休息计时" : "正在休息")
+                        .font(.title3.weight(.semibold))
+                    Spacer()
+                    Image(systemName: model.activeBreakSession == nil ? "timer" : "pause.circle.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(DashboardPalette.restGreen)
+                }
+
+                if let subtitle = statusSubtitle(at: date) {
+                    Text(subtitle)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                }
+            }
+
+            Text(primaryTimeText(at: date))
+                .font(.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(DashboardPalette.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            if let progress = activeBreakProgress(at: date) {
+                CompactMeter(ratio: progress, tint: DashboardPalette.restGreen, height: 8)
+            } else {
+                BreakMinuteKeySelector(value: breakMinutesKeyBinding)
+            }
+
+            Button {
+                model.toggleBreakFromPet()
+            } label: {
+                Text(model.activeBreakSession == nil ? "开始休息" : "结束休息")
+                    .font(.headline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+            }
+            .liquidGlassButtonStyle(prominent: true)
+            .tint(model.activeBreakSession == nil ? DashboardPalette.restGreen.opacity(0.92) : DashboardPalette.distractedPeach)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            DashboardPalette.restGreen.opacity(0.30),
+                            DashboardPalette.restGreen.opacity(0.10),
+                            DashboardPalette.elevatedCardFill,
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(DashboardPalette.restGreen.opacity(0.88))
+                        .frame(width: 5)
+                        .padding(.vertical, 14)
+                        .padding(.leading, 2)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(DashboardPalette.restGreen.opacity(0.38), lineWidth: 1)
+                }
+                .shadow(color: DashboardPalette.shadow.opacity(0.10), radius: 2, x: 0, y: 1)
+        }
+        .liquidGlassSurface(cornerRadius: 12)
+    }
+
+    private var breakMinutesKeyBinding: Binding<Int> {
         Binding(
-            get: { Double(model.settings.breakMinutes) },
+            get: { model.settings.breakMinutes },
             set: { value in
-                let next = max(1, min(30, Int(value.rounded())))
+                let next = max(1, min(30, value))
                 guard model.settings.breakMinutes != next else { return }
                 model.settings.breakMinutes = next
                 model.saveSettings()
@@ -474,9 +1442,9 @@ private struct BreakDurationControl: View {
         return FocusPetFormatters.duration(remaining)
     }
 
-    private func statusSubtitle(at date: Date) -> String {
+    private func statusSubtitle(at date: Date) -> String? {
         guard let rest = model.activeBreakSession else {
-            return "滑动调整 1-30 分钟"
+            return nil
         }
         let elapsed = max(0, Int(date.timeIntervalSince(rest.start)))
         return "已休息 \(FocusPetFormatters.duration(elapsed))"
@@ -486,6 +1454,64 @@ private struct BreakDurationControl: View {
         guard let rest = model.activeBreakSession else { return nil }
         let elapsed = max(0, date.timeIntervalSince(rest.start))
         return min(1, elapsed / Double(max(1, rest.targetDurationSeconds)))
+    }
+}
+
+private struct BreakMinuteKeySelector: View {
+    @Binding var value: Int
+
+    private let options = [1, 3, 5, 10, 15, 20, 25, 30]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                ForEach(options, id: \.self) { minute in
+                    Button {
+                        value = minute
+                    } label: {
+                        VStack(spacing: 3) {
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(minute == value ? DashboardPalette.restGreen : Color.white.opacity(0.78))
+                                .frame(height: minute == value ? 30 : 25)
+                                .overlay(alignment: .top) {
+                                    Capsule()
+                                        .fill(Color.white.opacity(minute == value ? 0.36 : 0.58))
+                                        .frame(height: 3)
+                                        .padding(.horizontal, 4)
+                                        .padding(.top, 3)
+                                }
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                        .stroke(minute == value ? DashboardPalette.restGreen.opacity(0.45) : DashboardPalette.innerStroke, lineWidth: 1)
+                                }
+
+                            Text("\(minute)")
+                                .font(.caption2.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(minute == value ? DashboardPalette.restGreen : DashboardPalette.secondaryText)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(minute) 分钟")
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+            }
+
+            HStack {
+                Label("1-30 分钟", systemImage: "pianokeys")
+                Spacer()
+                Text("\(value) 分钟")
+                    .monospacedDigit()
+            }
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(DashboardPalette.secondaryText)
+        }
     }
 }
 
@@ -592,27 +1618,32 @@ private struct StateDonutChart: View {
     }
 
     var body: some View {
-        ZStack {
-            Circle()
-                .stroke(.quaternary.opacity(0.65), lineWidth: 22)
-
-            ForEach(slices) { slice in
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            let lineWidth = max(12, side * 0.12)
+            ZStack {
                 Circle()
-                    .trim(from: slice.start, to: slice.end)
-                    .stroke(slice.state.timelineColor, style: StrokeStyle(lineWidth: 22, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
+                    .stroke(DashboardPalette.trackFill, lineWidth: lineWidth)
 
-            VStack(spacing: 3) {
-                Text("\(focusPercent)%")
-                    .font(.system(size: 34, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                Text("专注占比")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                ForEach(slices) { slice in
+                    Circle()
+                        .trim(from: slice.start, to: slice.end)
+                        .stroke(slice.state.timelineColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+
+                VStack(spacing: 2) {
+                    Text("\(focusPercent)%")
+                        .font(.system(size: max(22, side * 0.18), weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                    Text("专注占比")
+                        .font(.system(size: max(9, side * 0.065), weight: .medium))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                }
             }
+            .frame(width: side, height: side)
+            .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
         }
-        .padding(8)
     }
 }
 
@@ -645,17 +1676,17 @@ private struct StateSummaryTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                Image(systemName: item.state.symbolName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(item.state.timelineColor)
-                    .frame(width: 22, height: 22)
+            Image(systemName: item.state.symbolName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(item.state.timelineColor)
+                .frame(width: 22, height: 22)
                     .background(item.state.timelineColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
                 Text(item.state.title)
                     .font(.caption.weight(.semibold))
                 Spacer(minLength: 0)
-                Text(FocusPetFormatters.percentage(ratio))
-                    .font(.caption2.monospacedDigit().weight(.medium))
-                    .foregroundStyle(.secondary)
+            Text(FocusPetFormatters.percentage(ratio))
+                .font(.caption2.monospacedDigit().weight(.medium))
+                .foregroundStyle(DashboardPalette.secondaryText)
             }
 
             CompactMeter(ratio: ratio, tint: item.state.timelineColor, height: 8)
@@ -666,7 +1697,11 @@ private struct StateSummaryTile: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 108, alignment: .leading)
-        .background(.quaternary.opacity(0.24), in: RoundedRectangle(cornerRadius: 8))
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
     }
 }
 
@@ -682,13 +1717,13 @@ struct RestStatusCompactPanel: View {
                 HStack(spacing: 10) {
                     RestStatusTile(title: "当前状态", value: model.currentDecision.state.title, symbol: model.currentDecision.state.symbolName, tint: model.currentDecision.state.timelineColor)
                     RestStatusTile(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
-                    RestStatusTile(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: .orange)
+                    RestStatusTile(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: FocusPetCore.FocusState.distracted.timelineColor)
                     restAction
                 }
                 VStack(spacing: 10) {
                     RestStatusTile(title: "当前状态", value: model.currentDecision.state.title, symbol: model.currentDecision.state.symbolName, tint: model.currentDecision.state.timelineColor)
                     RestStatusTile(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
-                    RestStatusTile(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: .orange)
+                    RestStatusTile(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: FocusPetCore.FocusState.distracted.timelineColor)
                     restAction
                 }
             }
@@ -708,17 +1743,22 @@ struct RestStatusCompactPanel: View {
                 if let rest = model.activeBreakSession {
                     Text("剩余 \(FocusPetFormatters.duration(rest.remainingSeconds()))")
                         .font(.caption)
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(DashboardPalette.secondaryText)
                 } else {
                     Text("休息后自动恢复判断")
                         .font(.caption)
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(DashboardPalette.secondaryText)
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
             .padding(12)
-            .foregroundStyle(.white)
-            .background(Color.blue.gradient, in: RoundedRectangle(cornerRadius: 10))
+            .foregroundStyle(DashboardPalette.primaryText)
+            .background(DashboardPalette.elevatedCardFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(DashboardPalette.border, lineWidth: 1)
+            }
+            .liquidGlassSurface(cornerRadius: 10)
         }
         .buttonStyle(.plain)
     }
@@ -749,7 +1789,11 @@ private struct RestStatusTile: View {
         }
         .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
         .padding(12)
-        .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 10))
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
     }
 }
 
@@ -757,25 +1801,33 @@ struct TimelinePanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
-        let timeline = StatusStripSnapshot(segments: model.stateSegments, secondsBack: 21_600)
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("最近 6 小时", systemImage: "list.bullet.rectangle")
-                    .font(.headline)
+        let timeline = StatusStripSnapshot(segments: model.stateSegments, secondsBack: 14_400)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("最近 4 小时")
+                    .font(.headline.weight(.semibold))
                 Spacer()
-                StatusPill("状态区间", symbol: "square.split.2x1.fill")
+                HStack(spacing: 14) {
+                    ForEach(timeline.legend) { item in
+                        HStack(spacing: 6) {
+                            Circle().fill(item.color).frame(width: 8, height: 8)
+                            Text(item.title)
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                    }
+                }
             }
             if !timeline.hasData {
-                Text("最近 6 小时暂无状态记录。")
-                    .foregroundStyle(.secondary)
+                Text("最近 4 小时暂无状态记录。")
+                    .foregroundStyle(DashboardPalette.secondaryText)
             } else {
-                StateSegmentStrip(
+                StateSegmentBlockStrip(
                     ranges: timeline.ranges,
                     start: timeline.start,
-                    end: timeline.end,
-                    height: 22
+                    end: timeline.end
                 )
-                .frame(height: 38)
+                .frame(height: 24)
                 HStack {
                     TimelineTimeChip(timeline.timeLabels.first ?? "")
                     Spacer()
@@ -783,21 +1835,110 @@ struct TimelinePanel: View {
                     Spacer()
                     TimelineTimeChip(timeline.timeLabels.last ?? "")
                 }
-                HStack(spacing: 12) {
-                    ForEach(timeline.legend) { item in
-                        Label {
-                            Text(item.title)
-                        } icon: {
-                            Circle().fill(item.color).frame(width: 7, height: 7)
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                }
             }
         }
-        .dashboardCard()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .dashboardCard(12)
     }
+}
+
+private struct StateSegmentBlockStrip: View {
+    var ranges: [StatusStripRange]
+    var start: Date
+    var end: Date
+    var blockCount = 24
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<blockCount, id: \.self) { index in
+                TimelineGlassBlock(color: color(for: index), isEmpty: isEmpty(index))
+            }
+        }
+    }
+
+    private func color(for index: Int) -> Color {
+        guard blockCount > 0 else { return DashboardPalette.trackFill }
+        let progress = (Double(index) + 0.5) / Double(blockCount)
+        let sampleDate = start.addingTimeInterval(end.timeIntervalSince(start) * progress)
+        let state = ranges.first { range in
+            range.start <= sampleDate && range.end >= sampleDate
+        }?.state
+        return (state?.timelineColor ?? DashboardPalette.trackFill).opacity(state == nil ? 1 : 0.82)
+    }
+
+    private func isEmpty(_ index: Int) -> Bool {
+        guard blockCount > 0 else { return true }
+        let progress = (Double(index) + 0.5) / Double(blockCount)
+        let sampleDate = start.addingTimeInterval(end.timeIntervalSince(start) * progress)
+        return ranges.first { range in
+            range.start <= sampleDate && range.end >= sampleDate
+        } == nil
+    }
+}
+
+private struct TimelineGlassBlock: View {
+    var color: Color
+    var isEmpty: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let cornerRadius = min(proxy.size.height, proxy.size.width) * 0.22
+            let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+            shape
+                .fill(color)
+                .overlay {
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(isEmpty ? 0.18 : 0.38),
+                            Color.white.opacity(isEmpty ? 0.12 : 0.18),
+                            Color.black.opacity(isEmpty ? 0.01 : 0.05)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    .clipShape(shape)
+                }
+                .overlay(alignment: .top) {
+                    Capsule()
+                        .fill(Color.white.opacity(isEmpty ? 0.18 : 0.40))
+                        .frame(height: max(2, proxy.size.height * 0.12))
+                        .padding(.horizontal, max(3, proxy.size.width * 0.12))
+                        .padding(.top, 2)
+                        .allowsHitTesting(false)
+                }
+                .overlay {
+                    shape
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(isEmpty ? 0.30 : 0.54),
+                                    color.opacity(isEmpty ? 0.18 : 0.44)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                }
+                .overlay {
+                    shape
+                        .inset(by: 1)
+                        .stroke(Color.white.opacity(isEmpty ? 0.12 : 0.24), lineWidth: 0.6)
+                }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private func orderedStateSegments(_ segments: [StateSegment]) -> [StateSegment] {
+    guard !segments.isEmpty else { return [] }
+    for index in segments.indices.dropFirst() {
+        if segments[index].start < segments[segments.index(before: index)].start {
+            return segments.sorted { $0.start < $1.start }
+        }
+    }
+    return segments
 }
 
 private struct StatusStripSnapshot {
@@ -821,18 +1962,24 @@ private struct StatusStripSnapshot {
             FocusPetFormatters.clock(windowEnd)
         ]
 
-        let filtered = segments.filter { $0.end > windowStart && $0.start < windowEnd }
+        let orderedSegments = orderedStateSegments(segments)
+        var filtered: [StateSegment] = []
+        for segment in orderedSegments.reversed() {
+            if segment.end <= windowStart { break }
+            if segment.start < windowEnd {
+                filtered.append(segment)
+            }
+        }
+        filtered.reverse()
         self.hasData = !filtered.isEmpty
         var durations: [FocusPetCore.FocusState: TimeInterval] = [:]
-        self.ranges = filtered
-            .sorted { $0.start < $1.start }
-            .compactMap { segment in
-                let clippedStart = max(segment.start, windowStart)
-                let clippedEnd = min(segment.end, windowEnd)
-                guard clippedEnd > clippedStart else { return nil }
-                durations[segment.state, default: 0] += clippedEnd.timeIntervalSince(clippedStart)
-                return StatusStripRange(start: clippedStart, end: clippedEnd, state: segment.state)
-            }
+        self.ranges = filtered.compactMap { segment in
+            let clippedStart = max(segment.start, windowStart)
+            let clippedEnd = min(segment.end, windowEnd)
+            guard clippedEnd > clippedStart else { return nil }
+            durations[segment.state, default: 0] += clippedEnd.timeIntervalSince(clippedStart)
+            return StatusStripRange(start: clippedStart, end: clippedEnd, state: segment.state)
+        }
         self.legend = FocusPetCore.FocusState.allCases
             .map { state in
                 StatusTimelineLegendItem(
@@ -846,10 +1993,13 @@ private struct StatusStripSnapshot {
 }
 
 private struct StatusStripRange: Identifiable, Hashable {
-    let id = UUID()
     var start: Date
     var end: Date
     var state: FocusPetCore.FocusState
+
+    var id: String {
+        "\(state.id)-\(Int(start.timeIntervalSince1970))-\(Int(end.timeIntervalSince1970))"
+    }
 }
 
 private struct StateSegmentStrip: View {
@@ -862,7 +2012,7 @@ private struct StateSegmentStrip: View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: height / 2)
-                    .fill(.secondary.opacity(0.13))
+                    .fill(DashboardPalette.trackFill)
                 ForEach(ranges) { range in
                     let x = xOffset(for: range.start, width: proxy.size.width)
                     let width = segmentWidth(for: range, totalWidth: proxy.size.width)
@@ -876,9 +2026,9 @@ private struct StateSegmentStrip: View {
             .clipShape(RoundedRectangle(cornerRadius: height / 2))
             .overlay {
                 RoundedRectangle(cornerRadius: height / 2)
-                    .stroke(.white.opacity(0.18), lineWidth: 1)
+                    .stroke(DashboardPalette.border, lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.05), radius: 5, y: 2)
+            .shadow(color: DashboardPalette.shadow.opacity(0.10), radius: 2, y: 1)
         }
     }
 
@@ -991,9 +2141,12 @@ private struct TodayTimelineSnapshot {
 }
 
 private struct StatusTimelinePoint: Identifiable {
-    let id = UUID()
     let progress: Double
     let state: FocusPetCore.FocusState
+
+    var id: String {
+        "\(state.id)-\(Int((progress * 10_000).rounded()))"
+    }
 
     var level: Double {
         switch state {
@@ -1006,17 +2159,21 @@ private struct StatusTimelinePoint: Identifiable {
 }
 
 private struct StatusTimelineRange: Identifiable {
-    let id = UUID()
     let startProgress: Double
     let endProgress: Double
     let state: FocusPetCore.FocusState
+
+    var id: String {
+        "\(state.id)-\(Int((startProgress * 10_000).rounded()))-\(Int((endProgress * 10_000).rounded()))"
+    }
 }
 
 private struct StatusTimelineLegendItem: Identifiable {
-    let id = UUID()
     let state: FocusPetCore.FocusState
     let title: String
     let color: Color
+
+    var id: String { "\(state.id)-\(title)" }
 }
 
 private struct StatusLineChart: View {
@@ -1024,7 +2181,6 @@ private struct StatusLineChart: View {
     var ranges: [StatusTimelineRange]
     var hasData: Bool
     var timeLabels: [String]
-    @State private var reveal = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1035,12 +2191,9 @@ private struct StatusLineChart: View {
 
                     if hasData {
                         SmoothTimelineLineShape(points: points)
-                            .trim(from: 0, to: reveal ? 1 : 0)
-                            .stroke(.white.opacity(0.22), style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
-                            .blur(radius: 3)
+                            .stroke(Color.white.opacity(0.42), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
 
                         SmoothTimelineLineShape(points: points)
-                            .trim(from: 0, to: reveal ? 1 : 0)
                             .stroke(
                                 LinearGradient(
                                     colors: [
@@ -1053,7 +2206,6 @@ private struct StatusLineChart: View {
                                 ),
                                 style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round)
                             )
-                            .shadow(color: .primary.opacity(0.1), radius: 5, x: 0, y: 2)
                     } else {
                         Text("暂无今日状态点。")
                             .font(.caption.weight(.medium))
@@ -1061,29 +2213,21 @@ private struct StatusLineChart: View {
                             .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
                     }
                 }
-                .onAppear {
-                    withAnimation(.easeOut(duration: 0.55)) {
-                        reveal = true
-                    }
-                }
-                .onChange(of: points.map(\.id)) { _, _ in
-                    reveal = false
-                    withAnimation(.easeOut(duration: 0.55)) {
-                        reveal = true
-                    }
-                }
-                .drawingGroup()
             }
             .background {
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(.ultraThinMaterial)
+                    .fill(DashboardPalette.rowFill)
                     .overlay(
                         LinearGradient(
-                            colors: [.white.opacity(0.08), .clear],
+                            colors: [.white.opacity(0.24), .clear],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+                    }
             }
         }
         .overlay(
@@ -1155,10 +2299,14 @@ private struct TimelineTimeChip: View {
     var body: some View {
         Text(title)
             .font(.caption2.monospacedDigit().weight(.medium))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(DashboardPalette.secondaryText)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(.regularMaterial, in: Capsule())
+            .background(DashboardPalette.controlFill, in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(DashboardPalette.border, lineWidth: 1)
+            }
     }
 }
 
@@ -1180,7 +2328,7 @@ private struct ChartGridLines: View {
                     path.addLine(to: CGPoint(x: x, y: height))
                 }
             }
-            .stroke(.primary.opacity(0.08), style: StrokeStyle(lineWidth: 1, dash: [4, 6]))
+            .stroke(DashboardPalette.innerStroke, style: StrokeStyle(lineWidth: 1, dash: [4, 6]))
         }
     }
 }
@@ -1188,10 +2336,10 @@ private struct ChartGridLines: View {
 private extension FocusPetCore.FocusState {
     var timelineColor: Color {
         switch self {
-        case .focus: .green
-        case .distracted: .red
-        case .breakTime: .blue
-        case .away: .indigo
+        case .focus: DashboardPalette.focusBlue
+        case .distracted: DashboardPalette.distractedRed
+        case .breakTime: DashboardPalette.restGreen
+        case .away: DashboardPalette.pauseGray
         }
     }
 }
@@ -1208,10 +2356,10 @@ private extension ActivityCategory {
 
     var tint: Color {
         switch self {
-        case .work: .green
-        case .entertainment: .orange
-        case .ignore: .blue
-        case .neutral: .secondary
+        case .work: DashboardPalette.restGreen
+        case .entertainment: DashboardPalette.distractedPeach
+        case .ignore: DashboardPalette.awayPurple
+        case .neutral: DashboardPalette.focusBlue.opacity(0.85)
         }
     }
 }
@@ -1236,12 +2384,37 @@ private struct AppIconView: View {
             }
         }
         .frame(width: size, height: size)
-        .background(category.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        .background(category.tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.border.opacity(0.72), lineWidth: 1)
+        }
     }
 }
 
 private enum AppIconResolver {
+    private nonisolated(unsafe) static let cache = NSCache<NSString, NSImage>()
+    private nonisolated(unsafe) static var missingKeys: Set<String> = []
+
     static func image(appName: String, bundleID: String?) -> NSImage? {
+        let key = "\(bundleID ?? "")|\(normalized(appName))"
+        if missingKeys.contains(key) {
+            return nil
+        }
+
+        let cacheKey = NSString(string: key)
+        if let cached = cache.object(forKey: cacheKey) {
+            return cached
+        }
+        guard let image = resolveImage(appName: appName, bundleID: bundleID) else {
+            missingKeys.insert(key)
+            return nil
+        }
+        cache.setObject(image, forKey: cacheKey)
+        return image
+    }
+
+    private static func resolveImage(appName: String, bundleID: String?) -> NSImage? {
         let workspace = NSWorkspace.shared
         if let bundleID,
            let url = workspace.urlForApplication(withBundleIdentifier: bundleID) {
@@ -1292,6 +2465,7 @@ private enum AppIconResolver {
         "activitymonitor": ["com.apple.ActivityMonitor"],
         "网易云音乐": ["com.netease.163music"],
         "neteasemusic": ["com.netease.163music"],
+        "qq": ["com.tencent.qq"],
         "safari": ["com.apple.Safari"],
         "googlechrome": ["com.google.Chrome"],
         "chrome": ["com.google.Chrome"],
@@ -1310,6 +2484,7 @@ private enum AppIconResolver {
         "系统设置": ["System Settings"],
         "活动监视器": ["Activity Monitor"],
         "网易云音乐": ["NeteaseMusic", "网易云音乐"],
+        "qq": ["QQ"],
         "microsoftedge": ["Microsoft Edge"],
         "googlechrome": ["Google Chrome"]
     ]
@@ -1358,16 +2533,13 @@ private struct SlidingSegmentedPicker<Value: Hashable>: View {
     var options: [SlidingSegmentOption<Value>]
     @Binding var selection: Value
     var compact = false
-    @Namespace private var namespace
 
     var body: some View {
         HStack(spacing: 3) {
             ForEach(options) { option in
                 let selected = option.value == selection
                 Button {
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
-                        selection = option.value
-                    }
+                    selection = option.value
                 } label: {
                     HStack(spacing: compact ? 4 : 6) {
                         Image(systemName: option.symbol)
@@ -1377,18 +2549,22 @@ private struct SlidingSegmentedPicker<Value: Hashable>: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.82)
                     }
-                    .foregroundStyle(selected ? option.tint : .secondary)
+                    .foregroundStyle(selected ? option.tint : DashboardPalette.secondaryText)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, compact ? 6 : 10)
                     .padding(.vertical, compact ? 6 : 8)
                     .background {
                         if selected {
                             RoundedRectangle(cornerRadius: 7)
-                                .fill(.regularMaterial)
-                                .matchedGeometryEffect(id: "selected", in: namespace)
+                                .fill(Color.white.opacity(0.62))
+                                .overlay(alignment: .topLeading) {
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .fill(DashboardPalette.surfaceHighlight)
+                                        .opacity(0.28)
+                                }
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 7)
-                                        .stroke(option.tint.opacity(0.28), lineWidth: 1)
+                                        .stroke(option.tint.opacity(0.24), lineWidth: 1)
                                 }
                         }
                     }
@@ -1399,11 +2575,12 @@ private struct SlidingSegmentedPicker<Value: Hashable>: View {
             }
         }
         .padding(3)
-        .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 9))
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 9)
-                .stroke(.primary.opacity(0.06), lineWidth: 1)
+                .stroke(DashboardPalette.border, lineWidth: 1)
         }
+        .liquidGlassSurface(cornerRadius: 9)
     }
 }
 
@@ -1434,10 +2611,11 @@ private struct NumberStepperControl: View {
             }
         }
         .padding(10)
-        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(tint.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .stroke(tint.opacity(0.18), lineWidth: 1)
+                .stroke(tint.opacity(0.16), lineWidth: 1)
         }
     }
 
@@ -1446,7 +2624,11 @@ private struct NumberStepperControl: View {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .bold))
                 .frame(width: 24, height: 24)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                .background(Color.white.opacity(0.52), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(DashboardPalette.border, lineWidth: 1)
+                }
         }
         .buttonStyle(.plain)
     }
@@ -1460,33 +2642,33 @@ private struct TogglePillButton: View {
 
     var body: some View {
         Button {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-                isOn.toggle()
-            }
+            isOn.toggle()
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: isOn ? "checkmark.circle.fill" : symbol)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(isOn ? tint : .secondary)
+                    .foregroundStyle(isOn ? tint : DashboardPalette.secondaryText)
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 Capsule()
-                    .fill(isOn ? tint.gradient : Color.secondary.opacity(0.22).gradient)
+                    .fill(isOn ? tint.opacity(0.70).gradient : DashboardPalette.trackFill.gradient)
                     .frame(width: 34, height: 18)
                     .overlay(alignment: isOn ? .trailing : .leading) {
                         Circle()
-                            .fill(.background)
+                            .fill(Color.white)
                             .frame(width: 14, height: 14)
                             .padding(2)
+                            .shadow(color: DashboardPalette.shadow.opacity(0.12), radius: 1, x: 0, y: 1)
                     }
             }
             .padding(10)
-            .background(isOn ? tint.opacity(0.10) : Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
+            .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(isOn ? tint.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(isOn ? tint.opacity(0.24) : Color.primary.opacity(0.05), lineWidth: 1)
+                    .stroke(isOn ? tint.opacity(0.22) : DashboardPalette.innerStroke, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
@@ -1515,7 +2697,11 @@ private struct ControlSliderRow: View {
                 .tint(tint)
         }
         .padding(10)
-        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
     }
 
     private var displayValue: String {
@@ -1524,17 +2710,6 @@ private struct ControlSliderRow: View {
         } else {
             "\(Int(value.rounded()))\(suffix)"
         }
-    }
-}
-
-private func activityCategoryOptions() -> [SlidingSegmentOption<ActivityCategory>] {
-    ActivityCategory.allCases.map { category in
-        SlidingSegmentOption(
-            value: category,
-            title: category.title,
-            symbol: category.symbolName,
-            tint: category.tint
-        )
     }
 }
 
@@ -1549,53 +2724,6 @@ private func petPlacementOptions() -> [SlidingSegmentOption<PetPlacementMode>] {
     }
 }
 
-private let previewablePetActions: [PetAction] = [
-    .idle,
-    .distractedLook,
-    .nudgeStrong,
-    .breakRelax,
-    .welcomeBack,
-    .stretch,
-    .run
-]
-
-private extension PetAction {
-    var symbolName: String {
-        switch self {
-        case .idle: "circle.dotted"
-        case .blink: "eye"
-        case .breath: "wind"
-        case .sleep: "moon.zzz.fill"
-        case .wake: "sun.max.fill"
-        case .focusStart: "timer"
-        case .focusStable: "checkmark.circle.fill"
-        case .stretch: "figure.flexibility"
-        case .distractedLook: "eye.trianglebadge.exclamationmark"
-        case .nudgeGentle: "bell.fill"
-        case .nudgeStrong: "bell.badge.fill"
-        case .breakRelax: "cup.and.saucer.fill"
-        case .breakEnd: "arrow.clockwise.circle.fill"
-        case .welcomeBack: "hand.wave.fill"
-        case .dragged: "hand.draw.fill"
-        case .landing: "arrow.down.to.line"
-        case .run: "figure.run"
-        case .screenTransfer: "arrow.left.arrow.right.circle.fill"
-        case .mouseSummon: "cursorarrow.motionlines"
-        }
-    }
-
-    var tint: Color {
-        switch self {
-        case .focusStart, .focusStable: .green
-        case .distractedLook, .nudgeGentle, .nudgeStrong: .orange
-        case .breakRelax, .breakEnd: .blue
-        case .sleep, .wake, .welcomeBack: .indigo
-        case .dragged, .landing, .run, .screenTransfer, .mouseSummon: .purple
-        case .idle, .blink, .breath, .stretch: .secondary
-        }
-    }
-}
-
 private extension StateReason {
     var title: String {
         switch self {
@@ -1605,13 +2733,14 @@ private extension StateReason {
         case .inputIdleDistracted: "无输入走神"
         case .activeBreak: "休息中"
         case .activeFocusSession: "专注会话"
-        case .workCategory: "工作分类"
-        case .entertainmentStable: "娱乐稳定"
-        case .entertainmentGrace: "娱乐缓冲"
+        case .workCategory: "工作工具"
+        case .entertainmentStable: "分心稳定"
+        case .entertainmentGrace: "分心缓冲"
         case .frequentSwitching: "频繁切换"
-        case .ignoredActivity: "忽略活动"
+        case .ignoredActivity: "不参与判断"
         case .previousStateHeld: "保持状态"
         case .neutralDefault: "默认判断"
+        case .recentInputRecovery: "输入恢复"
         }
     }
 }
@@ -1649,16 +2778,17 @@ struct DistributionView: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
+        let spacing = DashboardLayout.cardGap
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: spacing) {
                 SectionTitle("状态占比")
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 180), spacing: 12), count: 4), spacing: 12) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 180), spacing: spacing), count: 4), spacing: spacing) {
                     RatioTile(state: FocusPetCore.FocusState.focus, seconds: model.summary.focusSeconds, total: model.summary.totalSeconds)
                     RatioTile(state: FocusPetCore.FocusState.distracted, seconds: model.summary.distractedSeconds, total: model.summary.totalSeconds)
                     RatioTile(state: FocusPetCore.FocusState.breakTime, seconds: model.summary.breakSeconds, total: model.summary.totalSeconds)
                     RatioTile(state: FocusPetCore.FocusState.away, seconds: model.summary.awaySeconds, total: model.summary.totalSeconds)
                 }
-                SectionTitle("分类统计")
+                SectionTitle("识别统计")
                 CategoryUsageChartPanel()
                 SectionTitle("App 时间排行")
                 AppUsageChartPanel()
@@ -1678,7 +2808,7 @@ struct CategoryUsageChartPanel: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(ActivityCategory.allCases) { category in
+            ForEach(ActivityCategory.userFacingClassificationCases) { category in
                 CategoryUsageCard(
                     category: category,
                     seconds: model.summary.categorySeconds(category),
@@ -1732,13 +2862,20 @@ private struct CategoryUsageCard: View {
                     .font(.caption.weight(.medium))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(.quaternary.opacity(0.35), in: Capsule())
+                    .background(DashboardPalette.controlFill, in: Capsule())
+                    .overlay {
+                        Capsule().stroke(DashboardPalette.innerStroke, lineWidth: 1)
+                    }
             }
             .foregroundStyle(seconds > 0 ? .primary : .secondary)
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 118, alignment: .leading)
-        .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
     }
 }
 
@@ -1751,7 +2888,7 @@ private struct CompactMeter: View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(.quaternary.opacity(0.45))
+                    .fill(DashboardPalette.trackFill)
                 Capsule()
                     .fill(tint.gradient)
                     .frame(width: max(ratio > 0 ? 6 : 0, proxy.size.width * max(0, min(1, ratio))))
@@ -1770,7 +2907,7 @@ private struct MiniMeter: View {
     var body: some View {
         ZStack(alignment: .leading) {
             Capsule()
-                .fill(.quaternary.opacity(0.45))
+                .fill(DashboardPalette.trackFill)
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule()
@@ -1846,7 +2983,11 @@ private struct AppUsageCard: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
-        .background(.quaternary.opacity(0.22), in: RoundedRectangle(cornerRadius: 8))
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
     }
 }
 
@@ -1854,7 +2995,7 @@ struct TodayAppUsageBarChartPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
     private var items: [AppUsageDisplayItem] {
-        Array(AppUsageDisplayItem.merged(from: model.summary.appUsage).prefix(7))
+        Array(AppUsageDisplayItem.merged(from: model.summary.appUsage).prefix(5))
     }
 
     private var maxSeconds: Int {
@@ -1862,20 +3003,22 @@ struct TodayAppUsageBarChartPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("App 时间排行", systemImage: "chart.bar.xaxis")
-                    .font(.headline)
+                Text("应用使用排行（今日）")
+                    .font(.headline.weight(.semibold))
                 Spacer()
-                StatusPill("柱状图", symbol: "chart.bar.fill")
+                StatusPill("\(items.count) 个应用", symbol: "number")
             }
 
             if items.isEmpty {
                 Text("暂无 App 使用统计。")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardPalette.secondaryText)
             } else {
-                VStack(spacing: 6) {
+                VStack(spacing: 5) {
                     HStack(spacing: 10) {
+                        Text("")
+                            .frame(width: 26)
                         Text("App")
                             .frame(width: 176, alignment: .leading)
                         Text("时间分布")
@@ -1884,7 +3027,7 @@ struct TodayAppUsageBarChartPanel: View {
                             .frame(width: 68, alignment: .trailing)
                     }
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DashboardPalette.secondaryText)
 
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         TodayAppUsageBarRow(item: item, rank: index + 1, maxSeconds: maxSeconds)
@@ -1892,7 +3035,8 @@ struct TodayAppUsageBarChartPanel: View {
                 }
             }
         }
-        .dashboardCard()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .dashboardCard(12)
     }
 }
 
@@ -1920,7 +3064,7 @@ private struct AppUsageDisplayItem: Identifiable {
             var accumulator = grouped[key] ?? Accumulator(appName: item.appName, bundleID: item.bundleID)
             accumulator.seconds += item.seconds
             accumulator.bundleID = accumulator.bundleID ?? item.bundleID
-            accumulator.categorySeconds[item.category, default: 0] += item.seconds
+            accumulator.categorySeconds[item.category == .neutral ? .ignore : item.category, default: 0] += item.seconds
             for (state, seconds) in item.stateBreakdown {
                 accumulator.stateBreakdown[state, default: 0] += seconds
             }
@@ -1928,7 +3072,7 @@ private struct AppUsageDisplayItem: Identifiable {
         }
 
         return grouped.map { key, accumulator in
-            let category = accumulator.categorySeconds.max { lhs, rhs in lhs.value < rhs.value }?.key ?? .neutral
+            let category = accumulator.categorySeconds.max { lhs, rhs in lhs.value < rhs.value }?.key ?? .ignore
             return AppUsageDisplayItem(
                 id: key,
                 appName: accumulator.appName,
@@ -1966,12 +3110,12 @@ private struct TodayAppUsageBarRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text("#\(rank)")
+            Text("\(rank)")
                 .font(.caption.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DashboardPalette.secondaryText)
                 .frame(width: 26, alignment: .leading)
 
-            AppIconView(appName: item.appName, bundleID: item.bundleID, category: item.category, size: 26)
+            AppIconView(appName: item.appName, bundleID: item.bundleID, category: item.category, size: 24)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.appName)
@@ -1989,12 +3133,16 @@ private struct TodayAppUsageBarRow: View {
 
             Text(FocusPetFormatters.duration(item.seconds))
                 .font(.caption.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DashboardPalette.primaryText)
                 .frame(width: 68, alignment: .trailing)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(.primary.opacity(rank <= 3 ? 0.035 : 0.018), in: RoundedRectangle(cornerRadius: 7))
+        .padding(.vertical, 4)
+        .background(rank <= 3 ? DashboardPalette.controlFill : DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(rank <= 3 ? DashboardPalette.border : DashboardPalette.innerStroke, lineWidth: 1)
+        }
     }
 }
 struct AppUsageChartPanel: View {
@@ -2031,289 +3179,1280 @@ struct AppUsageChartPanel: View {
 struct SessionsView: View {
     @EnvironmentObject private var model: FocusPetModel
 
-    private var sessions: [FocusHistorySession] {
-        FocusHistorySession.build(from: model.stateSegments)
+    var body: some View {
+        let historyData = SessionsHistoryData(segments: model.stateSegments)
+
+        ScrollView {
+            VStack(alignment: .leading, spacing: DashboardLayout.cardGap) {
+                AttentionHeatmapPanel(snapshot: historyData.snapshot)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                FocusHistorySegmentsPanel(snapshot: historyData.workTimeline)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct SessionsHistoryData {
+    var snapshot: AttentionHistorySnapshot
+    var workTimeline: WorkTimelineSnapshot
+
+    init(segments: [StateSegment], now: Date = Date()) {
+        let orderedSegments = orderedStateSegments(segments)
+        snapshot = AttentionHistorySnapshot(orderedSegments: orderedSegments, now: now)
+        workTimeline = WorkTimelineSnapshot(orderedSegments: orderedSegments, now: now)
+    }
+}
+
+private enum AttentionHeatmapScope: Hashable {
+    case week
+    case month
+}
+
+private struct AttentionDurationBreakdown: Hashable {
+    var focusSeconds = 0
+    var distractedSeconds = 0
+    var breakSeconds = 0
+    var awaySeconds = 0
+
+    var attentionSeconds: Int {
+        focusSeconds + distractedSeconds
     }
 
+    var trackedSeconds: Int {
+        focusSeconds + distractedSeconds + breakSeconds + awaySeconds
+    }
+
+    var workSeconds: Int {
+        focusSeconds + distractedSeconds + breakSeconds
+    }
+
+    var focusRatio: Double {
+        guard attentionSeconds > 0 else { return 0 }
+        return Double(focusSeconds) / Double(attentionSeconds)
+    }
+
+    var distractedRatio: Double {
+        guard attentionSeconds > 0 else { return 0 }
+        return Double(distractedSeconds) / Double(attentionSeconds)
+    }
+
+    mutating func add(state: FocusPetCore.FocusState, seconds: Int) {
+        let safeSeconds = max(0, seconds)
+        switch state {
+        case .focus:
+            focusSeconds += safeSeconds
+        case .distracted:
+            distractedSeconds += safeSeconds
+        case .breakTime:
+            breakSeconds += safeSeconds
+        case .away:
+            awaySeconds += safeSeconds
+        }
+    }
+
+    mutating func merge(_ other: AttentionDurationBreakdown) {
+        focusSeconds += other.focusSeconds
+        distractedSeconds += other.distractedSeconds
+        breakSeconds += other.breakSeconds
+        awaySeconds += other.awaySeconds
+    }
+}
+
+private struct AttentionDayBucket: Identifiable, Hashable {
+    var date: Date
+    var breakdown: AttentionDurationBreakdown
+
+    var id: TimeInterval { date.timeIntervalSince1970 }
+    var focusRatio: Double { breakdown.focusRatio }
+    var attentionSeconds: Int { breakdown.attentionSeconds }
+}
+
+private struct AttentionWeekBucket: Identifiable {
+    var start: Date
+    var days: [AttentionDayBucket]
+
+    var id: TimeInterval { start.timeIntervalSince1970 }
+
+    var breakdown: AttentionDurationBreakdown {
+        var result = AttentionDurationBreakdown()
+        for day in days {
+            result.merge(day.breakdown)
+        }
+        return result
+    }
+}
+
+private struct AttentionMonthCalendar: Identifiable {
+    var start: Date
+    var title: String
+    var days: [AttentionDayBucket?]
+    var breakdown: AttentionDurationBreakdown
+
+    var id: TimeInterval { start.timeIntervalSince1970 }
+}
+
+private struct AttentionHistorySnapshot {
+    var weeks: [AttentionWeekBucket]
+    var months: [AttentionMonthCalendar]
+    var days: [AttentionDayBucket]
+    var total: AttentionDurationBreakdown
+
+    var currentWeekBreakdown: AttentionDurationBreakdown {
+        weeks.last?.breakdown ?? AttentionDurationBreakdown()
+    }
+
+    var currentMonthBreakdown: AttentionDurationBreakdown {
+        months.last?.breakdown ?? AttentionDurationBreakdown()
+    }
+
+    var activeDays: Int {
+        days.filter { $0.attentionSeconds > 0 }.count
+    }
+
+    var averageFocusSecondsPerActiveDay: Int {
+        guard activeDays > 0 else { return 0 }
+        return total.focusSeconds / activeDays
+    }
+
+    var bestFocusDay: AttentionDayBucket? {
+        days
+            .filter { $0.breakdown.focusSeconds > 0 }
+            .max { $0.breakdown.focusSeconds < $1.breakdown.focusSeconds }
+    }
+
+    var bestFocusWeek: AttentionWeekBucket? {
+        weeks
+            .filter { $0.breakdown.focusSeconds > 0 }
+            .max { $0.breakdown.focusSeconds < $1.breakdown.focusSeconds }
+    }
+
+    func breakdown(for scope: AttentionHeatmapScope) -> AttentionDurationBreakdown {
+        switch scope {
+        case .week:
+            return currentWeekBreakdown
+        case .month:
+            return currentMonthBreakdown
+        }
+    }
+
+    func days(for scope: AttentionHeatmapScope) -> [AttentionDayBucket] {
+        switch scope {
+        case .week:
+            return weeks.last?.days ?? []
+        case .month:
+            return months.last?.days.compactMap { $0 } ?? []
+        }
+    }
+
+    func activeDays(for scope: AttentionHeatmapScope) -> Int {
+        days(for: scope).filter { $0.attentionSeconds > 0 }.count
+    }
+
+    func averageFocusSecondsPerActiveDay(for scope: AttentionHeatmapScope) -> Int {
+        let activeDays = activeDays(for: scope)
+        guard activeDays > 0 else { return 0 }
+        return breakdown(for: scope).focusSeconds / activeDays
+    }
+
+    func bestFocusDay(for scope: AttentionHeatmapScope) -> AttentionDayBucket? {
+        days(for: scope)
+            .filter { $0.breakdown.focusSeconds > 0 }
+            .max { $0.breakdown.focusSeconds < $1.breakdown.focusSeconds }
+    }
+
+    init(orderedSegments: [StateSegment], now: Date = Date()) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "zh_CN")
+        calendar.firstWeekday = 2
+
+        let today = calendar.startOfDay(for: now)
+        let currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
+        let currentMonthStart = calendar.dateInterval(of: .month, for: today)?.start ?? today
+        let weekStarts = (0..<12).compactMap {
+            calendar.date(byAdding: .weekOfYear, value: $0 - 11, to: currentWeekStart)
+        }
+        let monthStarts = (0..<6).compactMap {
+            calendar.date(byAdding: .month, value: $0 - 5, to: currentMonthStart)
+        }
+        let earliest = min(weekStarts.first ?? today, monthStarts.first ?? today)
+        let latest = calendar.date(byAdding: .day, value: 1, to: today) ?? today.addingTimeInterval(86_400)
+
+        var buckets: [Date: AttentionDayBucket] = [:]
+        for segment in orderedSegments.reversed() {
+            if segment.end <= earliest { break }
+            let segmentStart = max(segment.start, earliest)
+            let segmentEnd = min(segment.end, latest)
+            guard segmentEnd > segmentStart else { continue }
+
+            var cursor = segmentStart
+            while cursor < segmentEnd {
+                let dayStart = calendar.startOfDay(for: cursor)
+                let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart.addingTimeInterval(86_400)
+                let clippedEnd = min(dayEnd, segmentEnd)
+                guard clippedEnd > cursor else { break }
+
+                let seconds = Int(clippedEnd.timeIntervalSince(cursor).rounded())
+                var bucket = buckets[dayStart] ?? AttentionDayBucket(date: dayStart, breakdown: AttentionDurationBreakdown())
+                bucket.breakdown.add(state: segment.state, seconds: seconds)
+                buckets[dayStart] = bucket
+                cursor = clippedEnd
+            }
+        }
+
+        var orderedDays: [AttentionDayBucket] = []
+        var cursorDay = earliest
+        while cursorDay < latest {
+            orderedDays.append(buckets[cursorDay] ?? AttentionDayBucket(date: cursorDay, breakdown: AttentionDurationBreakdown()))
+            guard let nextDay = calendar.date(byAdding: .day, value: 1, to: cursorDay) else { break }
+            cursorDay = nextDay
+        }
+        days = orderedDays
+
+        var totalBreakdown = AttentionDurationBreakdown()
+        for day in days {
+            totalBreakdown.merge(day.breakdown)
+        }
+        total = totalBreakdown
+
+        weeks = weekStarts.map { weekStart in
+            let days = (0..<7).compactMap { offset -> AttentionDayBucket? in
+                guard let day = calendar.date(byAdding: .day, value: offset, to: weekStart) else { return nil }
+                return buckets[day] ?? AttentionDayBucket(date: day, breakdown: AttentionDurationBreakdown())
+            }
+            return AttentionWeekBucket(start: weekStart, days: days)
+        }
+
+        months = monthStarts.map { monthStart in
+            let nextMonth = calendar.date(byAdding: .month, value: 1, to: monthStart) ?? monthStart.addingTimeInterval(31 * 86_400)
+            let leadingBlankCount = (calendar.component(.weekday, from: monthStart) - calendar.firstWeekday + 7) % 7
+            var cells = Array<AttentionDayBucket?>(repeating: nil, count: leadingBlankCount)
+            var monthBreakdown = AttentionDurationBreakdown()
+            var day = monthStart
+            while day < nextMonth {
+                let bucket = buckets[day] ?? AttentionDayBucket(date: day, breakdown: AttentionDurationBreakdown())
+                cells.append(bucket)
+                monthBreakdown.focusSeconds += bucket.breakdown.focusSeconds
+                monthBreakdown.distractedSeconds += bucket.breakdown.distractedSeconds
+                monthBreakdown.breakSeconds += bucket.breakdown.breakSeconds
+                monthBreakdown.awaySeconds += bucket.breakdown.awaySeconds
+                guard let nextDay = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                day = nextDay
+            }
+            while cells.count % 7 != 0 {
+                cells.append(nil)
+            }
+            return AttentionMonthCalendar(
+                start: monthStart,
+                title: Self.monthTitle(for: monthStart, calendar: calendar),
+                days: cells,
+                breakdown: monthBreakdown
+            )
+        }
+    }
+
+    private static func monthTitle(for date: Date, calendar: Calendar) -> String {
+        let components = calendar.dateComponents([.month], from: date)
+        return "\(components.month ?? 0)月"
+    }
+}
+
+private struct AttentionHeatmapPanel: View {
+    var snapshot: AttentionHistorySnapshot
+    @State private var scope: AttentionHeatmapScope = .week
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                FocusSessionControlPanel()
-                FocusSessionRecordsPanel()
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Label("自动片段", systemImage: "waveform.path.ecg")
-                            .font(.headline)
-                        Spacer()
-                        StatusPill("\(sessions.count) 段", symbol: "number")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 14) {
+                Label("注意力热力图", systemImage: "square.grid.3x3.fill")
+                    .font(.headline.weight(.semibold))
+                Spacer(minLength: 12)
+                SlidingSegmentedPicker(options: scopeOptions, selection: $scope, compact: true)
+                    .frame(width: 190)
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        heatmapBody
+                        HeatmapLegend()
                     }
-                    if sessions.isEmpty {
-                        Text("暂无连续专注/走神片段。")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(sessions) { session in
-                            FocusHistorySessionCard(session: session)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    AttentionInsightPanel(snapshot: snapshot, scope: scope)
+                        .frame(width: 268)
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    heatmapBody
+                    AttentionInsightPanel(snapshot: snapshot, scope: scope)
+                    HeatmapLegend()
+                }
+            }
+        }
+        .dashboardCard(14, tint: DashboardPalette.focusBlue)
+        .onAppear {
+            scope = .week
+        }
+    }
+
+    @ViewBuilder
+    private var heatmapBody: some View {
+        if scope == .week {
+            WeeklyAttentionHeatmap(weeks: snapshot.weeks)
+        } else {
+            MonthlyAttentionHeatmap(months: snapshot.months)
+        }
+    }
+
+    private var scopeOptions: [SlidingSegmentOption<AttentionHeatmapScope>] {
+        [
+            SlidingSegmentOption(value: .week, title: "周视图", symbol: "calendar.badge.clock", tint: DashboardPalette.focusBlue),
+            SlidingSegmentOption(value: .month, title: "月视图", symbol: "calendar", tint: DashboardPalette.awayPurple)
+        ]
+    }
+}
+
+private struct AttentionInsightPanel: View {
+    var snapshot: AttentionHistorySnapshot
+    var scope: AttentionHeatmapScope
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("历史洞察", systemImage: "chart.xyaxis.line")
+                .font(.subheadline.weight(.semibold))
+
+            AttentionInsightRow(
+                title: "\(scopeTitle)专注",
+                value: FocusPetFormatters.duration(breakdown.focusSeconds),
+                detail: FocusPetFormatters.percentage(breakdown.focusRatio),
+                symbol: "calendar.badge.clock"
+            )
+            AttentionInsightRow(
+                title: "\(scopePrefix)日均",
+                value: FocusPetFormatters.duration(snapshot.averageFocusSecondsPerActiveDay(for: scope)),
+                detail: "\(snapshot.activeDays(for: scope)) 天活跃",
+                symbol: "sum"
+            )
+            if let bestDay = snapshot.bestFocusDay(for: scope) {
+                AttentionInsightRow(
+                    title: "\(scopePrefix)峰值",
+                    value: dayTitle(bestDay.date),
+                    detail: FocusPetFormatters.duration(bestDay.breakdown.focusSeconds),
+                    symbol: "flame.fill"
+                )
+            }
+            AttentionInsightRow(
+                title: "\(scopeTitle)走神",
+                value: FocusPetFormatters.duration(breakdown.distractedSeconds),
+                detail: FocusPetFormatters.percentage(breakdown.distractedRatio),
+                symbol: FocusPetCore.FocusState.distracted.symbolName
+            )
+
+            AttentionFocusRatioMeter(breakdown: breakdown)
+                .padding(.top, 2)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DashboardPalette.focusBlue.opacity(0.16), lineWidth: 1)
+        }
+    }
+
+    private var breakdown: AttentionDurationBreakdown {
+        snapshot.breakdown(for: scope)
+    }
+
+    private var scopeTitle: String {
+        scope == .week ? "本周" : "本月"
+    }
+
+    private var scopePrefix: String {
+        scope == .week ? "周内" : "月内"
+    }
+
+    private func dayTitle(_ date: Date) -> String {
+        let calendar = Calendar(identifier: .gregorian)
+        let components = calendar.dateComponents([.month, .day], from: date)
+        return "\(components.month ?? 0)/\(components.day ?? 0)"
+    }
+}
+
+private struct AttentionInsightRow: View {
+    var title: String
+    var value: String
+    var detail: String
+    var symbol: String
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DashboardPalette.focusBlue)
+                .frame(width: 25, height: 25)
+                .background(DashboardPalette.focusBlue.opacity(0.10), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .lineLimit(1)
+                Text(title)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Text(detail)
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(DashboardPalette.secondaryText)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.38), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct AttentionFocusRatioMeter: View {
+    var breakdown: AttentionDurationBreakdown
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("专注占比")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                Spacer()
+                Text(FocusPetFormatters.percentage(breakdown.focusRatio))
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(DashboardPalette.focusBlue)
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(DashboardPalette.trackFill.opacity(0.70))
+                    Capsule()
+                        .fill(DashboardPalette.focusBlue.gradient)
+                        .frame(width: max(8, proxy.size.width * breakdown.focusRatio))
+                }
+            }
+            .frame(height: 8)
+        }
+    }
+}
+
+private struct AttentionSummaryPill: View {
+    var title: String
+    var value: String
+    var symbol: String
+    var tint: Color
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(.headline.monospacedDigit().weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                    .allowsTightening(true)
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+        .background(tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(tint.opacity(0.14), lineWidth: 1)
+        }
+    }
+}
+
+private struct WeeklyAttentionHeatmap: View {
+    var weeks: [AttentionWeekBucket]
+
+    var body: some View {
+        VStack(alignment: .center, spacing: 9) {
+            HStack(alignment: .top, spacing: 9) {
+                VStack(spacing: 5) {
+                    Text("")
+                        .frame(width: 24, height: 32)
+                    ForEach(weekdayLabels, id: \.self) { label in
+                        Text(label)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(DashboardPalette.secondaryText)
+                            .frame(width: 24, height: 22)
+                    }
+                }
+
+                ForEach(weeks) { week in
+                    VStack(spacing: 5) {
+                        VStack(spacing: 1) {
+                            Text("W\(weekNumber(week.start))")
+                                .font(.system(size: 8, weight: .semibold, design: .rounded))
+                            Text(dayLabel(week.start))
+                                .font(.system(size: 8, weight: .medium, design: .rounded))
+                        }
+                        .foregroundStyle(isCurrentWeek(week.start) ? DashboardPalette.focusBlue : DashboardPalette.secondaryText)
+                        .frame(width: 26, height: 32)
+
+                        ForEach(week.days) { day in
+                            AttentionHeatmapCell(day: day, size: 22)
                         }
                     }
                 }
-                .dashboardCard()
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            if let first = weeks.first?.start,
+               let last = weeks.last?.days.last?.date {
+                Text("\(dayLabel(first)) - \(dayLabel(last))")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(DashboardPalette.secondaryText)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private var weekdayLabels: [String] {
+        ["一", "二", "三", "四", "五", "六", "日"]
+    }
+
+    private func weekNumber(_ date: Date) -> Int {
+        Calendar(identifier: .gregorian).component(.weekOfYear, from: date)
+    }
+
+    private func dayLabel(_ date: Date) -> String {
+        let components = Calendar(identifier: .gregorian).dateComponents([.month, .day], from: date)
+        return "\(components.month ?? 0)/\(components.day ?? 0)"
+    }
+
+    private func isCurrentWeek(_ date: Date) -> Bool {
+        let calendar = Calendar(identifier: .gregorian)
+        return calendar.isDate(date, equalTo: Date(), toGranularity: .weekOfYear)
     }
 }
 
-private struct FocusSessionControlPanel: View {
-    @EnvironmentObject private var model: FocusPetModel
-    @State private var taskName = "专注任务"
+private struct MonthlyAttentionHeatmap: View {
+    var months: [AttentionMonthCalendar]
 
     var body: some View {
-        TimelineView(.periodic(from: Date(), by: 1)) { context in
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 12) {
-                    identityTile(at: context.date)
-                    controls
-                }
+        LazyVGrid(columns: columns, spacing: 14) {
+            ForEach(months) { month in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(month.title)
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        Text(FocusPetFormatters.duration(month.breakdown.focusSeconds))
+                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(DashboardPalette.secondaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    identityTile(at: context.date)
-                    controls
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(14), spacing: 5), count: 7), spacing: 5) {
+                        ForEach(Array(month.days.enumerated()), id: \.offset) { _, day in
+                            AttentionHeatmapCell(day: day, size: 14)
+                        }
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(DashboardPalette.innerStroke, lineWidth: 1)
                 }
             }
         }
-        .dashboardCard()
     }
 
-    private func identityTile(at date: Date) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: model.activeFocusSession == nil ? "timer" : "timer.circle.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.green)
-                    .frame(width: 38, height: 38)
-                    .background(.green.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(model.activeFocusSession?.taskName ?? "专注任务")
-                        .font(.title3.weight(.semibold))
-                        .lineLimit(1)
-                    Text(sessionSubtitle(at: date))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text(primaryTime(at: date))
-                    .font(.title2.monospacedDigit().weight(.semibold))
-            }
-
-            MiniMeter(ratio: sessionProgress(at: date), tint: .green)
-                .frame(height: 10)
-
-            HStack(spacing: 8) {
-                SessionStatPill(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
-                SessionStatPill(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: .orange)
-                SessionStatPill(title: "暂离", value: FocusPetFormatters.duration(model.summary.awaySeconds), symbol: FocusPetCore.FocusState.away.symbolName, tint: .indigo)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if model.activeFocusSession == nil {
-                TextField("专注任务", text: $taskName)
-                    .textFieldStyle(.roundedBorder)
-                NumberStepperControl(
-                    title: "目标",
-                    value: $model.settings.focusTargetMinutes,
-                    range: 5...180,
-                    suffix: "分钟",
-                    tint: .green
-                )
-                .onChange(of: model.settings.focusTargetMinutes) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "完成后自动休息", symbol: "cup.and.saucer.fill", isOn: $model.settings.autoStartBreak, tint: .blue)
-                    .onChange(of: model.settings.autoStartBreak) { _, _ in model.saveSettings() }
-                Button {
-                    model.startFocusSession(taskName: taskName, minutes: model.settings.focusTargetMinutes)
-                } label: {
-                    Label("开始专注", systemImage: "play.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-            } else {
-                Button {
-                    model.finishCurrentFocusSession()
-                } label: {
-                    Label("完成专注", systemImage: "checkmark.circle.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                Button(role: .destructive) {
-                    model.finishCurrentFocusSession(completed: false)
-                } label: {
-                    Label("取消会话", systemImage: "xmark.circle.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-        .frame(width: 260, alignment: .top)
-    }
-
-    private func sessionSubtitle(at date: Date) -> String {
-        guard let session = model.activeFocusSession else {
-            return "目标 \(FocusPetFormatters.duration(model.settings.focusTargetMinutes * 60))"
-        }
-        return "\(FocusPetFormatters.clock(session.start)) 开始 · \(statusTitle(at: date))"
-    }
-
-    private func statusTitle(at date: Date) -> String {
-        guard let session = model.activeFocusSession else { return "" }
-        let remaining = max(0, session.targetDurationSeconds - session.elapsedSeconds(now: date))
-        return remaining == 0 ? "可完成" : "剩余 \(FocusPetFormatters.duration(remaining))"
-    }
-
-    private func primaryTime(at date: Date) -> String {
-        guard let session = model.activeFocusSession else {
-            return "\(model.settings.focusTargetMinutes) 分钟"
-        }
-        return FocusPetFormatters.duration(session.elapsedSeconds(now: date))
-    }
-
-    private func sessionProgress(at date: Date) -> Double {
-        guard let session = model.activeFocusSession else { return 0 }
-        return min(1, Double(session.elapsedSeconds(now: date)) / Double(max(1, session.targetDurationSeconds)))
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: 156), spacing: 12)]
     }
 }
 
-private struct FocusSessionRecordsPanel: View {
-    @EnvironmentObject private var model: FocusPetModel
-
-    private var sessions: [FocusSession] {
-        model.focusSessions.sorted { $0.start > $1.start }
+private func attentionHeatmapFocusLevel(_ focusSeconds: Int) -> Int {
+    switch max(0, focusSeconds) {
+    case 0..<900:
+        return 0
+    case 900..<2_700:
+        return 1
+    case 2_700..<5_400:
+        return 2
+    case 5_400..<10_800:
+        return 3
+    case 10_800..<14_400:
+        return 4
+    default:
+        return 5
     }
+}
+
+private func attentionHeatmapBlueColor(_ level: Int) -> Color {
+    switch min(5, max(0, level)) {
+    case 0:
+        return Color(red: 0.88, green: 0.94, blue: 1.00)
+    case 1:
+        return Color(red: 0.72, green: 0.85, blue: 0.99)
+    case 2:
+        return Color(red: 0.53, green: 0.74, blue: 0.98)
+    case 3:
+        return Color(red: 0.33, green: 0.62, blue: 0.95)
+    case 4:
+        return Color(red: 0.16, green: 0.49, blue: 0.89)
+    default:
+        return Color(red: 0.06, green: 0.34, blue: 0.72)
+    }
+}
+
+private struct AttentionHeatmapCell: View {
+    var day: AttentionDayBucket?
+    var size: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("任务记录", systemImage: "list.bullet.rectangle.portrait.fill")
-                    .font(.headline)
-                Spacer()
-                StatusPill("\(sessions.count) 条", symbol: "number")
+        RoundedRectangle(cornerRadius: max(2, size * 0.22), style: .continuous)
+            .fill(fillColor)
+            .frame(width: size, height: size)
+            .overlay {
+                RoundedRectangle(cornerRadius: max(2, size * 0.22), style: .continuous)
+                    .stroke(isToday ? DashboardPalette.focusBlue : borderColor, lineWidth: isToday ? 1.8 : 0.7)
             }
-            if sessions.isEmpty {
-                Text("暂无专注任务记录。")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(sessions.prefix(8)) { session in
-                    FocusSessionHistoryCard(session: session)
+            .overlay(alignment: .topTrailing) {
+                if isToday {
+                    Circle()
+                        .fill(DashboardPalette.focusBlue)
+                        .frame(width: max(4, size * 0.24), height: max(4, size * 0.24))
+                        .offset(x: 2, y: -2)
                 }
             }
+            .help(helpText)
+    }
+
+    private var fillColor: Color {
+        guard let day else { return Color.clear }
+        guard day.attentionSeconds > 0 else {
+            return DashboardPalette.trackFill.opacity(0.55)
         }
-        .dashboardCard()
+        let level = attentionHeatmapFocusLevel(day.breakdown.focusSeconds)
+        return attentionHeatmapBlueColor(level)
+    }
+
+    private var borderColor: Color {
+        day == nil ? Color.clear : DashboardPalette.innerStroke
+    }
+
+    private var isToday: Bool {
+        guard let day else { return false }
+        return Calendar(identifier: .gregorian).isDateInToday(day.date)
+    }
+
+    private var helpText: String {
+        guard let day else { return "" }
+        return "\(dayLabel(day.date)) · 专注 \(FocusPetFormatters.duration(day.breakdown.focusSeconds)) · 走神 \(FocusPetFormatters.duration(day.breakdown.distractedSeconds))"
+    }
+
+    private func dayLabel(_ date: Date) -> String {
+        let calendar = Calendar(identifier: .gregorian)
+        let components = calendar.dateComponents([.month, .day], from: date)
+        return "\(components.month ?? 0)/\(components.day ?? 0)"
     }
 }
 
-private struct FocusHistorySession: Identifiable {
-    var id: String
+private struct HeatmapLegend: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("少")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(DashboardPalette.secondaryText)
+            HStack(spacing: 4) {
+                ForEach(0..<6, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(attentionHeatmapBlueColor(index))
+                        .frame(width: 15, height: 15)
+                }
+            }
+            Text("多")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(DashboardPalette.secondaryText)
+            Spacer()
+        }
+    }
+}
+
+private struct WorkTimelineInterval: Identifiable {
     var start: Date
     var end: Date
-    var focusSeconds: Int
-    var distractedSeconds: Int
     var ranges: [StatusStripRange]
+    var breakdown: AttentionDurationBreakdown
+
+    var id: String {
+        "\(Int(start.timeIntervalSince1970))-\(Int(end.timeIntervalSince1970))-\(ranges.count)"
+    }
 
     var totalSeconds: Int {
         max(0, Int(end.timeIntervalSince(start).rounded()))
     }
 
-    static func build(from segments: [StateSegment]) -> [FocusHistorySession] {
-        var result: [FocusHistorySession] = []
-        var currentStart: Date?
-        var currentEnd: Date?
-        var focusSeconds = 0
-        var distractedSeconds = 0
-        var ranges: [StatusStripRange] = []
+    var activeSeconds: Int {
+        breakdown.workSeconds
+    }
 
-        func flush() {
-            guard let start = currentStart,
-                  let end = currentEnd,
-                  end > start,
-                  !ranges.isEmpty else {
-                currentStart = nil
-                currentEnd = nil
-                focusSeconds = 0
-                distractedSeconds = 0
-                ranges = []
-                return
-            }
-            result.append(FocusHistorySession(
-                id: "\(start.timeIntervalSince1970)-\(end.timeIntervalSince1970)",
-                start: start,
-                end: end,
-                focusSeconds: focusSeconds,
-                distractedSeconds: distractedSeconds,
-                ranges: ranges
-            ))
-            currentStart = nil
-            currentEnd = nil
-            focusSeconds = 0
-            distractedSeconds = 0
-            ranges = []
-        }
-
-        for segment in segments.sorted(by: { $0.start < $1.start }) {
-            switch segment.state {
-            case .focus, .distracted:
-                if currentStart == nil {
-                    currentStart = segment.start
-                }
-                currentEnd = max(currentEnd ?? segment.end, segment.end)
-                let seconds = max(0, Int(segment.end.timeIntervalSince(segment.start).rounded()))
-                if segment.state == .focus {
-                    focusSeconds += seconds
-                } else {
-                    distractedSeconds += seconds
-                }
-                ranges.append(StatusStripRange(start: segment.start, end: segment.end, state: segment.state))
-            case .breakTime, .away:
-                flush()
-            }
-        }
-        flush()
-
-        return Array(result.reversed())
+    var focusRatio: Double {
+        breakdown.focusRatio
     }
 }
 
-private struct FocusHistorySessionCard: View {
-    var session: FocusHistorySession
+private struct WorkTimelineSnapshot {
+    var start: Date
+    var end: Date
+    var intervals: [WorkTimelineInterval]
+    var summary: AttentionDurationBreakdown
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(FocusPetFormatters.clock(session.start)) - \(FocusPetFormatters.clock(session.end))")
-                        .font(.headline.monospacedDigit())
-                    Text("连续专注/走神片段")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+    var hasData: Bool {
+        !intervals.isEmpty
+    }
+
+    var longestInterval: WorkTimelineInterval? {
+        intervals.max { $0.totalSeconds < $1.totalSeconds }
+    }
+
+    init(orderedSegments: [StateSegment], now: Date = Date()) {
+        let windowEnd = now
+        let windowStart = now.addingTimeInterval(-86_400)
+        let maxSessionBridgeGap: TimeInterval = 20 * 60
+        var result: [WorkTimelineInterval] = []
+        var currentStart: Date?
+        var currentEnd: Date?
+        var currentRanges: [StatusStripRange] = []
+        var currentBreakdown = AttentionDurationBreakdown()
+        var totalBreakdown = AttentionDurationBreakdown()
+
+        func resetCurrent() {
+            currentStart = nil
+            currentEnd = nil
+            currentRanges = []
+            currentBreakdown = AttentionDurationBreakdown()
+        }
+
+        func flushCurrent() {
+            guard let start = currentStart,
+                  let end = currentEnd,
+                  end > start,
+                  !currentRanges.isEmpty else {
+                resetCurrent()
+                return
+            }
+            result.append(WorkTimelineInterval(
+                start: start,
+                end: end,
+                ranges: currentRanges,
+                breakdown: currentBreakdown
+            ))
+            totalBreakdown.merge(currentBreakdown)
+            resetCurrent()
+        }
+
+        func appendRange(_ range: StatusStripRange) {
+            guard range.end > range.start else { return }
+            if let lastIndex = currentRanges.indices.last {
+                let last = currentRanges[lastIndex]
+                if last.state == range.state,
+                   range.start.timeIntervalSince(last.end) <= 1.5 {
+                    currentRanges[lastIndex] = StatusStripRange(
+                        start: last.start,
+                        end: max(last.end, range.end),
+                        state: last.state
+                    )
+                    return
                 }
-                Spacer()
-                Text(FocusPetFormatters.duration(session.totalSeconds))
-                    .font(.title3.monospacedDigit().weight(.semibold))
+            }
+            currentRanges.append(range)
+        }
+
+        for segment in orderedSegments {
+            if segment.end <= windowStart { continue }
+            if segment.start >= windowEnd { break }
+
+            let clippedStart = max(segment.start, windowStart)
+            let clippedEnd = min(segment.end, windowEnd)
+            guard clippedEnd > clippedStart else { continue }
+
+            guard Self.isWorkState(segment.state) else {
+                if let previousEnd = currentEnd,
+                   clippedEnd.timeIntervalSince(previousEnd) > maxSessionBridgeGap {
+                    flushCurrent()
+                }
+                continue
             }
 
-            StateSegmentStrip(ranges: session.ranges, start: session.start, end: session.end, height: 13)
-                .frame(height: 20)
+            if let previousEnd = currentEnd,
+               clippedStart.timeIntervalSince(previousEnd) > maxSessionBridgeGap {
+                flushCurrent()
+            }
 
-            HStack(spacing: 8) {
-                SessionStatPill(title: "专注", value: FocusPetFormatters.duration(session.focusSeconds), symbol: FocusPetCore.FocusState.focus.symbolName, tint: .green)
-                SessionStatPill(title: "走神", value: FocusPetFormatters.duration(session.distractedSeconds), symbol: FocusPetCore.FocusState.distracted.symbolName, tint: .red)
-                SessionStatPill(title: "总时长", value: FocusPetFormatters.duration(session.totalSeconds), symbol: "clock.fill", tint: .blue)
+            if currentStart == nil {
+                currentStart = clippedStart
+            }
+            currentEnd = max(currentEnd ?? clippedEnd, clippedEnd)
+
+            let seconds = max(0, Int(clippedEnd.timeIntervalSince(clippedStart).rounded()))
+            currentBreakdown.add(state: segment.state, seconds: seconds)
+            appendRange(StatusStripRange(start: clippedStart, end: clippedEnd, state: segment.state))
+        }
+        flushCurrent()
+
+        start = windowStart
+        end = windowEnd
+        intervals = result
+        summary = totalBreakdown
+    }
+
+    private static func isWorkState(_ state: FocusPetCore.FocusState) -> Bool {
+        switch state {
+        case .focus, .distracted, .breakTime:
+            return true
+        case .away:
+            return false
+        }
+    }
+}
+
+private struct FocusHistorySegmentsPanel: View {
+    var snapshot: WorkTimelineSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center) {
+                Label("近24小时工作段", systemImage: "waveform.path.ecg")
+                    .font(.headline.weight(.semibold))
+                Spacer()
+                StatusPill("\(snapshot.intervals.count) 段 · 仅工作段", symbol: "number")
+            }
+
+            LazyVGrid(columns: summaryColumns, spacing: 10) {
+                AttentionSummaryPill(
+                    title: "工作总计",
+                    value: FocusPetFormatters.duration(snapshot.summary.workSeconds),
+                    symbol: "clock.badge.checkmark",
+                    tint: DashboardPalette.focusBlue
+                )
+                AttentionSummaryPill(
+                    title: "专注占比",
+                    value: FocusPetFormatters.percentage(snapshot.summary.focusRatio),
+                    symbol: "percent",
+                    tint: DashboardPalette.focusBlue
+                )
+                AttentionSummaryPill(
+                    title: "走神",
+                    value: FocusPetFormatters.duration(snapshot.summary.distractedSeconds),
+                    symbol: FocusPetCore.FocusState.distracted.symbolName,
+                    tint: FocusPetCore.FocusState.distracted.timelineColor
+                )
+                AttentionSummaryPill(
+                    title: "休息",
+                    value: FocusPetFormatters.duration(snapshot.summary.breakSeconds),
+                    symbol: FocusPetCore.FocusState.breakTime.symbolName,
+                    tint: DashboardPalette.restGreen
+                )
+            }
+
+            if snapshot.hasData {
+                FocusSegmentDurationChart(snapshot: snapshot)
+            } else {
+                Text("最近 24 小时暂无工作时间。")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .frame(maxWidth: .infinity, minHeight: 132, alignment: .center)
+                    .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+                    }
+            }
+        }
+        .dashboardCard(14, tint: DashboardPalette.awayPurple)
+        .dashboardPetAnchor(.historyWorkTimeline)
+    }
+
+    private var summaryColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 150), spacing: 10)]
+    }
+}
+
+private struct FocusSegmentDurationChart: View {
+    var snapshot: WorkTimelineSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            WorkSessionOverviewStrip(snapshot: snapshot)
+                .frame(height: 34)
+
+            LazyVGrid(columns: sessionColumns, spacing: 10) {
+                ForEach(displayIntervals) { interval in
+                    WorkSessionCard(interval: interval)
+                }
             }
         }
         .padding(12)
-        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
+    }
+
+    private var displayIntervals: [WorkTimelineInterval] {
+        snapshot.intervals
+    }
+
+    private var sessionColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 245), spacing: 10)]
+    }
+}
+
+private struct WorkSessionOverviewStrip: View {
+    var snapshot: WorkTimelineSnapshot
+
+    var body: some View {
+        GeometryReader { proxy in
+            let total = max(1, snapshot.intervals.reduce(0) { $0 + $1.totalSeconds })
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(DashboardPalette.trackFill.opacity(0.34))
+
+                ForEach(layoutRanges(total: total, width: proxy.size.width)) { range in
+                    Capsule()
+                        .fill(range.tint.gradient)
+                        .frame(width: range.width, height: 18)
+                        .offset(x: range.x)
+                }
+            }
+            .overlay(alignment: .trailing) {
+                Text("压缩工作段")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.62), in: Capsule())
+                    .padding(.trailing, 5)
+            }
+        }
+    }
+
+    private func layoutRanges(total: Int, width: CGFloat) -> [CompressedWorkSessionRange] {
+        var cursor: CGFloat = 0
+        let gap: CGFloat = snapshot.intervals.count > 1 ? 4 : 0
+        let usableWidth = max(0, width - gap * CGFloat(max(0, snapshot.intervals.count - 1)))
+        return snapshot.intervals.map { interval in
+            let segmentWidth = max(12, usableWidth * CGFloat(interval.totalSeconds) / CGFloat(max(1, total)))
+            defer { cursor += segmentWidth + gap }
+            return CompressedWorkSessionRange(
+                x: cursor,
+                width: segmentWidth,
+                tint: interval.focusRatio >= 0.72 ? DashboardPalette.focusBlue : FocusPetCore.FocusState.distracted.timelineColor
+            )
+        }
+    }
+}
+
+private struct CompressedWorkSessionRange: Identifiable {
+    var x: CGFloat
+    var width: CGFloat
+    var tint: Color
+
+    var id: String {
+        "\(Int((x * 10).rounded()))-\(Int((width * 10).rounded()))"
+    }
+}
+
+private struct WorkSessionCard: View {
+    var interval: WorkTimelineInterval
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(FocusPetFormatters.clock(interval.start))-\(FocusPetFormatters.clock(interval.end))")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text(FocusPetFormatters.percentage(interval.focusRatio))
+                    .font(.caption.monospacedDigit().weight(.bold))
+                    .foregroundStyle(interval.focusRatio >= 0.72 ? DashboardPalette.focusBlue : DashboardPalette.distractedRed)
+            }
+
+            Text(FocusPetFormatters.duration(interval.totalSeconds))
+                .font(.title3.monospacedDigit().weight(.semibold))
+                .foregroundStyle(DashboardPalette.primaryText)
+
+            WorkSessionRangeBar(interval: interval)
+                .frame(height: 12)
+
+            HStack(spacing: 8) {
+                WorkSessionMetric(title: "专注", seconds: interval.breakdown.focusSeconds, tint: DashboardPalette.focusBlue)
+                WorkSessionMetric(title: "走神", seconds: interval.breakdown.distractedSeconds, tint: FocusPetCore.FocusState.distracted.timelineColor)
+                if interval.breakdown.breakSeconds > 0 {
+                    WorkSessionMetric(title: "休息", seconds: interval.breakdown.breakSeconds, tint: DashboardPalette.restGreen)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(interval.focusRatio >= 0.72 ? DashboardPalette.focusBlue.opacity(0.20) : DashboardPalette.distractedRed.opacity(0.18), lineWidth: 1)
+        }
+    }
+}
+
+private struct WorkSessionRangeBar: View {
+    var interval: WorkTimelineInterval
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(DashboardPalette.trackFill.opacity(0.42))
+
+                ForEach(interval.ranges) { range in
+                    let x = rangeOffset(range, width: proxy.size.width)
+                    let width = rangeWidth(range, width: proxy.size.width)
+                    Capsule()
+                        .fill(range.state.timelineColor.gradient)
+                        .frame(width: max(3, width), height: proxy.size.height)
+                        .offset(x: x)
+                }
+            }
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(Color.white.opacity(0.40), lineWidth: 0.8)
+            }
+        }
+        .help(helpText)
+    }
+
+    private var helpText: String {
+        "专注 \(FocusPetFormatters.duration(interval.breakdown.focusSeconds)) · 走神 \(FocusPetFormatters.duration(interval.breakdown.distractedSeconds)) · 休息 \(FocusPetFormatters.duration(interval.breakdown.breakSeconds))"
+    }
+
+    private var span: TimeInterval {
+        max(1, interval.end.timeIntervalSince(interval.start))
+    }
+
+    private func rangeOffset(_ range: StatusStripRange, width: CGFloat) -> CGFloat {
+        width * CGFloat(max(0, range.start.timeIntervalSince(interval.start) / span))
+    }
+
+    private func rangeWidth(_ range: StatusStripRange, width: CGFloat) -> CGFloat {
+        let clippedStart = max(range.start, interval.start)
+        let clippedEnd = min(range.end, interval.end)
+        return width * CGFloat(max(0, clippedEnd.timeIntervalSince(clippedStart) / span))
+    }
+}
+
+private struct WorkSessionMetric: View {
+    var title: String
+    var seconds: Int
+    var tint: Color
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(tint)
+                .frame(width: 6, height: 6)
+            Text(title)
+            Text(FocusPetFormatters.duration(seconds))
+                .monospacedDigit()
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(DashboardPalette.secondaryText)
+        .lineLimit(1)
+        .minimumScaleFactor(0.78)
+    }
+}
+
+private struct FocusSegmentTimelineOverview: View {
+    var snapshot: WorkTimelineSnapshot
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(Color.white.opacity(0.34))
+
+                timelineGrid(width: proxy.size.width, height: proxy.size.height)
+
+                Capsule()
+                    .fill(DashboardPalette.trackFill.opacity(0.34))
+                    .frame(height: 24)
+                    .offset(y: 48)
+
+                ForEach(snapshot.intervals) { interval in
+                    let intervalX = xOffset(for: interval.start, width: proxy.size.width)
+                    let intervalWidth = max(4, xOffset(for: interval.end, width: proxy.size.width) - intervalX)
+                    ZStack(alignment: .leading) {
+                        ForEach(interval.ranges) { range in
+                            let rangeX = rangeOffset(range, interval: interval, width: intervalWidth)
+                            let rangeWidth = rangeWidth(range, interval: interval, width: intervalWidth)
+                            Rectangle()
+                                .fill(range.state.timelineColor.gradient)
+                                .frame(width: max(2, rangeWidth), height: 24)
+                                .offset(x: rangeX)
+                        }
+                    }
+                    .frame(width: intervalWidth, height: 24, alignment: .leading)
+                    .clipShape(Capsule())
+                    .overlay {
+                        Capsule().stroke(Color.white.opacity(0.48), lineWidth: 0.7)
+                    }
+                    .offset(x: intervalX, y: 48)
+                    .help("\(FocusPetFormatters.clock(interval.start))-\(FocusPetFormatters.clock(interval.end)) · 工作 \(FocusPetFormatters.duration(interval.totalSeconds))")
+                }
+
+                ForEach(axisTicks, id: \.offset) { tick in
+                    VStack(spacing: 3) {
+                        Rectangle()
+                            .fill(DashboardPalette.innerStroke.opacity(0.85))
+                            .frame(width: 1, height: 36)
+                        Text(axisLabel(tick.date))
+                            .font(.caption2.monospacedDigit().weight(.medium))
+                            .foregroundStyle(DashboardPalette.secondaryText)
+                            .fixedSize()
+                    }
+                    .offset(x: max(0, min(proxy.size.width - 34, proxy.size.width * tick.offset - 17)), y: 76)
+                }
+
+                HStack(spacing: 10) {
+                    FocusTimelineLegendDot(title: "专注", tint: FocusPetCore.FocusState.focus.timelineColor)
+                    FocusTimelineLegendDot(title: "走神", tint: FocusPetCore.FocusState.distracted.timelineColor)
+                    if snapshot.summary.breakSeconds > 0 {
+                        FocusTimelineLegendDot(title: "休息", tint: FocusPetCore.FocusState.breakTime.timelineColor)
+                    }
+                    Spacer(minLength: 8)
+                    Text(summaryCaption)
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 10)
+            }
+        }
+    }
+
+    private var span: TimeInterval {
+        max(1, snapshot.end.timeIntervalSince(snapshot.start))
+    }
+
+    private var axisTicks: [(offset: Double, date: Date)] {
+        (0...6).map { index in
+            let ratio = Double(index) / 6
+            return (ratio, snapshot.start.addingTimeInterval(span * ratio))
+        }
+    }
+
+    private var summaryCaption: String {
+        let focus = FocusPetFormatters.duration(snapshot.summary.focusSeconds)
+        let distracted = FocusPetFormatters.duration(snapshot.summary.distractedSeconds)
+        let rest = FocusPetFormatters.duration(snapshot.summary.breakSeconds)
+        return snapshot.summary.breakSeconds > 0 ? "专注 \(focus) · 走神 \(distracted) · 休息 \(rest)" : "专注 \(focus) · 走神 \(distracted)"
+    }
+
+    private func xOffset(for date: Date, width: CGFloat) -> CGFloat {
+        CGFloat(max(0, min(1, date.timeIntervalSince(snapshot.start) / span))) * width
+    }
+
+    private func rangeOffset(_ range: StatusStripRange, interval: WorkTimelineInterval, width: CGFloat) -> CGFloat {
+        let intervalSpan = max(1, interval.end.timeIntervalSince(interval.start))
+        return width * CGFloat(max(0, range.start.timeIntervalSince(interval.start) / intervalSpan))
+    }
+
+    private func rangeWidth(_ range: StatusStripRange, interval: WorkTimelineInterval, width: CGFloat) -> CGFloat {
+        let intervalSpan = max(1, interval.end.timeIntervalSince(interval.start))
+        return width * CGFloat(max(0, min(range.end, interval.end).timeIntervalSince(max(range.start, interval.start)) / intervalSpan))
+    }
+
+    private func timelineGrid(width: CGFloat, height: CGFloat) -> some View {
+        Path { path in
+            for tick in axisTicks {
+                let x = width * tick.offset
+                path.move(to: CGPoint(x: x, y: 34))
+                path.addLine(to: CGPoint(x: x, y: height - 20))
+            }
+        }
+        .stroke(DashboardPalette.innerStroke, style: StrokeStyle(lineWidth: 1, dash: [3, 7]))
+    }
+
+    private func axisLabel(_ date: Date) -> String {
+        FocusPetFormatters.clock(date)
+    }
+}
+
+private struct FocusTimelineLegendDot: View {
+    var title: String
+    var tint: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(tint)
+                .frame(width: 7, height: 7)
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(DashboardPalette.secondaryText)
+        }
+    }
+}
+
+private struct FocusSegmentHighlightChip: View {
+    var interval: WorkTimelineInterval
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("\(FocusPetFormatters.clock(interval.start))-\(FocusPetFormatters.clock(interval.end))")
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                Text(FocusPetFormatters.percentage(interval.focusRatio))
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(interval.focusRatio >= 0.6 ? DashboardPalette.focusBlue : DashboardPalette.distractedRed)
+            }
+            Text(FocusPetFormatters.duration(interval.totalSeconds))
+                .font(.subheadline.monospacedDigit().weight(.semibold))
+                .lineLimit(1)
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(interval.focusRatio >= 0.6 ? DashboardPalette.focusBlue.opacity(0.18) : DashboardPalette.distractedRed.opacity(0.18), lineWidth: 1)
+        }
     }
 }
 
@@ -2356,7 +4495,7 @@ private struct RestControlPanel: View {
                 Label(model.activeBreakSession == nil ? "开始休息" : "结束休息", systemImage: model.activeBreakSession == nil ? "play.fill" : "stop.fill")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .liquidGlassButtonStyle(prominent: true)
             .tint(.blue)
         }
         .dashboardCard()
@@ -2370,65 +4509,12 @@ private struct RestControlPanel: View {
                 SessionStatPill(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
                 SessionStatPill(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: .orange)
             }
-            Text("电脑未 sleep 且不在休息时，系统只在专注和走神之间切换；超过 1 分钟无输入会进入走神。")
+            Text("无输入 \(FocusPetFormatters.duration(model.settings.judgment.inputIdleDistractedSeconds)) 后显示走神；持续到 \(FocusPetFormatters.duration(model.settings.judgment.idleAwaySeconds)) 会回填为暂离。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .dashboardCard()
-    }
-}
-
-struct FocusSessionHistoryCard: View {
-    var session: FocusSession
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.taskName)
-                        .font(.title3.weight(.semibold))
-                    Text("\(FocusPetFormatters.clock(session.start)) · \(statusTitle)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text(FocusPetFormatters.percentage(session.completionRatio))
-                    .font(.headline.monospacedDigit())
-            }
-
-            MiniMeter(ratio: session.completionRatio, tint: statusTint)
-                .frame(height: 10)
-
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 132), spacing: 8), count: 4), spacing: 8) {
-                SessionStatPill(title: "有效专注", value: FocusPetFormatters.duration(session.effectiveFocusSeconds), symbol: "checkmark.circle.fill", tint: .green)
-                SessionStatPill(title: "主用 App", value: session.mainAppName ?? "暂无", symbol: "macwindow", tint: .blue, appName: session.mainAppName)
-                SessionStatPill(title: "打断", value: "\(session.interruptionCount) 次", symbol: "exclamationmark.triangle.fill", tint: .orange)
-                SessionStatPill(title: "切换", value: "\(session.switchCount) 次", symbol: "arrow.triangle.2.circlepath", tint: .purple)
-            }
-
-            Text("走神 \(FocusPetFormatters.duration(session.distractedSeconds)) · 暂离 \(FocusPetFormatters.duration(session.awaySeconds)) · 目标 \(FocusPetFormatters.duration(session.targetDurationSeconds))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(12)
-        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var statusTitle: String {
-        switch session.status {
-        case .active: "进行中"
-        case .completed: "完成"
-        case .cancelled: "已取消"
-        }
-    }
-
-    private var statusTint: Color {
-        switch session.status {
-        case .active: .blue
-        case .completed: .green
-        case .cancelled: .orange
-        }
     }
 }
 
@@ -2442,7 +4528,7 @@ struct SessionStatPill: View {
     var body: some View {
         HStack(spacing: 7) {
             if let appName {
-                AppIconView(appName: appName, bundleID: nil, category: .neutral, size: 24)
+                AppIconView(appName: appName, bundleID: nil, category: .ignore, size: 24)
             } else {
                 Image(systemName: symbol)
                     .foregroundStyle(tint)
@@ -2463,402 +4549,38 @@ struct SessionStatPill: View {
     }
 }
 
-struct RulesView: View {
-    @EnvironmentObject private var model: FocusPetModel
-    @State private var selectedRuleCategory: ActivityCategory = .work
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                RulesHeroPanel(selectedCategory: $selectedRuleCategory)
-                AppRuleSelectionPanel(selectedCategory: selectedRuleCategory)
-                KeywordRuleSelectionPanel(selectedCategory: selectedRuleCategory)
-                OtherRulesPanel()
-            }
-        }
-    }
-}
-
-private struct RulesHeroPanel: View {
-    @EnvironmentObject private var model: FocusPetModel
-    @Binding var selectedCategory: ActivityCategory
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(.tint)
-                    .frame(width: 38, height: 38)
-                    .background(.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("规则")
-                        .font(.title2.weight(.semibold))
-                    Text("像系统设置一样为 App 和关键词选择分类。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                StatusPill("\(model.rules.count) 条规则", symbol: "number")
-            }
-
-            SlidingSegmentedPicker(
-                options: activityCategoryOptions(),
-                selection: $selectedCategory
-            )
-        }
-        .dashboardCard()
-    }
-}
-
-private struct RuleChoice: Identifiable, Hashable {
-    var title: String
-    var subtitle: String
-    var matchKind: RuleMatchKind
-    var defaultCategory: ActivityCategory
-    var bundleID: String?
-    var seconds: Int
-
-    var id: String { "\(matchKind.rawValue)-\(title.lowercased())" }
-}
-
-private struct AppRuleSelectionPanel: View {
-    @EnvironmentObject private var model: FocusPetModel
-    var selectedCategory: ActivityCategory
-
-    private var choices: [RuleChoice] {
-        var result: [String: RuleChoice] = [:]
-
-        func add(_ choice: RuleChoice) {
-            let key = choice.title.lowercased()
-            if let existing = result[key] {
-                result[key] = RuleChoice(
-                    title: existing.title,
-                    subtitle: choice.seconds > existing.seconds ? choice.subtitle : existing.subtitle,
-                    matchKind: existing.matchKind,
-                    defaultCategory: existing.defaultCategory,
-                    bundleID: existing.bundleID ?? choice.bundleID,
-                    seconds: max(existing.seconds, choice.seconds)
-                )
-            } else {
-                result[key] = choice
-            }
-        }
-
-        for item in model.summary.appUsage.prefix(12) {
-            add(RuleChoice(
-                title: item.appName,
-                subtitle: item.seconds > 0 ? "今日 \(FocusPetFormatters.duration(item.seconds))" : item.category.title,
-                matchKind: .appName,
-                defaultCategory: item.category,
-                bundleID: item.bundleID,
-                seconds: item.seconds
-            ))
-        }
-
-        for rule in model.rules where rule.matchKind == .appName {
-            add(RuleChoice(
-                title: rule.pattern,
-                subtitle: "已配置为\(rule.category.title)",
-                matchKind: .appName,
-                defaultCategory: rule.category,
-                bundleID: nil,
-                seconds: 0
-            ))
-        }
-
-        defaultAppChoices.forEach(add)
-
-        return result.values.sorted { lhs, rhs in
-            let lhsCategory = model.categoryForRule(pattern: lhs.title, matchKind: .appName) ?? lhs.defaultCategory
-            let rhsCategory = model.categoryForRule(pattern: rhs.title, matchKind: .appName) ?? rhs.defaultCategory
-            if lhsCategory == selectedCategory && rhsCategory != selectedCategory { return true }
-            if lhsCategory != selectedCategory && rhsCategory == selectedCategory { return false }
-            if lhs.seconds == rhs.seconds {
-                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            }
-            return lhs.seconds > rhs.seconds
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("应用分类", systemImage: "app.badge.fill")
-                    .font(.headline)
-                Spacer()
-                StatusPill("最近 + 默认", symbol: "sparkles")
-            }
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 10)], spacing: 10) {
-                ForEach(choices) { choice in
-                    RuleChoiceRow(choice: choice, selectedCategory: selectedCategory)
-                }
-            }
-        }
-        .dashboardCard()
-    }
-}
-
-private struct KeywordRuleSelectionPanel: View {
-    var selectedCategory: ActivityCategory
-
-    private var choices: [RuleChoice] {
-        defaultKeywordChoices.sorted { lhs, rhs in
-            if lhs.defaultCategory == selectedCategory && rhs.defaultCategory != selectedCategory { return true }
-            if lhs.defaultCategory != selectedCategory && rhs.defaultCategory == selectedCategory { return false }
-            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("窗口关键词", systemImage: "text.magnifyingglass")
-                    .font(.headline)
-                Spacer()
-                StatusPill("点选即可生效", symbol: "hand.tap.fill")
-            }
-
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 10)], spacing: 10) {
-                ForEach(choices) { choice in
-                    KeywordRuleCard(choice: choice, selectedCategory: selectedCategory)
-                }
-            }
-        }
-        .dashboardCard()
-    }
-}
-
-private struct KeywordRuleCard: View {
-    @EnvironmentObject private var model: FocusPetModel
-    var choice: RuleChoice
-    var selectedCategory: ActivityCategory
-
-    private var effectiveCategory: ActivityCategory {
-        model.categoryForRule(pattern: choice.title, matchKind: choice.matchKind) ?? choice.defaultCategory
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 9) {
-                Image(systemName: choice.defaultCategory.symbolName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(effectiveCategory.tint)
-                    .frame(width: 28, height: 28)
-                    .background(effectiveCategory.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(choice.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(choice.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-
-            SlidingSegmentedPicker(
-                options: activityCategoryOptions(),
-                selection: Binding(
-                    get: { effectiveCategory },
-                    set: { category in
-                        model.setRule(pattern: choice.title, matchKind: choice.matchKind, category: category)
-                    }
-                ),
-                compact: true
-            )
-        }
-        .padding(10)
-        .background(keywordBackground, in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(effectiveCategory == selectedCategory ? effectiveCategory.tint.opacity(0.34) : .primary.opacity(0.05), lineWidth: 1)
-        }
-    }
-
-    private var keywordBackground: Color {
-        effectiveCategory == selectedCategory ? effectiveCategory.tint.opacity(0.08) : .primary.opacity(0.025)
-    }
-}
-
-private struct RuleChoiceRow: View {
-    @EnvironmentObject private var model: FocusPetModel
-    var choice: RuleChoice
-    var selectedCategory: ActivityCategory
-
-    private var effectiveCategory: ActivityCategory {
-        model.categoryForRule(pattern: choice.title, matchKind: choice.matchKind) ?? choice.defaultCategory
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            RuleChoiceIcon(choice: choice, category: effectiveCategory)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(choice.title)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(choice.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .frame(minWidth: 112, maxWidth: .infinity, alignment: .leading)
-
-            SlidingSegmentedPicker(
-                options: activityCategoryOptions(),
-                selection: Binding(
-                    get: { effectiveCategory },
-                    set: { category in
-                        model.setRule(pattern: choice.title, matchKind: choice.matchKind, category: category)
-                    }
-                ),
-                compact: true
-            )
-            .frame(width: choice.matchKind == .appName ? 224 : 214)
-        }
-        .padding(10)
-        .background(rowBackground, in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(effectiveCategory == selectedCategory ? effectiveCategory.tint.opacity(0.35) : .primary.opacity(0.05), lineWidth: 1)
-        }
-    }
-
-    private var rowBackground: Color {
-        effectiveCategory == selectedCategory ? effectiveCategory.tint.opacity(0.08) : .primary.opacity(0.025)
-    }
-}
-
-private struct RuleChoiceIcon: View {
-    var choice: RuleChoice
-    var category: ActivityCategory
-
-    var body: some View {
-        if choice.matchKind == .appName {
-            AppIconView(appName: choice.title, bundleID: choice.bundleID, category: category, size: 38)
-        } else {
-            Image(systemName: "textformat")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(category.tint)
-                .frame(width: 38, height: 38)
-                .background(category.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
-        }
-    }
-}
-
-private let defaultAppChoices: [RuleChoice] = [
-    RuleChoice(title: "Cursor", subtitle: "代码编辑", matchKind: .appName, defaultCategory: .work, bundleID: nil, seconds: 0),
-    RuleChoice(title: "Xcode", subtitle: "开发工具", matchKind: .appName, defaultCategory: .work, bundleID: "com.apple.dt.Xcode", seconds: 0),
-    RuleChoice(title: "Terminal", subtitle: "终端", matchKind: .appName, defaultCategory: .work, bundleID: "com.apple.Terminal", seconds: 0),
-    RuleChoice(title: "iTerm", subtitle: "终端", matchKind: .appName, defaultCategory: .work, bundleID: "com.googlecode.iterm2", seconds: 0),
-    RuleChoice(title: "Notion", subtitle: "文档与计划", matchKind: .appName, defaultCategory: .work, bundleID: nil, seconds: 0),
-    RuleChoice(title: "Obsidian", subtitle: "知识库", matchKind: .appName, defaultCategory: .work, bundleID: "md.obsidian", seconds: 0),
-    RuleChoice(title: "Figma", subtitle: "设计", matchKind: .appName, defaultCategory: .work, bundleID: "com.figma.Desktop", seconds: 0),
-    RuleChoice(title: "Safari", subtitle: "浏览器", matchKind: .appName, defaultCategory: .neutral, bundleID: "com.apple.Safari", seconds: 0),
-    RuleChoice(title: "Google Chrome", subtitle: "浏览器", matchKind: .appName, defaultCategory: .neutral, bundleID: "com.google.Chrome", seconds: 0),
-    RuleChoice(title: "Microsoft Edge", subtitle: "浏览器", matchKind: .appName, defaultCategory: .neutral, bundleID: "com.microsoft.edgemac", seconds: 0),
-    RuleChoice(title: "Steam", subtitle: "游戏", matchKind: .appName, defaultCategory: .entertainment, bundleID: "com.valvesoftware.steam", seconds: 0),
-    RuleChoice(title: "Bilibili", subtitle: "视频", matchKind: .appName, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
-    RuleChoice(title: "WeChat", subtitle: "通讯", matchKind: .appName, defaultCategory: .neutral, bundleID: "com.tencent.xinWeChat", seconds: 0),
-    RuleChoice(title: "Finder", subtitle: "系统", matchKind: .appName, defaultCategory: .ignore, bundleID: "com.apple.finder", seconds: 0),
-    RuleChoice(title: "System Settings", subtitle: "系统", matchKind: .appName, defaultCategory: .ignore, bundleID: "com.apple.systempreferences", seconds: 0),
-    RuleChoice(title: "Activity Monitor", subtitle: "系统", matchKind: .appName, defaultCategory: .ignore, bundleID: "com.apple.ActivityMonitor", seconds: 0),
-    RuleChoice(title: "1Password", subtitle: "密码管理", matchKind: .appName, defaultCategory: .ignore, bundleID: nil, seconds: 0)
-]
-
-private let defaultKeywordChoices: [RuleChoice] = [
-    RuleChoice(title: "paper", subtitle: "论文 / 阅读", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
-    RuleChoice(title: "论文", subtitle: "论文 / 阅读", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
-    RuleChoice(title: "draft", subtitle: "写作", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
-    RuleChoice(title: "report", subtitle: "报告", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
-    RuleChoice(title: "project", subtitle: "项目", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
-    RuleChoice(title: "GitHub", subtitle: "代码协作", matchKind: .windowTitle, defaultCategory: .work, bundleID: nil, seconds: 0),
-    RuleChoice(title: "YouTube", subtitle: "视频", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
-    RuleChoice(title: "Bilibili", subtitle: "视频", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
-    RuleChoice(title: "Netflix", subtitle: "视频", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
-    RuleChoice(title: "Twitch", subtitle: "直播", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
-    RuleChoice(title: "小红书", subtitle: "内容流", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
-    RuleChoice(title: "抖音", subtitle: "短视频", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
-    RuleChoice(title: "游戏", subtitle: "娱乐", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0),
-    RuleChoice(title: "直播", subtitle: "娱乐", matchKind: .windowTitle, defaultCategory: .entertainment, bundleID: nil, seconds: 0)
-]
-
-struct OtherRulesPanel: View {
-    @EnvironmentObject private var model: FocusPetModel
-
-    private var otherRules: [ClassificationRule] {
-        model.rules
-            .filter { rule in
-                rule.matchKind == .bundleID
-            }
-            .sorted { lhs, rhs in
-                if lhs.category.rawValue == rhs.category.rawValue {
-                    return lhs.pattern.localizedCaseInsensitiveCompare(rhs.pattern) == .orderedAscending
-                }
-                return lhs.category.rawValue < rhs.category.rawValue
-            }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("其他规则", systemImage: "slider.horizontal.3")
-                    .font(.headline)
-                Spacer()
-                Text("\(otherRules.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.quaternary.opacity(0.4), in: Capsule())
-            }
-
-            if otherRules.isEmpty {
-                Text("暂无")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(otherRules) { rule in
-                    HStack(spacing: 8) {
-                        Text(rule.pattern)
-                            .lineLimit(1)
-                        Spacer(minLength: 8)
-                        Text("\(rule.category.title) · \(rule.matchKind.title)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button(role: .destructive) {
-                            model.deleteRule(rule)
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-        }
-        .dashboardCard()
-    }
-}
-
 struct SettingsView: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
+        let spacing: CGFloat = 10
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                PetSettingsPanel()
-
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 12)], spacing: 12) {
+            VStack(alignment: .leading, spacing: spacing) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: spacing)], spacing: spacing) {
+                    JudgmentSettingsPanel()
+                        .frame(maxWidth: .infinity, minHeight: 178, alignment: .topLeading)
                     ReminderSettingsPanel()
+                        .frame(maxWidth: .infinity, minHeight: 178, alignment: .topLeading)
                     PrivacySettingsPanel()
+                        .frame(maxWidth: .infinity, minHeight: 178, alignment: .topLeading)
                     RetentionSettingsPanel()
-                    AboutSettingsPanel()
+                        .frame(maxWidth: .infinity, minHeight: 178, alignment: .topLeading)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct PetView: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                PetSettingsPanel()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear {
             model.refreshPetPacks()
@@ -2866,12 +4588,57 @@ struct SettingsView: View {
     }
 }
 
-private struct PetSettingsPanel: View {
+private struct JudgmentSettingsPanel: View {
     @EnvironmentObject private var model: FocusPetModel
-    @State private var previewAction: PetAction = .idle
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("判定参数", systemImage: "slider.horizontal.3")
+                .font(.headline)
+            NumberStepperControl(
+                title: "无输入走神",
+                value: $model.settings.judgment.inputIdleDistractedSeconds,
+                range: 30...900,
+                suffix: "秒",
+                tint: FocusPetCore.FocusState.distracted.timelineColor
+            )
+            .onChange(of: model.settings.judgment.inputIdleDistractedSeconds) { _, _ in model.saveSettings() }
+            NumberStepperControl(
+                title: "娱乐走神",
+                value: $model.settings.judgment.entertainmentDistractedSeconds,
+                range: 15...900,
+                suffix: "秒",
+                tint: .orange
+            )
+            .onChange(of: model.settings.judgment.entertainmentDistractedSeconds) { _, _ in model.saveSettings() }
+            NumberStepperControl(
+                title: "输入恢复专注",
+                value: $model.settings.judgment.focusRecoverySeconds,
+                range: 1...120,
+                suffix: "秒",
+                tint: FocusPetCore.FocusState.focus.timelineColor
+            )
+            .onChange(of: model.settings.judgment.focusRecoverySeconds) { _, _ in model.saveSettings() }
+            NumberStepperControl(
+                title: "暂离回填",
+                value: $model.settings.judgment.idleAwaySeconds,
+                range: 180...3600,
+                suffix: "秒",
+                tint: FocusPetCore.FocusState.away.timelineColor
+            )
+            .onChange(of: model.settings.judgment.idleAwaySeconds) { _, _ in model.saveSettings() }
+        }
+        .dashboardCard(12, tint: DashboardPalette.distractedPeach)
+    }
+}
+
+private struct PetSettingsPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+    @State private var selectedIntent: PetIntentKind = .quietCompanion
+    @State private var previewSourceActionID: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("桌宠设置", systemImage: "pawprint.fill")
                     .font(.headline)
@@ -2887,7 +4654,7 @@ private struct PetSettingsPanel: View {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
             }
-            .buttonStyle(.bordered)
+            .liquidGlassButtonStyle()
 
             PetPackSelectionGrid()
 
@@ -2904,7 +4671,11 @@ private struct PetSettingsPanel: View {
 
             if let record = model.availablePetPacks.first(where: { $0.id == model.settings.pet.selectedPackID }) {
                 PetPackSummaryView(record: record)
-                ActionPreviewStrip(record: record, previewAction: $previewAction)
+                IntentActionMappingPanel(
+                    record: record,
+                    selectedIntent: $selectedIntent,
+                    previewSourceActionID: $previewSourceActionID
+                )
             }
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
@@ -2922,6 +4693,8 @@ private struct PetSettingsPanel: View {
                 )
                 TogglePillButton(title: "动画", symbol: "sparkles", isOn: $model.settings.pet.animationEnabled, tint: .purple)
                     .onChange(of: model.settings.pet.animationEnabled) { _, _ in model.saveSettings() }
+                TogglePillButton(title: "音效", symbol: "speaker.wave.2.fill", isOn: $model.settings.pet.audioEnabled, tint: .orange)
+                    .onChange(of: model.settings.pet.audioEnabled) { _, _ in model.saveSettings() }
                 TogglePillButton(title: "悬浮状态弹窗", symbol: "text.bubble.fill", isOn: $model.settings.pet.hoverStatusEnabled, tint: .blue)
                     .onChange(of: model.settings.pet.hoverStatusEnabled) { _, _ in model.saveSettings() }
             }
@@ -2940,14 +4713,6 @@ private struct PetSettingsPanel: View {
                 )
             }
 
-            if model.settings.pet.placement == .custom,
-               let x = model.settings.pet.customOriginX,
-               let y = model.settings.pet.customOriginY {
-                Text("自定义位置：x \(Int(x)), y \(Int(y))。拖动桌宠可更新。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 8)], spacing: 8) {
                 ControlSliderRow(title: "大小", value: $model.settings.pet.size, range: 96...260, suffix: "px", tint: .purple)
                     .onChange(of: model.settings.pet.size) { _, _ in model.saveSettings() }
@@ -2955,58 +4720,233 @@ private struct PetSettingsPanel: View {
                     .onChange(of: model.settings.pet.opacity) { _, _ in model.saveSettings() }
             }
         }
-        .dashboardCard()
+        .dashboardCard(12, tint: DashboardPalette.restGreen)
+        .dashboardPetAnchor(.settingsPetPanel)
     }
 }
 
-private struct ActionPreviewStrip: View {
+private struct IntentActionMappingPanel: View {
     @EnvironmentObject private var model: FocusPetModel
     var record: PetPackRecord
-    @Binding var previewAction: PetAction
+    @Binding var selectedIntent: PetIntentKind
+    @Binding var previewSourceActionID: String?
 
-    private var options: [SlidingSegmentOption<PetAction>] {
-        let available = previewablePetActions.filter { action in
-            if record.rootURL == nil {
-                return PetActionResolver().animationKey(for: action, in: record.pack) != nil
-            }
-            return !record.frameURLs(for: action).isEmpty
+    private var actions: [PetSourceActionSpec] {
+        record.playableSourceActions
+    }
+
+    private var selectedAction: PetSourceActionSpec? {
+        if let previewSourceActionID,
+           let selected = actions.first(where: { $0.id == previewSourceActionID }) {
+            return selected
         }
-        let actions = available.isEmpty ? [.idle] : available
-        return actions.map { action in
-            SlidingSegmentOption(
-                value: action,
-                title: action.title,
-                symbol: action.symbolName,
-                tint: action.tint
-            )
+        if let resolved = model.resolvedSourceAction(for: selectedIntent, in: record),
+           actions.contains(where: { $0.id == resolved.id }) {
+            return resolved
         }
+        return record.defaultSourceAction(for: selectedIntent) ?? actions.first
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("动作预览")
+                Text("意图映射台")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button {
-                    model.previewPetAction(previewAction)
+                    if let selectedAction {
+                        model.setSourceAction(selectedAction.id, for: selectedIntent)
+                    }
                 } label: {
-                    Label("预览", systemImage: "play.fill")
+                    Label(isApplied ? "已映射" : "映射", systemImage: isApplied ? "checkmark.circle.fill" : "link")
                 }
-                .buttonStyle(.borderedProminent)
+                .liquidGlassButtonStyle(prominent: true)
+                .disabled(selectedAction == nil)
             }
-            SlidingSegmentedPicker(
-                options: options,
-                selection: $previewAction,
-                compact: true
-            )
-            .onAppear {
-                if !options.map(\.value).contains(previewAction) {
-                    previewAction = options.first?.value ?? .idle
+
+            SourceActionStageCard(record: record, action: selectedAction)
+                .dashboardPetAnchor(.petPreviewStage)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(PetIntentKind.userMappingCases) { intent in
+                        let selected = intent == selectedIntent
+                        Button {
+                            selectedIntent = intent
+                            previewSourceActionID = model.resolvedSourceAction(for: intent, in: record)?.id
+                                ?? record.defaultSourceAction(for: intent)?.id
+                                ?? actions.first?.id
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: intent.symbolName)
+                                    .font(.caption2.weight(.semibold))
+                                Text(intent.title)
+                                    .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                            }
+                            .foregroundStyle(selected ? Color.accentColor : DashboardPalette.secondaryText)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(selected ? Color.white.opacity(0.62) : DashboardPalette.controlFill)
+                            }
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(selected ? Color.accentColor.opacity(0.24) : DashboardPalette.border, lineWidth: 1)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .help(intent.title)
+                    }
                 }
+                .padding(3)
+            }
+            .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(DashboardPalette.border, lineWidth: 1)
+            }
+            .liquidGlassSurface(cornerRadius: 9)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(actions) { action in
+                        let selected = action.id == selectedAction?.id
+                        Button {
+                            previewSourceActionID = action.id
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "play.fill")
+                                    .font(.caption2.weight(.semibold))
+                                Text(action.title)
+                                    .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                            }
+                            .foregroundStyle(selected ? Color.accentColor : DashboardPalette.secondaryText)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(selected ? Color.white.opacity(0.62) : DashboardPalette.controlFill)
+                            }
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(selected ? Color.accentColor.opacity(0.24) : DashboardPalette.border, lineWidth: 1)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .help(action.title)
+                    }
+                }
+                .padding(3)
+            }
+            .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(DashboardPalette.border, lineWidth: 1)
+            }
+            .liquidGlassSurface(cornerRadius: 9)
+            .onAppear {
+                syncPreviewSelection()
+            }
+            .onChange(of: record.id) { _, _ in
+                previewSourceActionID = nil
+                syncPreviewSelection()
+            }
+            .onChange(of: selectedIntent) { _, _ in
+                previewSourceActionID = nil
+                syncPreviewSelection()
             }
         }
+    }
+
+    private var isApplied: Bool {
+        guard let selectedAction else { return false }
+        return model.isCustomSourceAction(selectedAction.id, for: selectedIntent, in: record)
+    }
+
+    private func syncPreviewSelection() {
+        if let selected = previewSourceActionID,
+           actions.contains(where: { $0.id == selected }) {
+            return
+        }
+        previewSourceActionID = model.resolvedSourceAction(for: selectedIntent, in: record)?.id
+            ?? record.defaultSourceAction(for: selectedIntent)?.id
+            ?? actions.first?.id
+    }
+}
+
+private struct SourceActionStageCard: View {
+    var record: PetPackRecord
+    var action: PetSourceActionSpec?
+
+    private var frames: [URL] {
+        guard let action else { return [] }
+        return record.frameURLs(forSourceActionID: action.id)
+    }
+
+    private var previewFPS: Double {
+        min(10, max(1, action?.fps ?? 8))
+    }
+
+    var body: some View {
+        if action == nil || frames.isEmpty {
+            stageContent(at: Date())
+        } else {
+            TimelineView(.periodic(from: Date(), by: 1.0 / previewFPS)) { timeline in
+                stageContent(at: timeline.date)
+            }
+        }
+    }
+
+    private func stageContent(at date: Date) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DashboardPalette.rowFill)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+
+            if let url = frameURL(at: date),
+               let image = DashboardPreviewImageCache.image(for: url) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .padding(18)
+            } else {
+                Image(systemName: "pawprint.fill")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+            }
+
+            VStack {
+                Spacer()
+                HStack {
+                    Text(action?.title ?? "未选择")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer()
+                    if let action {
+                        Text("\(Int(min(action.fps, previewFPS).rounded())) fps")
+                            .font(.caption2.monospacedDigit().weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(8)
+                .background(Color.white.opacity(0.48), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(8)
+            }
+        }
+        .frame(height: 190)
+    }
+
+    private func frameURL(at date: Date) -> URL? {
+        guard !frames.isEmpty else { return nil }
+        let fps = previewFPS
+        let index = Int(date.timeIntervalSinceReferenceDate * fps) % frames.count
+        return frames[index]
     }
 }
 
@@ -3014,7 +4954,7 @@ private struct ReminderSettingsPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Label("提醒设置", systemImage: "bell.badge.fill")
                 .font(.headline)
             TogglePillButton(title: "桌宠气泡提醒", symbol: "bubble.left.and.bubble.right.fill", isOn: $model.settings.reminder.enablePetBubbles, tint: .blue)
@@ -3034,7 +4974,7 @@ private struct ReminderSettingsPanel: View {
                 }
             }
         }
-        .dashboardCard()
+        .dashboardCard(12, tint: DashboardPalette.focusBlue)
     }
 }
 
@@ -3042,15 +4982,17 @@ private struct PrivacySettingsPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Label("隐私设置", systemImage: "lock.shield.fill")
                 .font(.headline)
             TogglePillButton(title: "暂停所有记录", symbol: "pause.circle.fill", isOn: $model.settings.privacy.pauseActivityRecording, tint: .orange)
                 .onChange(of: model.settings.privacy.pauseActivityRecording) { _, _ in model.saveSettings() }
-            Text(model.recordingStatusTitle)
-                .font(.caption)
-                .foregroundStyle(model.settings.privacy.pauseActivityRecording ? .orange : .secondary)
-            TogglePillButton(title: "只保存分类结果", symbol: "tag.fill", isOn: $model.settings.privacy.storeOnlyCategoryResult, tint: .blue)
+            if model.settings.privacy.pauseActivityRecording {
+                Text("记录已暂停")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.orange)
+            }
+            TogglePillButton(title: "只保存识别结果", symbol: "tag.fill", isOn: $model.settings.privacy.storeOnlyCategoryResult, tint: .blue)
                 .onChange(of: model.settings.privacy.storeOnlyCategoryResult) { _, enabled in
                     if enabled {
                         model.settings.privacy.storeRawTitle = false
@@ -3066,11 +5008,8 @@ private struct PrivacySettingsPanel: View {
                     }
                     model.saveSettings()
                 }
-            Text("默认只保存 App、分类、状态和时间，并持久化脱敏标题线索。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
-        .dashboardCard()
+        .dashboardCard(12, tint: DashboardPalette.pauseGray)
     }
 }
 
@@ -3078,7 +5017,7 @@ private struct RetentionSettingsPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Label("数据留存", systemImage: "externaldrive.fill")
                 .font(.headline)
             NumberStepperControl(title: "状态片段", value: $model.settings.retention.stateRetentionDays, range: 1...365, suffix: "天", tint: .blue)
@@ -3092,7 +5031,7 @@ private struct RetentionSettingsPanel: View {
                 Button("导出完整统计") { model.exportData(redacted: false) }
                 Button("删除数据", role: .destructive) { model.deleteAllData() }
             }
-            .buttonStyle(.bordered)
+            .liquidGlassButtonStyle()
             if let exportURL = model.exportURL {
                 Text(exportURL.path)
                     .font(.caption)
@@ -3100,7 +5039,7 @@ private struct RetentionSettingsPanel: View {
                     .lineLimit(2)
             }
         }
-        .dashboardCard()
+        .dashboardCard(12, tint: DashboardPalette.awayPurple)
     }
 }
 
@@ -3109,12 +5048,12 @@ private struct AboutSettingsPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("关于", systemImage: "info.circle.fill")
                 .font(.headline)
-            Text("Focus Pet 使用前台 App、窗口标题分类、输入空闲和专注/休息会话判断状态。所有数据保存在本机。")
+            Text("Focus Pet 使用前台 App、窗口标题识别、输入空闲和专注/休息会话判断状态。所有数据保存在本机。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .dashboardCard()
+        .dashboardCard(12, tint: DashboardPalette.gold)
     }
 }
 
@@ -3183,12 +5122,39 @@ private struct PetPackSelectionCard: View {
     }
 }
 
+private enum DashboardPreviewImageCache {
+    private nonisolated(unsafe) static let cache: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 160
+        cache.totalCostLimit = 32 * 1024 * 1024
+        return cache
+    }()
+
+    static func image(for url: URL) -> NSImage? {
+        let key = url as NSURL
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
+        guard let image = NSImage(contentsOf: url) else {
+            return nil
+        }
+        cache.setObject(image, forKey: key, cost: image.dashboardCacheCost)
+        return image
+    }
+}
+
+private extension NSImage {
+    var dashboardCacheCost: Int {
+        max(1, Int(size.width * size.height * 4))
+    }
+}
+
 private struct PetPackThumbnail: View {
     var record: PetPackRecord
 
     var body: some View {
         ZStack {
-            if let url = record.previewURL, let image = NSImage(contentsOf: url) {
+            if let url = record.previewURL, let image = DashboardPreviewImageCache.image(for: url) {
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.none)
@@ -3201,7 +5167,11 @@ private struct PetPackThumbnail: View {
             }
         }
         .frame(width: 38, height: 38)
-        .background(.quaternary.opacity(0.24), in: RoundedRectangle(cornerRadius: 8))
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
     }
 }
 
@@ -3210,35 +5180,41 @@ struct PetPackSummaryView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            if let url = record.previewURL, let image = NSImage(contentsOf: url) {
+            if let url = record.previewURL, let image = DashboardPreviewImageCache.image(for: url) {
                 Image(nsImage: image)
                     .resizable()
                     .interpolation(.none)
                     .scaledToFit()
                     .frame(width: 72, height: 72)
-                    .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                    .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+                    }
             } else {
                 Image(systemName: "pawprint.fill")
                     .font(.system(size: 32, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 72, height: 72)
-                    .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                    .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+                    }
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(record.pack.name)
                         .font(.headline)
-                    StatusPill(record.originTitle, symbol: record.isBundled ? "shippingbox.fill" : "folder.fill")
                     StatusPill(record.validation.isValid ? "可用" : "需修复", symbol: record.validation.isValid ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 }
                 Text("作者 \(record.pack.author) · \(record.pack.style)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("授权 \(record.pack.license.isEmpty ? "未填写" : record.pack.license) · 分发 \(record.pack.distribution.isEmpty ? "未填写" : record.pack.distribution)")
+                Text("动作 \(record.playableSourceActions.count) 个 · 音效 \(record.pack.audio.count) 个")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
                 if !record.validation.errors.isEmpty {
                     Text("错误：\(record.validation.errors.map(\.title).joined(separator: "、"))")
                         .font(.caption)
@@ -3355,26 +5331,109 @@ struct StatusPill: View {
         HStack(spacing: 6) {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DashboardPalette.secondaryText)
             Text(title)
                 .lineLimit(1)
         }
         .font(.caption.weight(.medium))
+        .foregroundStyle(DashboardPalette.secondaryText)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.primary.opacity(0.05), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.border, lineWidth: 1)
         }
     }
 }
 
+private struct LiquidGlassSurfaceModifier: ViewModifier {
+    var cornerRadius: CGFloat
+    var interactive: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        content
+    }
+}
+
+private struct LiquidGlassRefractionLayer: View {
+    var cornerRadius: CGFloat
+    var intensity: Double
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        shape
+            .strokeBorder(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.42 * intensity),
+                        DashboardPalette.glassRefractionBlue.opacity(0.20 * intensity),
+                        DashboardPalette.glassInnerShadow.opacity(0.16 * intensity)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 0.8
+            )
+            .overlay(alignment: .topLeading) {
+                shape
+                    .stroke(Color.white.opacity(0.18 * intensity), lineWidth: 0.6)
+                    .padding(1)
+            }
+            .allowsHitTesting(false)
+    }
+}
+
 extension View {
-    func dashboardCard() -> some View {
-        self
-            .padding(16)
+    func dashboardPetAnchor(_ anchor: DashboardPetAnchor) -> some View {
+        modifier(DashboardPetAnchorModifier(anchor: anchor))
+    }
+
+    func dashboardCard(_ padding: CGFloat = 16, tint: Color = DashboardPalette.accent) -> some View {
+        self.padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .background {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(DashboardPalette.cardFill)
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(tint.opacity(0.82))
+                            .frame(width: 4)
+                            .padding(.vertical, 12)
+                            .padding(.leading, 1)
+                    }
+                    .overlay(alignment: .topLeading) {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(DashboardPalette.surfaceHighlight)
+                            .opacity(0.24)
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(tint.opacity(0.30), lineWidth: 1)
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(DashboardPalette.innerStroke, lineWidth: 0.5)
+                            .padding(1)
+                    }
+                    .shadow(color: DashboardPalette.shadow.opacity(0.08), radius: 2, x: 0, y: 1)
+            }
+            .liquidGlassSurface(cornerRadius: 12)
+    }
+
+    @ViewBuilder
+    func liquidGlassSurface(cornerRadius: CGFloat, interactive: Bool = false) -> some View {
+        modifier(LiquidGlassSurfaceModifier(cornerRadius: cornerRadius, interactive: interactive))
+    }
+
+    @ViewBuilder
+    func liquidGlassButtonStyle(prominent: Bool = false) -> some View {
+        if prominent {
+            buttonStyle(.borderedProminent)
+                .foregroundStyle(.white)
+        } else {
+            buttonStyle(.bordered)
+        }
     }
 }

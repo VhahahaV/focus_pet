@@ -20,12 +20,13 @@ struct FocusPetApp: App {
         WindowGroup("Focus Pet", id: "dashboard") {
             MainDashboardView()
                 .environmentObject(model)
-                .frame(minWidth: 980, minHeight: 680)
+                .frame(minWidth: 980, minHeight: 760)
                 .onAppear {
                     model.start()
                 }
         }
-        .windowResizability(.contentSize)
+        .defaultSize(width: 1180, height: 820)
+        .windowStyle(.hiddenTitleBar)
     }
 }
 
@@ -35,7 +36,7 @@ private struct MenuBarLabelView: View {
     @State private var didOpenInitialDashboard = false
 
     var body: some View {
-        Label(model.menuTitle, systemImage: model.menuSymbol)
+        StatusBarIconView(title: model.menuTitle)
             .task {
                 model.start()
                 registerDashboardOpener()
@@ -68,7 +69,30 @@ private struct MenuBarLabelView: View {
         }
         Task { @MainActor in
             await Task.yield()
-            targetModel.bringDashboardWindowToFront()
+            if targetModel.bringDashboardWindowToFront() {
+                targetModel.presentPetForDashboard(tab: tab)
+            }
         }
     }
+}
+
+private struct StatusBarIconView: View {
+    var title: String
+
+    var body: some View {
+        Image(nsImage: Self.image)
+            .frame(width: 18, height: 18)
+            .fixedSize()
+            .accessibilityLabel(title)
+    }
+
+    private static let image: NSImage = {
+        let image = Bundle.module.url(forResource: "StatusIcon", withExtension: "png")
+            .flatMap(NSImage.init(contentsOf:))
+            ?? NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)
+            ?? NSImage()
+        image.size = NSSize(width: 18, height: 18)
+        image.isTemplate = true
+        return image
+    }()
 }

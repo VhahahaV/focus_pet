@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$ROOT_DIR/.build/FocusPet.app"
 EXECUTABLE="$ROOT_DIR/.build/debug/FocusPet"
-LOCAL_LUO_PACK="$ROOT_DIR/external_generated_packs/LuoXiaoHeiLocal"
+LOCAL_PET_PACKS_ROOT="$ROOT_DIR/external_generated_packs"
 APP_ICON="$ROOT_DIR/Sources/FocusPetMac/Resources/AppIcon.icns"
 INCLUDE_LOCAL_TEST_PETS=0
 
@@ -31,9 +31,12 @@ if [[ -f "$APP_ICON" ]]; then
     cp "$APP_ICON" "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi
 
-if [[ "$INCLUDE_LOCAL_TEST_PETS" -eq 1 && -d "$LOCAL_LUO_PACK" ]]; then
+if [[ "$INCLUDE_LOCAL_TEST_PETS" -eq 1 && -d "$LOCAL_PET_PACKS_ROOT" ]]; then
     mkdir -p "$APP_DIR/Contents/Resources/LocalPetPacks"
-    cp -R "$LOCAL_LUO_PACK" "$APP_DIR/Contents/Resources/LocalPetPacks/LuoXiaoHeiLocal"
+    for LOCAL_PACK in "$LOCAL_PET_PACKS_ROOT"/*; do
+        [[ -d "$LOCAL_PACK" && -f "$LOCAL_PACK/pet.json" ]] || continue
+        cp -R "$LOCAL_PACK" "$APP_DIR/Contents/Resources/LocalPetPacks/$(basename "$LOCAL_PACK")"
+    done
 fi
 
 if [[ "$INCLUDE_LOCAL_TEST_PETS" -eq 0 ]]; then

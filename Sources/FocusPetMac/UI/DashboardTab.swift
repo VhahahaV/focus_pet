@@ -3,7 +3,7 @@ import Foundation
 enum DashboardTab: Hashable, CaseIterable, Identifiable {
     case today
     case sessions
-    case rules
+    case pet
     case settings
 
     var id: Self { self }
@@ -12,17 +12,36 @@ enum DashboardTab: Hashable, CaseIterable, Identifiable {
         switch self {
         case .today: "今日"
         case .sessions: "历史"
-        case .rules: "规则"
+        case .pet: "桌宠"
         case .settings: "设置"
         }
     }
 
     var symbolName: String {
         switch self {
-        case .today: "chart.bar.xaxis"
-        case .sessions: "clock.arrow.circlepath"
-        case .rules: "slider.horizontal.3"
+        case .today: "house.fill"
+        case .sessions: "clock"
+        case .pet: "pawprint.fill"
         case .settings: "gearshape.fill"
         }
     }
+
+    var subtitle: String {
+        switch self {
+        case .today: "专注当下，长期主义"
+        case .sessions: "复盘专注节奏与注意力分布"
+        case .pet: "资源包、动作与悬浮表现"
+        case .settings: "管理判定、提醒与本地数据"
+        }
+    }
+}
+
+enum DashboardPetAnchor: String, Hashable {
+    case todayFocusCard
+    case todayBreakControl
+    case todayTimeline
+    case historyWorkTimeline
+    case dashboardPanel
+    case settingsPetPanel
+    case petPreviewStage
 }
