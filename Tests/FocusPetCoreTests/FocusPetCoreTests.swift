@@ -1,5 +1,6 @@
 import FocusPetCore
 import FocusPetStorage
+import CoreGraphics
 import Foundation
 
 struct FocusPetMVPProbe {
@@ -332,6 +333,87 @@ struct FocusPetMVPProbe {
         return event?.reason == .longFocusRest && event?.petIntent == .focusRestHint
     }
 
+    func legacyReminderSettingsDefaultToCustomizableNudgeParameters() -> Bool {
+        let legacyJSON = """
+        {
+          "enablePetBubbles": true,
+          "enableSystemNotifications": false
+        }
+        """
+        guard let data = legacyJSON.data(using: .utf8),
+              let settings = try? JSONDecoder().decode(ReminderSettings.self, from: data) else {
+            return false
+        }
+
+        return settings.pauseMinutes == 30
+            && settings.enableDistractedNudges
+            && settings.enableFocusRestNudges
+            && settings.enableWelcomeBackNudges
+            && settings.lightDistractedMinutes == 8
+            && settings.strongDistractedMinutes == 15
+            && settings.longFocusMinutes == 25
+            && settings.veryLongFocusMinutes == 60
+            && settings.cooldownMinutes == 10
+            && settings.nudgePolicyThresholds.lightDistractedSeconds == 480
+            && settings.nudgePolicyThresholds.cooldownSeconds == 600
+    }
+
+    func reminderSettingsCustomizeNudgePolicyAndClampValues() -> Bool {
+        let custom = ReminderSettings(
+            pauseMinutes: 45,
+            lightDistractedMinutes: 2,
+            strongDistractedMinutes: 4,
+            longFocusMinutes: 40,
+            veryLongFocusMinutes: 80,
+            cooldownMinutes: 3
+        )
+        let distractedState = FocusStateSnapshot(
+            timestamp: Date(timeIntervalSince1970: 120),
+            state: .distracted,
+            category: .entertainment,
+            stableDuration: 120,
+            appName: "Browser",
+            bundleID: "browser"
+        )
+        let focusState = FocusStateSnapshot(
+            timestamp: Date(timeIntervalSince1970: 2_400),
+            state: .focus,
+            category: .work,
+            stableDuration: 2_400,
+            appName: "Cursor",
+            bundleID: "cursor"
+        )
+        let policy = NudgePolicy(thresholds: custom.nudgePolicyThresholds)
+        let distractedEvent = policy.nudge(for: distractedState, previousState: .focus, now: distractedState.timestamp, lastTriggeredAt: [:])
+        let focusEvent = policy.nudge(for: focusState, previousState: .focus, now: focusState.timestamp, lastTriggeredAt: [:])
+
+        let clamped = ReminderSettings(
+            pauseMinutes: 1,
+            enableDistractedNudges: false,
+            enableFocusRestNudges: false,
+            enableWelcomeBackNudges: false,
+            lightDistractedMinutes: 99,
+            strongDistractedMinutes: 2,
+            longFocusMinutes: 2,
+            veryLongFocusMinutes: 1,
+            cooldownMinutes: 0
+        )
+
+        return custom.pauseMinutes == 45
+            && custom.nudgePolicyThresholds.strongDistractedSeconds == 240
+            && distractedEvent?.reason == .distractedOverThreshold
+            && focusEvent?.reason == .longFocusRest
+            && clamped.pauseMinutes == 5
+            && clamped.lightDistractedMinutes == 60
+            && clamped.strongDistractedMinutes == 60
+            && clamped.longFocusMinutes == 5
+            && clamped.veryLongFocusMinutes == 5
+            && clamped.cooldownMinutes == 1
+            && !clamped.allows(.distractedStrong)
+            && !clamped.allows(.longFocusRest)
+            && !clamped.allows(.welcomeBack)
+    }
+
     func windowTitlePrivacyDoesNotStoreRawTitleByDefault() -> Bool {
         let sanitized = WindowTitlePrivacy.default.sanitize("Secret Draft - YouTube")
         return sanitized.rawTitle == nil
@@ -420,6 +502,7 @@ struct FocusPetMVPProbe {
             && settings.judgment.entertainmentDistractedSeconds == 60
             && settings.judgment.focusRecoverySeconds == 10
             && settings.judgment.idleAwaySeconds == 600
+            && settings.retention.inputActivityRetentionDays == 30
     }
 
     func focusSessionReportsCompletionAndDecodesLegacyJSON() -> Bool {
@@ -615,6 +698,239 @@ struct FocusPetMVPProbe {
             && segment.titleDisplay == nil
     }
 
+    func inputActivityRecorderMergesBucketsAndClampsCounts() -> Bool {
+        let recorder = InputActivityRecorder(bucketSeconds: 60)
+        let start = Date(timeIntervalSince1970: 0)
+        let seeded = [
+            InputActivityBucket(
+                start: start,
+                end: start.addingTimeInterval(60),
+                keyboardCount: -5,
+                pointerCount: 2,
+                switchCount: -1
+            )
+        ]
+
+        let first = recorder.record(
+            now: start.addingTimeInterval(62),
+            keyboardCount: 3,
+            pointerCount: 4,
+            switchCount: 1,
+            buckets: seeded
+        )
+        let second = recorder.record(
+            now: start.addingTimeInterval(88),
+            keyboardCount: 1,
+            pointerCount: 0,
+            switchCount: 2,
+            buckets: first
+        )
+
+        guard second.count == 2,
+              second[0].keyboardCount == 0,
+              second[0].pointerCount == 2,
+              second[0].switchCount == 0 else {
+            return false
+        }
+
+        return second[1].start == start.addingTimeInterval(60)
+            && second[1].end == start.addingTimeInterval(120)
+            && second[1].keyboardCount == 4
+            && second[1].pointerCount == 4
+            && second[1].switchCount == 3
+            && second[1].totalInputCount == 8
+    }
+
+    func localStorePersistsInputActivityAndDecodesLegacySnapshots() -> Bool {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-input-activity-store-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let start = Date(timeIntervalSince1970: 120)
+        let snapshot = LocalStoreSnapshot(
+            inputActivity: [
+                InputActivityBucket(
+                    start: start,
+                    end: start.addingTimeInterval(60),
+                    keyboardCount: 12,
+                    pointerCount: 7,
+                    switchCount: 2
+                )
+            ]
+        )
+        let store = LocalStore(rootURL: root)
+        store.saveSnapshot(snapshot)
+        let loaded = store.loadSnapshot()
+
+        let legacyJSON = """
+        {
+          "settings": {},
+          "classificationRules": [],
+          "stateSegments": [],
+          "appUsage": [],
+          "focusSessions": [],
+          "breakSessions": [],
+          "nudges": []
+        }
+        """
+        guard let data = legacyJSON.data(using: .utf8),
+              let decodedLegacy = try? JSONDecoder().decode(LocalStoreSnapshot.self, from: data) else {
+            return false
+        }
+
+        return loaded.inputActivity == snapshot.inputActivity
+            && decodedLegacy.inputActivity.isEmpty
+    }
+
+    func retentionPrunesInputActivityBuckets() -> Bool {
+        let now = Date(timeIntervalSince1970: 10 * 86_400)
+        let old = InputActivityBucket(
+            start: now.addingTimeInterval(-3 * 86_400),
+            end: now.addingTimeInterval(-3 * 86_400 + 60),
+            keyboardCount: 1
+        )
+        let recent = InputActivityBucket(
+            start: now.addingTimeInterval(-3_600),
+            end: now.addingTimeInterval(-3_540),
+            pointerCount: 2
+        )
+        let pruned = DataRetentionManager().prune(
+            now: now,
+            settings: DataRetentionSettings(inputActivityRetentionDays: 1),
+            stateSegments: [],
+            appUsage: [],
+            inputActivity: [old, recent],
+            focusSessions: [],
+            breakSessions: [],
+            nudges: []
+        )
+
+        return pruned.inputActivity == [recent]
+            && pruned.result.removedInputActivityBuckets == 1
+            && pruned.result.totalRemoved == 1
+    }
+
+    func inputTimelineSnapshotAggregatesInputAndSmoothsApps() -> Bool {
+        let start = Date(timeIntervalSince1970: 600)
+        let now = start.addingTimeInterval(600)
+        let snapshot = InputTimelineSnapshot(
+            windowSeconds: 600,
+            stateSegments: [
+                StateSegment(
+                    start: start,
+                    end: start.addingTimeInterval(300),
+                    state: .focus,
+                    appName: "Codex",
+                    bundleID: "codex",
+                    category: .work,
+                    titleStored: false,
+                    titleDisplay: nil,
+                    source: [.frontmostApplication]
+                ),
+                StateSegment(
+                    start: start.addingTimeInterval(300),
+                    end: now,
+                    state: .breakTime,
+                    appName: "Break",
+                    bundleID: nil,
+                    category: .ignore,
+                    titleStored: false,
+                    titleDisplay: nil,
+                    source: [.breakSession]
+                )
+            ],
+            appUsage: [
+                AppUsageSegment(start: start, end: start.addingTimeInterval(200), appName: "Codex", bundleID: "codex", category: .work),
+                AppUsageSegment(start: start.addingTimeInterval(200), end: start.addingTimeInterval(220), appName: "Finder", bundleID: "finder", category: .ignore),
+                AppUsageSegment(start: start.addingTimeInterval(220), end: start.addingTimeInterval(400), appName: "Codex", bundleID: "codex", category: .work),
+                AppUsageSegment(start: start.addingTimeInterval(400), end: now, appName: "Safari", bundleID: "safari", category: .work)
+            ],
+            inputActivity: [
+                InputActivityBucket(start: start, end: start.addingTimeInterval(60), keyboardCount: 2, pointerCount: 1, switchCount: 1),
+                InputActivityBucket(start: start.addingTimeInterval(60), end: start.addingTimeInterval(120), keyboardCount: 3, pointerCount: 0, switchCount: 2)
+            ],
+            now: now
+        )
+
+        return snapshot.keyboardCount == 5
+            && snapshot.pointerCount == 1
+            && snapshot.switchCount == 3
+            && snapshot.inputBars.count == 2
+            && snapshot.switchMarkers.count == 2
+            && snapshot.stateDurations[.focus] == 300
+            && snapshot.stateDurations[.breakTime] == 300
+            && snapshot.appSegments.count == 2
+            && snapshot.appSegments[0].appName == "Codex"
+            && Int(snapshot.appSegments[0].duration.rounded()) == 400
+            && snapshot.appSegments[1].appName == "Safari"
+    }
+
+    func inputTimelineSnapshotSmoothsTinyStateFragments() -> Bool {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let now = start.addingTimeInterval(7_200)
+        let snapshot = InputTimelineSnapshot(
+            windowSeconds: 7_200,
+            stateSegments: [
+                StateSegment(start: start, end: start.addingTimeInterval(3_000), state: .focus, appName: "Codex", bundleID: "codex", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(3_000), end: start.addingTimeInterval(3_020), state: .distracted, appName: "Browser", bundleID: "browser", category: .entertainment, titleStored: false, titleDisplay: nil, source: [.windowTitle]),
+                StateSegment(start: start.addingTimeInterval(3_020), end: start.addingTimeInterval(6_600), state: .focus, appName: "Codex", bundleID: "codex", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(6_600), end: now, state: .breakTime, appName: "Break", bundleID: nil, category: .ignore, titleStored: false, titleDisplay: nil, source: [.breakSession])
+            ],
+            appUsage: [],
+            inputActivity: [],
+            now: now
+        )
+
+        return snapshot.stateDurations[.distracted] == 20
+            && snapshot.stateRanges.count == 2
+            && snapshot.stateRanges[0].state == .focus
+            && snapshot.stateRanges[1].state == .breakTime
+    }
+
+    func inputWorkloadSummaryAggregatesReadableMetrics() -> Bool {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let day = Date(timeIntervalSince1970: 86_400)
+        let start = calendar.startOfDay(for: day)
+        let summary = InputWorkloadSummary(
+            dayContaining: day,
+            inputActivity: [
+                InputActivityBucket(
+                    start: start.addingTimeInterval(-60),
+                    end: start,
+                    keyboardCount: 99,
+                    pointerCount: 99,
+                    switchCount: 99
+                ),
+                InputActivityBucket(
+                    start: start.addingTimeInterval(60),
+                    end: start.addingTimeInterval(120),
+                    keyboardCount: 12,
+                    pointerCount: 4,
+                    switchCount: 2
+                ),
+                InputActivityBucket(
+                    start: start.addingTimeInterval(180),
+                    end: start.addingTimeInterval(240),
+                    keyboardCount: 8,
+                    pointerCount: 1,
+                    switchCount: 3
+                )
+            ],
+            calendar: calendar
+        )
+
+        return summary.estimatedTypedCharacters == 20
+            && summary.pointerActionCount == 5
+            && summary.contextSwitchCount == 5
+            && summary.totalInputActions == 25
+            && summary.totalWorkloadEvents == 30
+            && summary.activeMinutes == 2
+            && FocusPetFormatters.estimatedTypedCharacters(summary.estimatedTypedCharacters) == "键入约 20 字"
+            && FocusPetFormatters.contextSwitches(summary.contextSwitchCount) == "上下文切换 5 次"
+    }
+
     func overnightIdleIsNotHeuristicallyConvertedToAway() -> Bool {
         let start = Date(timeIntervalSince1970: 0)
         let end = start.addingTimeInterval(6 * 60 * 60)
@@ -667,6 +983,21 @@ struct FocusPetMVPProbe {
             && snapshot.nudges.count == 1
             && snapshot.focusSessions[0].awaySeconds == 0
     }
+
+    func dashboardPetDockFrameTracksWindowMovement() -> Bool {
+        let window = CGRect(x: 240, y: 120, width: 1_180, height: 820)
+        let movedWindow = window.offsetBy(dx: 72, dy: -36)
+        let dock = DashboardPetDockingGeometry.sidebarDockFrame(windowFrame: window)
+        let movedDock = DashboardPetDockingGeometry.sidebarDockFrame(windowFrame: movedWindow)
+
+        return dock.width == DashboardPetDockingGeometry.defaultSidebarWidth
+            && dock.height == DashboardPetDockingGeometry.defaultDockHeight
+            && movedDock.size == dock.size
+            && movedDock.origin.x - dock.origin.x == 72
+            && movedDock.origin.y - dock.origin.y == -36
+            && dock.minX == window.minX
+            && dock.minY == window.minY + DashboardPetDockingGeometry.defaultBottomInset
+    }
 }
 
 private let runFocusPetMVPProbe: Void = {
@@ -685,6 +1016,8 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.incrementalAwayRecordingMergesWithoutDuplication(), "incremental away recording should not duplicate screen lock time")
     precondition(probe.frequentSwitchingDoesNotBecomeDistracted(), "app switching alone should not be distracted")
     precondition(probe.focusTwentyFiveMinutesTriggersRestNudge(), "25 minutes focus should trigger rest nudge")
+    precondition(probe.legacyReminderSettingsDefaultToCustomizableNudgeParameters(), "legacy reminder settings should decode new nudge defaults")
+    precondition(probe.reminderSettingsCustomizeNudgePolicyAndClampValues(), "reminder settings should customize nudge thresholds and clamp values")
     precondition(probe.windowTitlePrivacyDoesNotStoreRawTitleByDefault(), "default privacy should not store raw titles")
     precondition(probe.onlyCategoryPrivacyStoresNoTitleMetadata(), "category-only privacy should remove title metadata")
     precondition(probe.timelineTracksFourStateTotals(), "daily summary should aggregate all four states")
@@ -700,5 +1033,12 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.userRuleOverridesCatalog(), "user exceptions should override the built-in catalog")
     precondition(probe.builtInRulesAreFilteredFromStoredUserRules(), "stored built-in defaults should not become user exceptions")
     precondition(probe.redactedExportRemovesTitleMetadata(), "redacted export should remove title metadata")
+    precondition(probe.inputActivityRecorderMergesBucketsAndClampsCounts(), "input activity should merge buckets and clamp counts")
+    precondition(probe.localStorePersistsInputActivityAndDecodesLegacySnapshots(), "input activity should persist and legacy snapshots should decode")
+    precondition(probe.retentionPrunesInputActivityBuckets(), "retention should prune input activity buckets")
+    precondition(probe.inputTimelineSnapshotAggregatesInputAndSmoothsApps(), "input timeline snapshot should aggregate input and smooth short app switches")
+    precondition(probe.inputTimelineSnapshotSmoothsTinyStateFragments(), "input timeline snapshot should smooth tiny state fragments for display")
+    precondition(probe.inputWorkloadSummaryAggregatesReadableMetrics(), "input workload should expose user-readable activity metrics")
     precondition(probe.overnightIdleIsNotHeuristicallyConvertedToAway(), "stored history should not be heuristically rewritten")
+    precondition(probe.dashboardPetDockFrameTracksWindowMovement(), "dashboard pet dock frame should move with the dashboard window")
 }()

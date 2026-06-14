@@ -40,6 +40,7 @@ enum DashboardPetAnchor: String, Hashable {
     case todayFocusCard
     case todayBreakControl
     case todayTimeline
+    case sidebarPetDock
     case historyWorkTimeline
     case dashboardPanel
     case settingsPetPanel

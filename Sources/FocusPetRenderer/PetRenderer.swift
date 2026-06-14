@@ -33,6 +33,7 @@ public struct PetRenderState: Hashable, Sendable {
     public var hoverStatusEnabled: Bool
     public var hoverDetails: [PetHoverContextItem]
     public var hoverBreakButtonTitle: String
+    public var pauseRemindersTitle: String
     public var activeIntentTitle: String?
     public var mappedActionTitle: String?
     public var breakEndsAt: Date?
@@ -61,6 +62,7 @@ public struct PetRenderState: Hashable, Sendable {
         hoverStatusEnabled: Bool = true,
         hoverDetails: [PetHoverContextItem] = [],
         hoverBreakButtonTitle: String = "开始休息",
+        pauseRemindersTitle: String = "暂停提醒",
         activeIntentTitle: String? = nil,
         mappedActionTitle: String? = nil,
         breakEndsAt: Date? = nil,
@@ -88,6 +90,7 @@ public struct PetRenderState: Hashable, Sendable {
         self.hoverStatusEnabled = hoverStatusEnabled
         self.hoverDetails = hoverDetails
         self.hoverBreakButtonTitle = hoverBreakButtonTitle
+        self.pauseRemindersTitle = pauseRemindersTitle
         self.activeIntentTitle = activeIntentTitle
         self.mappedActionTitle = mappedActionTitle
         self.breakEndsAt = breakEndsAt
@@ -117,6 +120,7 @@ public struct PetRenderState: Hashable, Sendable {
         hoverStatusEnabled: Bool = true,
         hoverDetails: [PetHoverContextItem] = [],
         hoverBreakButtonTitle: String = "开始休息",
+        pauseRemindersTitle: String = "暂停提醒",
         idleActionTitle: String? = nil,
         breakEndsAt: Date? = nil,
         size: Double,
@@ -144,6 +148,7 @@ public struct PetRenderState: Hashable, Sendable {
             hoverStatusEnabled: hoverStatusEnabled,
             hoverDetails: hoverDetails,
             hoverBreakButtonTitle: hoverBreakButtonTitle,
+            pauseRemindersTitle: pauseRemindersTitle,
             activeIntentTitle: PetIntentKind(legacyAction: action).title,
             mappedActionTitle: idleActionTitle,
             breakEndsAt: breakEndsAt,
@@ -174,6 +179,7 @@ public struct PetRenderState: Hashable, Sendable {
         hoverStatusEnabled: true,
         hoverDetails: [],
         hoverBreakButtonTitle: "开始休息",
+        pauseRemindersTitle: "暂停提醒",
         activeIntentTitle: nil,
         mappedActionTitle: nil,
         breakEndsAt: nil,
@@ -406,6 +412,37 @@ public final class PetPanelController {
                 self.temporaryFrameExpiresAt = nil
                 self.positionPanel(animate: false)
             }
+        }
+    }
+
+    public func pin(
+        near targetFrame: CGRect,
+        preferredEdge: PetPanelAnchorEdge = .right
+    ) {
+        if panel == nil {
+            panel = makePanel()
+        }
+        guard let panel else { return }
+        let panelSize = resolvedPanelSize()
+        let target = NSRect(x: targetFrame.origin.x, y: targetFrame.origin.y, width: targetFrame.width, height: targetFrame.height)
+        let visibleFrame = visibleFrame(containing: target)
+        let frame = clamped(
+            NSRect(origin: anchorOrigin(near: target, panelSize: panelSize, preferredEdge: preferredEdge), size: panelSize),
+            preferredVisibleFrame: visibleFrame
+        )
+        temporaryFrame = frame
+        temporaryFrameExpiresAt = .distantFuture
+        lastPlacedFrame = nil
+        panel.setFrame(frame, display: true, animate: false)
+        panel.orderFrontRegardless()
+    }
+
+    public func clearTemporaryPlacement(reposition: Bool = true) {
+        temporaryFrame = nil
+        temporaryFrameExpiresAt = nil
+        lastPlacedFrame = nil
+        if reposition {
+            positionPanel(animate: false)
         }
     }
 
@@ -848,7 +885,11 @@ private struct PetRendererView: View {
         let displayIntent = renderState.displayIntent(isHovering: isHovering)
         let showsHoverContext = isHovering && renderState.hoverStatusEnabled
         let hasStatusSurface = renderState.message != nil || showsHoverContext
-        let frameInterval = 1 / min(10, max(1, max(renderState.framesPerSecond, renderState.hoverFramesPerSecond)))
+        let displayFramesPerSecond = min(10, max(1, renderState.displayFramesPerSecond(isHovering: isHovering)))
+        let throttledFramesPerSecond = (!isHovering && displayIntent == .quietCompanion)
+            ? min(2, displayFramesPerSecond)
+            : displayFramesPerSecond
+        let frameInterval = 1 / throttledFramesPerSecond
         let bubbleWidth = max(196, min(236, renderState.size + 86))
         let bubbleHeight: CGFloat = showsHoverContext ? 118 : 54
         let panelWidth = max(renderState.size, bubbleWidth)
@@ -914,7 +955,7 @@ private struct PetRendererView: View {
                     model.interactions.cycleIntentAction()
                 }
             }
-            Button("暂停提醒 30 分钟") {
+            Button(model.renderState.pauseRemindersTitle) {
                 model.interactions.pauseReminders()
             }
             Divider()

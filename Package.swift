@@ -49,7 +49,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "FocusPetCoreChecks",
-            dependencies: ["FocusPetCore", "FocusPetResources", "FocusPetRenderer"]
+            dependencies: ["FocusPetCore", "FocusPetResources", "FocusPetRenderer", "FocusPetStorage"]
         ),
         .testTarget(
             name: "FocusPetCoreTests",

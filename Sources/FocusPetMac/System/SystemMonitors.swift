@@ -25,6 +25,20 @@ struct ActivitySamplerSnapshot: Sendable {
     var idleSeconds: TimeInterval
 }
 
+struct InputEventCounts: Hashable, Sendable {
+    var keyboardCount: Int
+    var pointerCount: Int
+
+    init(keyboardCount: Int = 0, pointerCount: Int = 0) {
+        self.keyboardCount = max(0, keyboardCount)
+        self.pointerCount = max(0, pointerCount)
+    }
+
+    var hasInput: Bool {
+        keyboardCount > 0 || pointerCount > 0
+    }
+}
+
 enum SessionActivityMonitor {
     static func snapshot() -> SessionActivitySnapshot {
         SessionActivitySnapshot(isScreenLocked: isScreenLocked)
@@ -179,17 +193,25 @@ enum IdleMonitor {
         }
 
         return min(
-            secondsSinceMostRecent([.keyDown]),
-            secondsSinceMostRecent([
-                .mouseMoved,
-                .leftMouseDown,
-                .rightMouseDown,
-                .otherMouseDown,
-                .leftMouseDragged,
-                .rightMouseDragged,
-                .otherMouseDragged,
-                .scrollWheel
-            ])
+            keyboardIdleSeconds(),
+            pointerIdleSeconds()
+        )
+    }
+
+    static func keyboardIdleSeconds() -> TimeInterval {
+        secondsSinceMostRecent([.keyDown])
+    }
+
+    static func pointerIdleSeconds() -> TimeInterval {
+        secondsSinceMostRecent(pointerEventTypes)
+    }
+
+    static func fallbackInputCounts(seconds windowSeconds: TimeInterval) -> InputEventCounts {
+        let tolerance = max(0.25, min(1.5, windowSeconds * 0.25))
+        let window = max(0.5, windowSeconds) + tolerance
+        return InputEventCounts(
+            keyboardCount: keyboardIdleSeconds() <= window ? 1 : 0,
+            pointerCount: pointerIdleSeconds() <= window ? 1 : 0
         )
     }
 
@@ -219,10 +241,249 @@ enum IdleMonitor {
         return nil
     }
 
+    private static let pointerEventTypes: [CGEventType] = [
+        .mouseMoved,
+        .leftMouseDown,
+        .rightMouseDown,
+        .otherMouseDown,
+        .leftMouseDragged,
+        .rightMouseDragged,
+        .otherMouseDragged,
+        .scrollWheel
+    ]
+
     private static func secondsSinceMostRecent(_ eventTypes: [CGEventType]) -> TimeInterval {
         eventTypes.map {
             CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0)
         }.min() ?? 0
+    }
+}
+
+private let focusPetInputEventCallback: CGEventTapCallBack = { _, type, event, refcon in
+    if let refcon {
+        let monitor = Unmanaged<InputActivityMonitor>.fromOpaque(refcon).takeUnretainedValue()
+        monitor.record(eventType: type, event: event)
+    }
+    return Unmanaged.passUnretained(event)
+}
+
+final class InputActivityMonitor: @unchecked Sendable {
+    private let lock = NSLock()
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+    private var keyboardCount = 0
+    private var pointerCount = 0
+
+    var isRunning: Bool {
+        lock.withLock { eventTap != nil }
+    }
+
+    func start() {
+        lock.lock()
+        let alreadyRunning = eventTap != nil
+        lock.unlock()
+        guard !alreadyRunning else { return }
+
+        let mask = Self.eventMask(for: [
+            .keyDown,
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown
+        ])
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: focusPetInputEventCallback,
+            userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        ) else {
+            return
+        }
+
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            return
+        }
+
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+
+        lock.withLock {
+            eventTap = tap
+            runLoopSource = source
+        }
+    }
+
+    func stop() {
+        let source: CFRunLoopSource?
+        let tap: CFMachPort?
+        lock.lock()
+        source = runLoopSource
+        tap = eventTap
+        runLoopSource = nil
+        eventTap = nil
+        keyboardCount = 0
+        pointerCount = 0
+        lock.unlock()
+
+        if let source {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+        }
+    }
+
+    func drainCounts(fallbackWindowSeconds: TimeInterval?) -> InputEventCounts {
+        var counts: InputEventCounts
+        let isTapRunning: Bool
+        lock.lock()
+        counts = InputEventCounts(keyboardCount: keyboardCount, pointerCount: pointerCount)
+        keyboardCount = 0
+        pointerCount = 0
+        isTapRunning = eventTap != nil
+        lock.unlock()
+
+        if let fallbackWindowSeconds {
+            let fallback = IdleMonitor.fallbackInputCounts(seconds: fallbackWindowSeconds)
+            if !isTapRunning, counts.keyboardCount == 0 {
+                counts.keyboardCount = fallback.keyboardCount
+            }
+            if counts.pointerCount == 0 {
+                counts.pointerCount = fallback.pointerCount
+            }
+        }
+        return counts
+    }
+
+    func discardCounts() {
+        lock.withLock {
+            keyboardCount = 0
+            pointerCount = 0
+        }
+    }
+
+    fileprivate func record(eventType: CGEventType, event: CGEvent) {
+        switch eventType {
+        case .keyDown:
+            guard Self.isEstimatedTextInput(event) else { return }
+            lock.withLock {
+                keyboardCount += 1
+            }
+        case .leftMouseDown,
+             .rightMouseDown,
+             .otherMouseDown:
+            lock.withLock {
+                pointerCount += 1
+            }
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            lock.withLock {
+                if let eventTap {
+                    CGEvent.tapEnable(tap: eventTap, enable: true)
+                }
+            }
+        default:
+            break
+        }
+    }
+
+    private static func eventMask(for eventTypes: [CGEventType]) -> CGEventMask {
+        eventTypes.reduce(CGEventMask(0)) { result, type in
+            result | (CGEventMask(1) << CGEventMask(type.rawValue))
+        }
+    }
+
+    private static func isEstimatedTextInput(_ event: CGEvent) -> Bool {
+        let flags = event.flags
+        if flags.contains(.maskCommand) || flags.contains(.maskControl) {
+            return false
+        }
+
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        return !nonTextKeyCodes.contains(keyCode)
+    }
+
+    private static let nonTextKeyCodes: Set<Int64> = [
+        36, 48, 51, 53, 71, 76, 114, 115, 116, 117, 118, 119, 120, 121,
+        122, 123, 124, 125, 126
+    ]
+}
+
+final class ApplicationSwitchEventMonitor: @unchecked Sendable {
+    private let lock = NSLock()
+    private var observer: NSObjectProtocol?
+    private var currentIdentity: String?
+    private var pendingSwitchCount = 0
+
+    var isRunning: Bool {
+        lock.withLock { observer != nil }
+    }
+
+    func start() {
+        lock.lock()
+        let alreadyRunning = observer != nil
+        lock.unlock()
+        guard !alreadyRunning else { return }
+
+        lock.withLock {
+            currentIdentity = NSWorkspace.shared.frontmostApplication.map(Self.identity(for:))
+        }
+
+        let token = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            self?.handleActivation(notification)
+        }
+
+        lock.withLock {
+            observer = token
+        }
+    }
+
+    func stop() {
+        let token: NSObjectProtocol?
+        lock.lock()
+        token = observer
+        observer = nil
+        currentIdentity = nil
+        pendingSwitchCount = 0
+        lock.unlock()
+
+        if let token {
+            NSWorkspace.shared.notificationCenter.removeObserver(token)
+        }
+    }
+
+    func drainSwitchCount(fallbackSwitchCount: Int) -> Int {
+        lock.lock()
+        let count = pendingSwitchCount
+        pendingSwitchCount = 0
+        let running = observer != nil
+        lock.unlock()
+
+        return running ? count : max(0, fallbackSwitchCount)
+    }
+
+    private func handleActivation(_ notification: Notification) {
+        guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+            return
+        }
+        let identity = Self.identity(for: application)
+        lock.withLock {
+            if currentIdentity == nil {
+                currentIdentity = identity
+                return
+            }
+            guard currentIdentity != identity else { return }
+            pendingSwitchCount += 1
+            currentIdentity = identity
+        }
+    }
+
+    private static func identity(for application: NSRunningApplication) -> String {
+        "\(application.bundleIdentifier ?? "")|\(application.localizedName ?? "Unknown")"
     }
 }
 
@@ -234,19 +495,22 @@ final class AppSwitchTracker {
     private var currentCategorySince = Date()
     private var switchHistory: [Date] = []
 
-    func update(identity: String, category: ActivityCategory, now: Date) {
+    @discardableResult
+    func update(identity: String, category: ActivityCategory, now: Date) -> Bool {
         if currentIdentity == nil {
             currentIdentity = identity
             currentCategory = category
             currentAppSince = now
             currentCategorySince = now
-            return
+            return false
         }
 
+        var didSwitch = false
         if identity != currentIdentity {
             switchHistory.append(now)
             currentIdentity = identity
             currentAppSince = now
+            didSwitch = true
         }
 
         if category != currentCategory {
@@ -255,6 +519,7 @@ final class AppSwitchTracker {
         }
 
         switchHistory = switchHistory.filter { now.timeIntervalSince($0) <= 15 * 60 }
+        return didSwitch
     }
 
     func switchCount(seconds: TimeInterval, now: Date) -> Int {

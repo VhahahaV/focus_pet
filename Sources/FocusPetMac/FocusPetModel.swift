@@ -13,6 +13,7 @@ final class FocusPetModel: ObservableObject {
     @Published var currentDecision: StateDecision
     @Published var stateSegments: [StateSegment]
     @Published var appUsage: [AppUsageSegment]
+    @Published var inputActivity: [InputActivityBucket]
     @Published var focusSessions: [FocusSession]
     @Published var breakSessions: [BreakSession]
     @Published var nudges: [NudgeEvent]
@@ -28,13 +29,15 @@ final class FocusPetModel: ObservableObject {
     private let store = LocalStore()
     private let persistenceService = SnapshotPersistenceService()
     private let tracker = TimeTracker()
-    private let nudgePolicy = NudgePolicy()
     private let behaviorPolicy = PetBehaviorPolicy()
     private let summaryBuilder = DailySummaryBuilder()
     private let summaryService = SummaryRefreshService()
     private var activityClassifier = ActivityClassifier()
     private let activitySampler = ActivitySampler()
     private let switchTracker = AppSwitchTracker()
+    private let inputEventMonitor = InputActivityMonitor()
+    private let appSwitchEventMonitor = ApplicationSwitchEventMonitor()
+    private let inputActivityRecorder = InputActivityRecorder()
     private let mouseScreenTracker = MouseScreenTracker()
     private let petLibrary = PetPackLibrary()
     private let petPanel = PetPanelController()
@@ -67,6 +70,7 @@ final class FocusPetModel: ObservableObject {
     private var petScreenHint: ScreenPlacementHint?
     private var openDashboardRequest: (@MainActor (DashboardTab) -> Void)?
     private var dashboardAnchorFrames: [DashboardPetAnchor: DashboardAnchorSnapshot] = [:]
+    private var dashboardPetAttachment: DashboardPetAttachment?
     private var saveTask: Task<Void, Never>?
     private var pendingSaveSnapshot: LocalStoreSnapshot?
     private var lastEnqueuedSaveSnapshot: LocalStoreSnapshot?
@@ -76,7 +80,6 @@ final class FocusPetModel: ObservableObject {
     private var summaryTask: Task<Void, Never>?
     private var summaryGeneration = 0
     private var lastSummaryRefreshedAt = Date.distantPast
-    private var lastRetentionPruneAt: Date?
     private let summaryThrottleSeconds: TimeInterval = 20
     private var tickTask: Task<Void, Never>?
     private var tickGeneration = 0
@@ -87,6 +90,7 @@ final class FocusPetModel: ObservableObject {
         settings = snapshot.settings
         stateSegments = snapshot.stateSegments
         appUsage = snapshot.appUsage
+        inputActivity = snapshot.inputActivity
         focusSessions = snapshot.focusSessions
         breakSessions = snapshot.breakSessions
         nudges = snapshot.nudges
@@ -128,7 +132,6 @@ final class FocusPetModel: ObservableObject {
             nudges: snapshot.nudges
         )
         lastSummaryRefreshedAt = now
-        lastRetentionPruneAt = now
         refreshPetPacks(saveIfChanged: false)
         configurePetPanelInteractions()
     }
@@ -151,6 +154,10 @@ final class FocusPetModel: ObservableObject {
 
     var currentPetMessage: String? {
         let now = Date()
+        if dashboardPetIsAttached {
+            return nil
+        }
+
         if let transientPetMessage,
            let transientPetMessageExpiresAt,
            transientPetMessageExpiresAt > now {
@@ -186,6 +193,13 @@ final class FocusPetModel: ObservableObject {
         activeBreakSession == nil ? "休息 \(settings.breakMinutes) 分钟" : "结束休息"
     }
 
+    private var dashboardPetIsAttached: Bool {
+        guard dashboardPetAttachment != nil,
+              let window = dashboardWindow(),
+              window.isVisible else { return false }
+        return true
+    }
+
     private var lastBreakDistanceTitle: String {
         if activeBreakSession != nil {
             return "正在休息"
@@ -203,14 +217,28 @@ final class FocusPetModel: ObservableObject {
         return "暂停至 \(FocusPetFormatters.clock(pauseUntil))"
     }
 
+    var reminderPauseActionTitle: String {
+        "暂停 \(settings.reminder.pauseMinutes) 分钟"
+    }
+
     var recordingStatusTitle: String {
         settings.privacy.pauseActivityRecording ? "所有记录已暂停" : "正在记录本地统计"
+    }
+
+    var dataSizeTitle: String {
+        ByteCountFormatter.string(fromByteCount: Int64(store.currentDataSize()), countStyle: .file)
+    }
+
+    var todayWorkload: InputWorkloadSummary {
+        InputWorkloadSummary(dayContaining: Date(), inputActivity: inputActivity)
     }
 
     func start() {
         guard timer == nil else { return }
         configureSystemSleepObservers()
         configureSessionActivityObservers()
+        inputEventMonitor.start()
+        appSwitchEventMonitor.start()
         advanceStateTick()
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -236,6 +264,8 @@ final class FocusPetModel: ObservableObject {
     func stop() {
         timer?.invalidate()
         timer = nil
+        inputEventMonitor.stop()
+        appSwitchEventMonitor.stop()
         mouseTimer?.invalidate()
         mouseTimer = nil
         tickTask?.cancel()
@@ -293,7 +323,7 @@ final class FocusPetModel: ObservableObject {
 
         let front = sample.frontmostApplication
         let identity = "\(front.bundleID ?? "")|\(front.appName)"
-        switchTracker.update(identity: identity, category: category, now: now)
+        let didSampledSwitch = switchTracker.update(identity: identity, category: category, now: now)
 
         let snapshot = ActivitySnapshot(
             timestamp: now,
@@ -321,6 +351,8 @@ final class FocusPetModel: ObservableObject {
         currentDecision = decision
 
         if settings.privacy.pauseActivityRecording {
+            inputEventMonitor.discardCounts()
+            _ = appSwitchEventMonitor.drainSwitchCount(fallbackSwitchCount: 0)
             statusMessage = "所有本地记录已暂停。"
             updatePet()
             return
@@ -328,6 +360,7 @@ final class FocusPetModel: ObservableObject {
 
         let tickSeconds = min(max(tracker.tickSeconds, elapsedSinceLastTick ?? tracker.tickSeconds), 60)
         let tickTracker = TimeTracker(tickSeconds: tickSeconds)
+        recordInputActivity(now: now, tickSeconds: tickSeconds, sampledSwitchCount: didSampledSwitch ? 1 : 0)
         stateSegments = tickTracker.record(decision: decision, snapshot: snapshot, segments: stateSegments)
         appUsage = decision.state == .away ? appUsage : tickTracker.recordAppUsage(snapshot: snapshot, appUsage: appUsage)
         applySessionAccounting(decision: decision, previousTickState: stateBeforeTick, tickSeconds: tickSeconds)
@@ -336,6 +369,18 @@ final class FocusPetModel: ObservableObject {
         refreshSummary()
         save()
         updatePet()
+    }
+
+    private func recordInputActivity(now: Date, tickSeconds: TimeInterval, sampledSwitchCount: Int) {
+        let inputCounts = inputEventMonitor.drainCounts(fallbackWindowSeconds: tickSeconds)
+        let switchCount = appSwitchEventMonitor.drainSwitchCount(fallbackSwitchCount: sampledSwitchCount)
+        inputActivity = inputActivityRecorder.record(
+            now: now,
+            keyboardCount: inputCounts.keyboardCount,
+            pointerCount: inputCounts.pointerCount,
+            switchCount: switchCount,
+            buckets: inputActivity
+        )
     }
 
     func startFocusSession(taskName: String, minutes: Int) {
@@ -394,7 +439,8 @@ final class FocusPetModel: ObservableObject {
         }
     }
 
-    func pauseReminders(minutes: Int = 30) {
+    func pauseReminders(minutes: Int? = nil) {
+        let minutes = minutes ?? settings.reminder.pauseMinutes
         settings.reminder.pauseUntil = Date().addingTimeInterval(Double(max(1, minutes)) * 60)
         statusMessage = "提醒已暂停 \(minutes) 分钟。"
         save()
@@ -424,6 +470,7 @@ final class FocusPetModel: ObservableObject {
     }
 
     func setPetPlacement(_ placement: PetPlacementMode) {
+        detachDashboardPet(reposition: true)
         settings.pet.placement = placement
         if placement != .custom {
             settings.pet.customOriginX = nil
@@ -470,7 +517,9 @@ final class FocusPetModel: ObservableObject {
     func bringDashboardWindowToFront() -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         if let dashboardWindow = dashboardWindow() {
+            dashboardWindow.collectionBehavior.insert(.moveToActiveSpace)
             dashboardWindow.makeKeyAndOrderFront(nil)
+            dashboardWindow.orderFrontRegardless()
             return true
         }
         return false
@@ -491,6 +540,7 @@ final class FocusPetModel: ObservableObject {
             return
         }
         dashboardAnchorFrames[anchor] = DashboardAnchorSnapshot(frame: frame, updatedAt: Date())
+        refreshDashboardPetAttachmentIfNeeded(changedAnchor: anchor)
     }
 
     func presentPetForDashboard(tab: DashboardTab) {
@@ -498,23 +548,21 @@ final class FocusPetModel: ObservableObject {
         let plan = dashboardPetPresentationPlan(for: tab)
         let now = Date()
         let expiresAt = now.addingTimeInterval(plan.duration)
+        dashboardPetAttachment = DashboardPetAttachment(plan: plan, tab: tab)
         transientPetIntent = plan.intent
         transientPetIntentSource = .interaction
         transientPetIntentExpiresAt = expiresAt
         petAnimationIdentity = nil
         transientPetMessage = plan.message
-        transientPetMessageExpiresAt = expiresAt
+        transientPetMessageExpiresAt = plan.message == nil ? nil : expiresAt
         updatePet()
 
-        if let frame = dashboardPresentationFrame(for: plan, tab: tab, requiringFreshAnchor: false) {
-            petPanel.summon(near: frame, preferredEdge: plan.edge, duration: plan.duration)
-        }
+        positionDashboardAttachedPet(requiringFreshAnchor: false)
         clearTransientPetIntent(after: plan.duration)
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 120_000_000)
-            guard self.transientPetIntentExpiresAt == expiresAt,
-                  let frame = self.dashboardPresentationFrame(for: plan, tab: tab, requiringFreshAnchor: true) else { return }
-            self.petPanel.summon(near: frame, preferredEdge: plan.edge, duration: plan.duration)
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard self.transientPetIntentExpiresAt == expiresAt else { return }
+            self.positionDashboardAttachedPet(requiringFreshAnchor: true)
         }
     }
 
@@ -528,8 +576,13 @@ final class FocusPetModel: ObservableObject {
         var fallbackAnchors: [DashboardPetAnchor] = []
         var edge: PetPanelAnchorEdge
         var intent: PetIntentKind
-        var message: String
+        var message: String?
         var duration: TimeInterval
+    }
+
+    private struct DashboardPetAttachment {
+        var plan: DashboardPetPresentationPlan
+        var tab: DashboardTab
     }
 
     private func schedulePetDashboardPresentation(tab: DashboardTab, delayNanoseconds: UInt64) {
@@ -545,44 +598,43 @@ final class FocusPetModel: ObservableObject {
     }
 
     private func dashboardPetPresentationPlan(for tab: DashboardTab) -> DashboardPetPresentationPlan {
-        switch tab {
-        case .today:
-            return DashboardPetPresentationPlan(
-                anchor: .todayBreakControl,
-                fallbackAnchors: [.todayFocusCard, .dashboardPanel],
-                edge: .bottom,
-                intent: .dashboardGuide,
-                message: "我在今日面板旁边。",
-                duration: 8
-            )
-        case .sessions:
-            return DashboardPetPresentationPlan(
-                anchor: .historyWorkTimeline,
-                fallbackAnchors: [.dashboardPanel],
-                edge: .bottomLeft,
-                intent: .focusRestHint,
-                message: "我在复盘面板左下角。",
-                duration: 8
-            )
-        case .pet:
-            return DashboardPetPresentationPlan(
-                anchor: .petPreviewStage,
-                fallbackAnchors: [.settingsPetPanel, .dashboardPanel],
-                edge: .bottomLeft,
-                intent: .dashboardGuide,
-                message: "我在预览区左下角。",
-                duration: 8
-            )
-        case .settings:
-            return DashboardPetPresentationPlan(
-                anchor: .settingsPetPanel,
-                fallbackAnchors: [.dashboardPanel],
-                edge: .bottomLeft,
-                intent: .dashboardGuide,
-                message: "我在设置面板左下角。",
-                duration: 8
-            )
+        DashboardPetPresentationPlan(
+            anchor: .sidebarPetDock,
+            fallbackAnchors: [.dashboardPanel],
+            edge: .bottomLeft,
+            intent: tab == .sessions ? .focusRestHint : .dashboardGuide,
+            message: nil,
+            duration: 8
+        )
+    }
+
+    private func refreshDashboardPetAttachmentIfNeeded(changedAnchor: DashboardPetAnchor) {
+        guard let attachment = dashboardPetAttachment else { return }
+        guard dashboardWindow()?.isVisible == true else {
+            detachDashboardPet(reposition: true)
+            return
         }
+
+        let anchors = [attachment.plan.anchor] + attachment.plan.fallbackAnchors
+        guard anchors.contains(changedAnchor) else { return }
+        positionDashboardAttachedPet(requiringFreshAnchor: false)
+    }
+
+    private func positionDashboardAttachedPet(requiringFreshAnchor: Bool) {
+        guard let attachment = dashboardPetAttachment else { return }
+        guard dashboardWindow()?.isVisible == true else {
+            detachDashboardPet(reposition: true)
+            return
+        }
+        guard let frame = dashboardPresentationFrame(
+            for: attachment.plan,
+            tab: attachment.tab,
+            requiringFreshAnchor: requiringFreshAnchor
+        ) else { return }
+        petPanel.pin(
+            near: frame,
+            preferredEdge: attachment.plan.edge
+        )
     }
 
     private func dashboardPresentationFrame(
@@ -590,6 +642,11 @@ final class FocusPetModel: ObservableObject {
         tab: DashboardTab,
         requiringFreshAnchor: Bool
     ) -> CGRect? {
+        if plan.anchor == .sidebarPetDock,
+           let frame = dashboardWindowFallbackFrame(for: tab) {
+            return frame
+        }
+
         let anchors = [plan.anchor] + plan.fallbackAnchors
         for anchor in anchors {
             if let frame = dashboardAnchorFrame(anchor, requiringFresh: requiringFreshAnchor) {
@@ -612,14 +669,26 @@ final class FocusPetModel: ObservableObject {
     }
 
     private func dashboardWindowFallbackFrame(for tab: DashboardTab) -> CGRect? {
-        dashboardWindow()?.frame
+        guard let windowFrame = dashboardWindow()?.frame else { return nil }
+        return DashboardPetDockingGeometry.sidebarDockFrame(windowFrame: windowFrame)
     }
 
     private func dashboardWindow() -> NSWindow? {
         NSApp.windows.first { $0.title == "Focus Pet" || $0.identifier?.rawValue == "dashboard" }
     }
 
+    private func detachDashboardPet(reposition: Bool) {
+        dashboardPetAttachment = nil
+        petPanel.clearTemporaryPlacement(reposition: reposition)
+    }
+
+    func dashboardWindowDidDismiss() {
+        detachDashboardPet(reposition: true)
+        updatePet()
+    }
+
     func handlePetDragBegan() {
+        detachDashboardPet(reposition: false)
         transientPetIntent = .dragged
         transientPetIntentSource = .physicalInteraction
         transientPetIntentExpiresAt = nil
@@ -647,6 +716,7 @@ final class FocusPetModel: ObservableObject {
         store.deleteAll()
         stateSegments = []
         appUsage = []
+        inputActivity = []
         focusSessions = []
         breakSessions = []
         nudges = []
@@ -668,6 +738,7 @@ final class FocusPetModel: ObservableObject {
         if settings.privacy.storeOnlyCategoryResult {
             settings.privacy.storeRawTitle = false
         }
+        settings.reminder.normalize()
         settings.judgment.normalize()
         save()
         if settings.reminder.enableSystemNotifications {
@@ -912,6 +983,7 @@ final class FocusPetModel: ObservableObject {
             now: now,
             lastTriggeredAt: lastNudgeAt
         ) else { return }
+        guard settings.reminder.allows(event.reason) else { return }
 
         recordNudge(event)
         lastNudgeAt[event.reason] = event.time
@@ -1430,16 +1502,14 @@ final class FocusPetModel: ObservableObject {
         return lower + ratio * (upper - lower)
     }
 
-    private func refreshSummary(force: Bool = false, includeRetention: Bool = false) {
+    private func refreshSummary(force: Bool = false) {
         let now = Date()
-        let shouldRunRetention = includeRetention || shouldRunRetention(now: now)
         summaryGeneration += 1
         let generation = summaryGeneration
         summaryTask?.cancel()
 
         let delaySeconds = force ? 0 : max(0, summaryThrottleSeconds - now.timeIntervalSince(lastSummaryRefreshedAt))
         let delayNanoseconds = UInt64(max(0, delaySeconds) * 1_000_000_000)
-        let retentionSettings = settings.retention
         let stateSegmentsSnapshot = stateSegments
         let appUsageSnapshot = appUsage
         let focusSessionsSnapshot = focusSessions
@@ -1453,13 +1523,11 @@ final class FocusPetModel: ObservableObject {
             guard !Task.isCancelled else { return }
             let result = await summaryService.refresh(
                 now: now,
-                retentionSettings: retentionSettings,
                 stateSegments: stateSegmentsSnapshot,
                 appUsage: appUsageSnapshot,
                 focusSessions: focusSessionsSnapshot,
                 breakSessions: breakSessionsSnapshot,
-                nudges: nudgesSnapshot,
-                includeRetention: shouldRunRetention
+                nudges: nudgesSnapshot
             )
             await MainActor.run {
                 self?.applySummaryRefresh(result, generation: generation)
@@ -1472,27 +1540,9 @@ final class FocusPetModel: ObservableObject {
         summary = result.summary
         lastSummaryRefreshedAt = Date()
 
-        if result.didRunRetention {
-            lastRetentionPruneAt = Date()
-        }
-        if let retained = result.retainedTimeline {
-            stateSegments = retained.stateSegments
-            appUsage = retained.appUsage
-            focusSessions = retained.focusSessions
-            breakSessions = retained.breakSessions
-            nudges = retained.nudges
-            save()
-        }
         if activeBreakSession != nil || isPetHovering {
             updatePet()
         }
-    }
-
-    private func shouldRunRetention(now: Date) -> Bool {
-        guard let lastRetentionPruneAt else { return true }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.locale = Locale(identifier: "zh_CN")
-        return !calendar.isDate(lastRetentionPruneAt, inSameDayAs: now)
     }
 
     private func updatePet() {
@@ -1537,9 +1587,10 @@ final class FocusPetModel: ObservableObject {
             intent: intent.kind,
             message: currentPetMessage,
             hoverMessage: petHoverMessage,
-            hoverStatusEnabled: settings.pet.hoverStatusEnabled,
+            hoverStatusEnabled: settings.pet.hoverStatusEnabled && !dashboardPetIsAttached,
             hoverDetails: petHoverDetails,
             hoverBreakButtonTitle: petHoverBreakButtonTitle,
+            pauseRemindersTitle: reminderPauseActionTitle,
             activeIntentTitle: intent.kind.title,
             mappedActionTitle: mappedActionTitle,
             breakEndsAt: activeBreakSession.map { $0.start.addingTimeInterval(Double($0.targetDurationSeconds)) },
@@ -1631,6 +1682,7 @@ final class FocusPetModel: ObservableObject {
             classificationRules: rules,
             stateSegments: stateSegments,
             appUsage: appUsage,
+            inputActivity: inputActivity,
             focusSessions: focusSessions,
             breakSessions: breakSessions,
             nudges: nudges
@@ -1821,6 +1873,10 @@ final class FocusPetModel: ObservableObject {
     private var stateEngine: StateEngine {
         StateEngine(thresholds: settings.judgment.stateEngineThresholds)
     }
+
+    private var nudgePolicy: NudgePolicy {
+        NudgePolicy(thresholds: settings.reminder.nudgePolicyThresholds)
+    }
 }
 
 private actor SnapshotPersistenceService {
@@ -1841,78 +1897,30 @@ private actor SnapshotPersistenceService {
     }
 }
 
-private struct TimelineRetentionSnapshot: Sendable {
-    var stateSegments: [StateSegment]
-    var appUsage: [AppUsageSegment]
-    var focusSessions: [FocusSession]
-    var breakSessions: [BreakSession]
-    var nudges: [NudgeEvent]
-}
-
 private struct SummaryRefreshResult: Sendable {
     var summary: DailySummary
-    var retainedTimeline: TimelineRetentionSnapshot?
-    var didRunRetention: Bool
 }
 
 private actor SummaryRefreshService {
     private let summaryBuilder = DailySummaryBuilder()
-    private let retentionManager = DataRetentionManager()
 
     func refresh(
         now: Date,
-        retentionSettings: DataRetentionSettings,
         stateSegments: [StateSegment],
         appUsage: [AppUsageSegment],
         focusSessions: [FocusSession],
         breakSessions: [BreakSession],
-        nudges: [NudgeEvent],
-        includeRetention: Bool
+        nudges: [NudgeEvent]
     ) -> SummaryRefreshResult {
-        var retainedTimeline: TimelineRetentionSnapshot?
-        var summaryStateSegments = stateSegments
-        var summaryAppUsage = appUsage
-        var summaryFocusSessions = focusSessions
-        var summaryBreakSessions = breakSessions
-        var summaryNudges = nudges
-
-        if includeRetention {
-            let pruned = retentionManager.prune(
-                now: now,
-                settings: retentionSettings,
-                stateSegments: stateSegments,
+        return SummaryRefreshResult(
+            summary: summaryBuilder.summary(
+                for: now,
+                segments: stateSegments,
                 appUsage: appUsage,
                 focusSessions: focusSessions,
                 breakSessions: breakSessions,
                 nudges: nudges
             )
-            summaryStateSegments = pruned.stateSegments
-            summaryAppUsage = pruned.appUsage
-            summaryFocusSessions = pruned.focusSessions
-            summaryBreakSessions = pruned.breakSessions
-            summaryNudges = pruned.nudges
-            if pruned.result.totalRemoved > 0 {
-                retainedTimeline = TimelineRetentionSnapshot(
-                    stateSegments: pruned.stateSegments,
-                    appUsage: pruned.appUsage,
-                    focusSessions: pruned.focusSessions,
-                    breakSessions: pruned.breakSessions,
-                    nudges: pruned.nudges
-                )
-            }
-        }
-
-        return SummaryRefreshResult(
-            summary: summaryBuilder.summary(
-                for: now,
-                segments: summaryStateSegments,
-                appUsage: summaryAppUsage,
-                focusSessions: summaryFocusSessions,
-                breakSessions: summaryBreakSessions,
-                nudges: summaryNudges
-            ),
-            retainedTimeline: retainedTimeline,
-            didRunRetention: includeRetention
         )
     }
 }

@@ -1,6 +1,7 @@
 import FocusPetCore
 import FocusPetRenderer
 import FocusPetResources
+import FocusPetStorage
 import Foundation
 
 @main
@@ -18,11 +19,17 @@ enum FocusPetCoreChecks {
         checkLongIdleReclassificationBackfillsAway()
         checkIncrementalAwayRecordingMergesWithoutDuplication()
         checkNudgePolicy()
+        checkReminderSettingsNudgeConfiguration()
         checkOldNudgeDoesNotOverridePetState()
         checkFocusAmbientActionsCycle()
         checkPrivacy()
         checkCategoryOnlyPrivacy()
         checkSummary()
+        checkInputActivityBuckets()
+        checkInputTimelineSnapshot()
+        checkInputTimelineStateSmoothing()
+        checkInputWorkloadSummary()
+        checkInputActivityStorage()
         checkFocusSessionReporting()
         checkGroupedRules()
         checkNeutralIsLegacyOnly()
@@ -360,6 +367,74 @@ enum FocusPetCoreChecks {
         expect(event?.reason == .longFocusRest && event?.petIntent == .focusRestHint, "25 minute focus should trigger rest nudge intent")
     }
 
+    private static func checkReminderSettingsNudgeConfiguration() {
+        let legacyJSON = """
+        {
+          "enablePetBubbles": true,
+          "enableSystemNotifications": false
+        }
+        """
+        guard let data = legacyJSON.data(using: .utf8),
+              let legacy = try? JSONDecoder().decode(ReminderSettings.self, from: data) else {
+            expect(false, "legacy reminder settings should decode")
+            return
+        }
+        expect(legacy.pauseMinutes == 30, "legacy reminder settings should default pause minutes")
+        expect(legacy.lightDistractedMinutes == 8, "legacy reminder settings should default light distracted threshold")
+        expect(legacy.strongDistractedMinutes == 15, "legacy reminder settings should default strong distracted threshold")
+        expect(legacy.longFocusMinutes == 25, "legacy reminder settings should default long focus threshold")
+        expect(legacy.veryLongFocusMinutes == 60, "legacy reminder settings should default very long focus threshold")
+        expect(legacy.cooldownMinutes == 10, "legacy reminder settings should default cooldown")
+
+        let custom = ReminderSettings(
+            pauseMinutes: 45,
+            lightDistractedMinutes: 2,
+            strongDistractedMinutes: 4,
+            longFocusMinutes: 40,
+            veryLongFocusMinutes: 80,
+            cooldownMinutes: 3
+        )
+        let distractedState = FocusStateSnapshot(
+            timestamp: Date(timeIntervalSince1970: 120),
+            state: .distracted,
+            category: .entertainment,
+            stableDuration: 120,
+            appName: "Browser",
+            bundleID: "browser"
+        )
+        let focusState = FocusStateSnapshot(
+            timestamp: Date(timeIntervalSince1970: 2_400),
+            state: .focus,
+            category: .work,
+            stableDuration: 2_400,
+            appName: "Cursor",
+            bundleID: "cursor"
+        )
+        let policy = NudgePolicy(thresholds: custom.nudgePolicyThresholds)
+        expect(custom.nudgePolicyThresholds.strongDistractedSeconds == 240, "reminder settings should customize strong nudge threshold")
+        expect(policy.nudge(for: distractedState, previousState: .focus, now: distractedState.timestamp, lastTriggeredAt: [:])?.reason == .distractedOverThreshold, "custom light threshold should trigger a light distracted nudge")
+        expect(policy.nudge(for: focusState, previousState: .focus, now: focusState.timestamp, lastTriggeredAt: [:])?.reason == .longFocusRest, "custom long focus threshold should trigger rest nudge")
+
+        let clamped = ReminderSettings(
+            pauseMinutes: 1,
+            enableDistractedNudges: false,
+            enableFocusRestNudges: false,
+            enableWelcomeBackNudges: false,
+            lightDistractedMinutes: 99,
+            strongDistractedMinutes: 2,
+            longFocusMinutes: 2,
+            veryLongFocusMinutes: 1,
+            cooldownMinutes: 0
+        )
+        expect(clamped.pauseMinutes == 5, "reminder pause minutes should clamp to minimum")
+        expect(clamped.lightDistractedMinutes == 60 && clamped.strongDistractedMinutes == 60, "distracted thresholds should clamp and remain ordered")
+        expect(clamped.longFocusMinutes == 5 && clamped.veryLongFocusMinutes == 5, "focus rest thresholds should clamp and remain ordered")
+        expect(clamped.cooldownMinutes == 1, "reminder cooldown should clamp to minimum")
+        expect(!clamped.allows(.distractedStrong), "distracted reminder toggle should gate distracted nudges")
+        expect(!clamped.allows(.longFocusRest), "focus rest reminder toggle should gate rest nudges")
+        expect(!clamped.allows(.welcomeBack), "welcome back reminder toggle should gate welcome nudges")
+    }
+
     private static func checkOldNudgeDoesNotOverridePetState() {
         let intent = PetBehaviorPolicy().intentKind(
             for: .away,
@@ -672,6 +747,185 @@ enum FocusPetCoreChecks {
         expect(settings.judgment.entertainmentDistractedSeconds == 60, "legacy app settings should default entertainment threshold")
         expect(settings.judgment.focusRecoverySeconds == 10, "legacy app settings should default focus recovery threshold")
         expect(settings.judgment.idleAwaySeconds == 600, "legacy app settings should default idle away threshold")
+        expect(settings.retention.inputActivityRetentionDays == 30, "legacy app settings should default input activity retention")
+    }
+
+    private static func checkInputActivityBuckets() {
+        let recorder = InputActivityRecorder(bucketSeconds: 60)
+        let start = Date(timeIntervalSince1970: 0)
+        let seeded = [
+            InputActivityBucket(
+                start: start,
+                end: start.addingTimeInterval(60),
+                keyboardCount: -3,
+                pointerCount: 2,
+                switchCount: -1
+            )
+        ]
+        let first = recorder.record(
+            now: start.addingTimeInterval(62),
+            keyboardCount: 3,
+            pointerCount: 4,
+            switchCount: 1,
+            buckets: seeded
+        )
+        let second = recorder.record(
+            now: start.addingTimeInterval(88),
+            keyboardCount: 1,
+            pointerCount: 0,
+            switchCount: 2,
+            buckets: first
+        )
+
+        expect(second.count == 2, "input recorder should append one new bucket")
+        expect(second[0].keyboardCount == 0 && second[0].pointerCount == 2 && second[0].switchCount == 0, "input bucket counts should be clamped")
+        expect(second[1].keyboardCount == 4 && second[1].pointerCount == 4 && second[1].switchCount == 3, "input recorder should merge counts into a minute bucket")
+
+        let now = Date(timeIntervalSince1970: 10 * 86_400)
+        let old = InputActivityBucket(start: now.addingTimeInterval(-3 * 86_400), end: now.addingTimeInterval(-3 * 86_400 + 60), keyboardCount: 1)
+        let recent = InputActivityBucket(start: now.addingTimeInterval(-3_600), end: now.addingTimeInterval(-3_540), pointerCount: 2)
+        let pruned = DataRetentionManager().prune(
+            now: now,
+            settings: DataRetentionSettings(inputActivityRetentionDays: 1),
+            stateSegments: [],
+            appUsage: [],
+            inputActivity: [old, recent],
+            focusSessions: [],
+            breakSessions: [],
+            nudges: []
+        )
+        expect(pruned.inputActivity == [recent], "retention should keep recent input activity buckets")
+        expect(pruned.result.removedInputActivityBuckets == 1, "retention should report removed input activity buckets")
+    }
+
+    private static func checkInputTimelineSnapshot() {
+        let start = Date(timeIntervalSince1970: 600)
+        let now = start.addingTimeInterval(600)
+        let snapshot = InputTimelineSnapshot(
+            windowSeconds: 600,
+            stateSegments: [
+                StateSegment(
+                    start: start,
+                    end: start.addingTimeInterval(300),
+                    state: .focus,
+                    appName: "Codex",
+                    bundleID: "codex",
+                    category: .work,
+                    titleStored: false,
+                    titleDisplay: nil,
+                    source: [.frontmostApplication]
+                ),
+                StateSegment(
+                    start: start.addingTimeInterval(300),
+                    end: now,
+                    state: .breakTime,
+                    appName: "Break",
+                    bundleID: nil,
+                    category: .ignore,
+                    titleStored: false,
+                    titleDisplay: nil,
+                    source: [.breakSession]
+                )
+            ],
+            appUsage: [
+                AppUsageSegment(start: start, end: start.addingTimeInterval(200), appName: "Codex", bundleID: "codex", category: .work),
+                AppUsageSegment(start: start.addingTimeInterval(200), end: start.addingTimeInterval(220), appName: "Finder", bundleID: "finder", category: .ignore),
+                AppUsageSegment(start: start.addingTimeInterval(220), end: start.addingTimeInterval(400), appName: "Codex", bundleID: "codex", category: .work),
+                AppUsageSegment(start: start.addingTimeInterval(400), end: now, appName: "Safari", bundleID: "safari", category: .work)
+            ],
+            inputActivity: [
+                InputActivityBucket(start: start, end: start.addingTimeInterval(60), keyboardCount: 2, pointerCount: 1, switchCount: 1),
+                InputActivityBucket(start: start.addingTimeInterval(60), end: start.addingTimeInterval(120), keyboardCount: 3, pointerCount: 0, switchCount: 2)
+            ],
+            now: now
+        )
+
+        expect(snapshot.keyboardCount == 5 && snapshot.pointerCount == 1 && snapshot.switchCount == 3, "input timeline should aggregate input and switch counts")
+        expect(snapshot.inputBars.count == 2 && snapshot.switchMarkers.count == 2, "input timeline should produce bar and switch marker data")
+        expect(snapshot.stateDurations[.focus] == 300 && snapshot.stateDurations[.breakTime] == 300, "input timeline should aggregate state durations")
+        expect(snapshot.appSegments.count == 2, "input timeline should smooth short app switches")
+        expect(snapshot.appSegments[0].appName == "Codex" && Int(snapshot.appSegments[0].duration.rounded()) == 400, "input timeline should bridge A-B-A short switches")
+        expect(snapshot.appSegments[1].appName == "Safari", "input timeline should keep the next stable app segment")
+    }
+
+    private static func checkInputTimelineStateSmoothing() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let now = start.addingTimeInterval(7_200)
+        let snapshot = InputTimelineSnapshot(
+            windowSeconds: 7_200,
+            stateSegments: [
+                StateSegment(start: start, end: start.addingTimeInterval(3_000), state: .focus, appName: "Codex", bundleID: "codex", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(3_000), end: start.addingTimeInterval(3_020), state: .distracted, appName: "Browser", bundleID: "browser", category: .entertainment, titleStored: false, titleDisplay: nil, source: [.windowTitle]),
+                StateSegment(start: start.addingTimeInterval(3_020), end: start.addingTimeInterval(6_600), state: .focus, appName: "Codex", bundleID: "codex", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(6_600), end: now, state: .breakTime, appName: "Break", bundleID: nil, category: .ignore, titleStored: false, titleDisplay: nil, source: [.breakSession])
+            ],
+            appUsage: [],
+            inputActivity: [],
+            now: now
+        )
+
+        expect(snapshot.stateDurations[.distracted] == 20, "state smoothing should preserve raw state durations")
+        expect(snapshot.stateRanges.count == 2, "state smoothing should hide tiny visual fragments")
+        expect(snapshot.stateRanges[0].state == .focus && snapshot.stateRanges[1].state == .breakTime, "state smoothing should merge tiny fragments into nearby states")
+    }
+
+    private static func checkInputWorkloadSummary() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let day = Date(timeIntervalSince1970: 86_400)
+        let start = calendar.startOfDay(for: day)
+        let summary = InputWorkloadSummary(
+            dayContaining: day,
+            inputActivity: [
+                InputActivityBucket(start: start.addingTimeInterval(-60), end: start, keyboardCount: 99, pointerCount: 99, switchCount: 99),
+                InputActivityBucket(start: start.addingTimeInterval(60), end: start.addingTimeInterval(120), keyboardCount: 12, pointerCount: 4, switchCount: 2),
+                InputActivityBucket(start: start.addingTimeInterval(180), end: start.addingTimeInterval(240), keyboardCount: 8, pointerCount: 1, switchCount: 3)
+            ],
+            calendar: calendar
+        )
+
+        expect(summary.estimatedTypedCharacters == 20, "workload summary should aggregate estimated typed characters")
+        expect(summary.pointerActionCount == 5, "workload summary should aggregate pointer actions")
+        expect(summary.contextSwitchCount == 5, "workload summary should aggregate context switches")
+        expect(summary.totalWorkloadEvents == 30 && summary.activeMinutes == 2, "workload summary should expose readable totals")
+        expect(FocusPetFormatters.estimatedTypedCharacters(20) == "键入约 20 字", "typed character formatter should be readable")
+        expect(FocusPetFormatters.contextSwitches(5) == "上下文切换 5 次", "context switch formatter should be readable")
+    }
+
+    private static func checkInputActivityStorage() {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-input-activity-check-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let start = Date(timeIntervalSince1970: 120)
+        let snapshot = LocalStoreSnapshot(
+            inputActivity: [
+                InputActivityBucket(start: start, end: start.addingTimeInterval(60), keyboardCount: 12, pointerCount: 7, switchCount: 2)
+            ]
+        )
+        let store = LocalStore(rootURL: root)
+        store.saveSnapshot(snapshot)
+        let loaded = store.loadSnapshot()
+        expect(loaded.inputActivity == snapshot.inputActivity, "local store should persist input activity buckets")
+
+        let legacyJSON = """
+        {
+          "settings": {},
+          "classificationRules": [],
+          "stateSegments": [],
+          "appUsage": [],
+          "focusSessions": [],
+          "breakSessions": [],
+          "nudges": []
+        }
+        """
+        guard let data = legacyJSON.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(LocalStoreSnapshot.self, from: data) else {
+            expect(false, "legacy snapshot should decode without input activity")
+            return
+        }
+        expect(decoded.inputActivity.isEmpty, "legacy snapshots should default input activity to empty")
     }
 
     private static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {

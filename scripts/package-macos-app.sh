@@ -6,11 +6,13 @@ APP_DIR="$ROOT_DIR/.build/FocusPet.app"
 EXECUTABLE="$ROOT_DIR/.build/debug/FocusPet"
 LOCAL_PET_PACKS_ROOT="$ROOT_DIR/external_generated_packs"
 APP_ICON="$ROOT_DIR/Sources/FocusPetMac/Resources/AppIcon.icns"
-INCLUDE_LOCAL_TEST_PETS=0
+INCLUDE_LOCAL_TEST_PETS=1
 
 for arg in "$@"; do
     if [[ "$arg" == "--include-local-test-pets" ]]; then
         INCLUDE_LOCAL_TEST_PETS=1
+    elif [[ "$arg" == "--exclude-local-test-pets" ]]; then
+        INCLUDE_LOCAL_TEST_PETS=0
     fi
 done
 

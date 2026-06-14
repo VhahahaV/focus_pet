@@ -6,6 +6,7 @@ public struct LocalStoreSnapshot: Codable, Hashable, Sendable {
     public var classificationRules: [ClassificationRule]
     public var stateSegments: [StateSegment]
     public var appUsage: [AppUsageSegment]
+    public var inputActivity: [InputActivityBucket]
     public var focusSessions: [FocusSession]
     public var breakSessions: [BreakSession]
     public var nudges: [NudgeEvent]
@@ -15,6 +16,7 @@ public struct LocalStoreSnapshot: Codable, Hashable, Sendable {
         classificationRules: [ClassificationRule] = [],
         stateSegments: [StateSegment] = [],
         appUsage: [AppUsageSegment] = [],
+        inputActivity: [InputActivityBucket] = [],
         focusSessions: [FocusSession] = [],
         breakSessions: [BreakSession] = [],
         nudges: [NudgeEvent] = []
@@ -23,9 +25,35 @@ public struct LocalStoreSnapshot: Codable, Hashable, Sendable {
         self.classificationRules = classificationRules
         self.stateSegments = stateSegments
         self.appUsage = appUsage
+        self.inputActivity = inputActivity
         self.focusSessions = focusSessions
         self.breakSessions = breakSessions
         self.nudges = nudges
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case settings
+        case classificationRules
+        case stateSegments
+        case appUsage
+        case inputActivity
+        case focusSessions
+        case breakSessions
+        case nudges
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            settings: try container.decodeIfPresent(AppSettings.self, forKey: .settings) ?? AppSettings(),
+            classificationRules: try container.decodeIfPresent([ClassificationRule].self, forKey: .classificationRules) ?? [],
+            stateSegments: try container.decodeIfPresent([StateSegment].self, forKey: .stateSegments) ?? [],
+            appUsage: try container.decodeIfPresent([AppUsageSegment].self, forKey: .appUsage) ?? [],
+            inputActivity: try container.decodeIfPresent([InputActivityBucket].self, forKey: .inputActivity) ?? [],
+            focusSessions: try container.decodeIfPresent([FocusSession].self, forKey: .focusSessions) ?? [],
+            breakSessions: try container.decodeIfPresent([BreakSession].self, forKey: .breakSessions) ?? [],
+            nudges: try container.decodeIfPresent([NudgeEvent].self, forKey: .nudges) ?? []
+        )
     }
 }
 
@@ -61,6 +89,7 @@ public struct LocalStore: Sendable {
             ),
             stateSegments: load("state-segments.json", defaultValue: []),
             appUsage: load("app-usage.json", defaultValue: []),
+            inputActivity: load("input-activity.json", defaultValue: []),
             focusSessions: load("focus-sessions.json", defaultValue: []),
             breakSessions: load("break-sessions.json", defaultValue: []),
             nudges: load("nudges.json", defaultValue: [])
@@ -80,6 +109,9 @@ public struct LocalStore: Sendable {
         }
         if previous?.appUsage != snapshot.appUsage {
             save(snapshot.appUsage, to: "app-usage.json")
+        }
+        if previous?.inputActivity != snapshot.inputActivity {
+            save(snapshot.inputActivity, to: "input-activity.json")
         }
         if previous?.focusSessions != snapshot.focusSessions {
             save(snapshot.focusSessions, to: "focus-sessions.json")
