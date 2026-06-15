@@ -87,7 +87,12 @@ private struct StatusBarIconView: View {
     }
 
     private static let image: NSImage = {
-        let image = Bundle.module.url(forResource: "StatusIcon", withExtension: "png")
+        let image = FocusPetPackagedResources.url(
+            inBundleNamed: "FocusPet_FocusPetMac.bundle",
+            forResource: "StatusIcon",
+            withExtension: "png",
+            fallback: Bundle.module.url(forResource: "StatusIcon", withExtension: "png")
+        )
             .flatMap(NSImage.init(contentsOf:))
             ?? NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)
             ?? NSImage()

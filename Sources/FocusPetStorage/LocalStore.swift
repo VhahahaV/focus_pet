@@ -66,6 +66,7 @@ public struct LocalStore: Sendable {
     }
 
     public func bootstrapCleanSchemaIfNeeded() {
+        migrateLegacyRootIfNeeded()
         removeLegacyRoots()
         let metadataURL = rootURL.appendingPathComponent("schema.json")
         guard let data = try? Data(contentsOf: metadataURL),
@@ -175,12 +176,44 @@ public struct LocalStore: Sendable {
         save(StoreMetadata(schemaVersion: schemaVersion), to: "schema.json")
     }
 
+    private func migrateLegacyRootIfNeeded() {
+        let metadataURL = rootURL.appendingPathComponent("schema.json")
+        guard !FileManager.default.fileExists(atPath: metadataURL.path) else { return }
+
+        if FileManager.default.fileExists(atPath: rootURL.path),
+           let contents = try? FileManager.default.contentsOfDirectory(atPath: rootURL.path),
+           !contents.isEmpty {
+            return
+        }
+
+        for legacyURL in FocusPetDataPaths.legacyRootURLs() where legacyURL != rootURL {
+            let legacyMetadataURL = legacyURL.appendingPathComponent("schema.json")
+            guard FileManager.default.fileExists(atPath: legacyMetadataURL.path) else { continue }
+
+            do {
+                if FileManager.default.fileExists(atPath: rootURL.path) {
+                    try FileManager.default.removeItem(at: rootURL)
+                }
+                try FileManager.default.createDirectory(
+                    at: rootURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try FileManager.default.moveItem(at: legacyURL, to: rootURL)
+                return
+            } catch {
+                try? FileManager.default.copyItem(at: legacyURL, to: rootURL)
+                return
+            }
+        }
+    }
+
     private func removeLegacyRoots() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        let legacyNames = ["FocusPetV0", "FocusPetLegacy"]
-        for name in legacyNames {
-            if let url = appSupport?.appendingPathComponent(name, isDirectory: true),
-               url != rootURL {
+        let metadataURL = rootURL.appendingPathComponent("schema.json")
+        guard FileManager.default.fileExists(atPath: metadataURL.path) else { return }
+
+        for url in FocusPetDataPaths.legacyRootURLs() where url != rootURL {
+            let legacyMetadataURL = url.appendingPathComponent("schema.json")
+            if FileManager.default.fileExists(atPath: legacyMetadataURL.path) {
                 try? FileManager.default.removeItem(at: url)
             }
         }
@@ -199,14 +232,6 @@ public extension LocalStoreSnapshot {
             return redacted
         }
         return copy
-    }
-}
-
-public enum FocusPetDataPaths {
-    public static func rootURL() -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        return appSupport.appendingPathComponent("FocusPetMVP", isDirectory: true)
     }
 }
 

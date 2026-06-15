@@ -449,7 +449,12 @@ private struct DashboardSidebar: View {
 
 private struct DashboardAppIconMark: View {
     private static let appIcon: NSImage = {
-        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+        if let url = FocusPetPackagedResources.url(
+            inBundleNamed: "FocusPet_FocusPetMac.bundle",
+            forResource: "AppIcon",
+            withExtension: "png",
+            fallback: Bundle.module.url(forResource: "AppIcon", withExtension: "png")
+        ),
            let image = NSImage(contentsOf: url) {
             return image
         }
@@ -5480,154 +5485,138 @@ struct SessionStatPill: View {
 }
 
 struct SettingsView: View {
-    @EnvironmentObject private var model: FocusPetModel
-    @State private var selectedSection: SettingsSection = .rhythm
+    @State private var expandedModules: Set<SettingsModule> = Set(SettingsModule.allCases)
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 12) {
-                SettingsSidebar(selection: $selectedSection)
-                    .frame(width: 196)
-                ScrollView {
-                    SettingsSectionContent(section: selectedSection)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(SettingsModule.allCases) { module in
+                    SettingsAccordionCard(
+                        module: module,
+                        isExpanded: expandedModules.contains(module)
+                    ) {
+                        toggle(module)
+                    } content: {
+                        SettingsModuleContent(module: module)
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    SlidingSegmentedPicker(
-                        options: settingsSectionOptions(),
-                        selection: $selectedSection,
-                        compact: true
-                    )
-                    SettingsSectionContent(section: selectedSection)
-                }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
+    private func toggle(_ module: SettingsModule) {
+        if expandedModules.contains(module) {
+            expandedModules.remove(module)
+        } else {
+            expandedModules.insert(module)
         }
     }
 }
 
-private enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
-    case rhythm
+private enum SettingsModule: String, CaseIterable, Identifiable, Hashable {
     case recognition
     case reminders
-    case privacyData
+    case data
     case about
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .rhythm: "节奏"
         case .recognition: "识别"
         case .reminders: "提醒"
-        case .privacyData: "隐私与数据"
+        case .data: "数据"
         case .about: "关于"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .recognition: "状态判断"
+        case .reminders: "气泡与系统通知"
+        case .data: "本地记录"
+        case .about: "应用信息"
         }
     }
 
     var symbolName: String {
         switch self {
-        case .rhythm: "timer"
         case .recognition: "slider.horizontal.3"
         case .reminders: "bell.badge.fill"
-        case .privacyData: "lock.shield.fill"
+        case .data: "internaldrive.fill"
         case .about: "info.circle.fill"
         }
     }
 
     var tint: Color {
         switch self {
-        case .rhythm: DashboardPalette.restGreen
         case .recognition: DashboardPalette.distractedPeach
         case .reminders: DashboardPalette.focusBlue
-        case .privacyData: DashboardPalette.awayPurple
+        case .data: DashboardPalette.awayPurple
         case .about: DashboardPalette.gold
         }
     }
 }
 
-private func settingsSectionOptions() -> [SlidingSegmentOption<SettingsSection>] {
-    SettingsSection.allCases.map {
-        SlidingSegmentOption(value: $0, title: $0.title, symbol: $0.symbolName, tint: $0.tint)
-    }
-}
-
-private struct SettingsSidebar: View {
-    @Binding var selection: SettingsSection
+private struct SettingsAccordionCard<Content: View>: View {
+    var module: SettingsModule
+    var isExpanded: Bool
+    var toggle: () -> Void
+    @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(SettingsSection.allCases) { section in
-                SettingsSidebarButton(section: section, isSelected: selection == section) {
-                    selection = section
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: toggle) {
+                HStack(spacing: 10) {
+                    Image(systemName: module.symbolName)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(module.tint)
+                        .frame(width: 30, height: 30)
+                        .background(module.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(module.title)
+                            .font(.headline)
+                            .foregroundStyle(DashboardPalette.primaryText)
+                        Text(module.subtitle)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(DashboardPalette.secondaryText)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                        .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                        .animation(.easeInOut(duration: 0.16), value: isExpanded)
                 }
             }
+            .buttonStyle(.plain)
+            .help(module.title)
+
+            if isExpanded {
+                Divider()
+                    .padding(.vertical, 10)
+                content()
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
-        .padding(8)
-        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(DashboardPalette.border, lineWidth: 1)
-        }
-        .liquidGlassSurface(cornerRadius: 12)
+        .dashboardCard(12, tint: module.tint)
     }
 }
 
-private struct SettingsSidebarButton: View {
-    var section: SettingsSection
-    var isSelected: Bool
-    var action: () -> Void
+private struct SettingsModuleContent: View {
+    var module: SettingsModule
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 9) {
-                Image(systemName: section.symbolName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(isSelected ? section.tint : DashboardPalette.secondaryText)
-                    .frame(width: 24, height: 24)
-                    .background(section.tint.opacity(isSelected ? 0.15 : 0.07), in: RoundedRectangle(cornerRadius: 7))
-                Text(section.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(isSelected ? DashboardPalette.primaryText : DashboardPalette.secondaryText)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 8)
-            .background(isSelected ? Color.white.opacity(0.62) : Color.clear, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay(alignment: .leading) {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(section.tint)
-                        .frame(width: 4)
-                        .padding(.vertical, 7)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .help(section.title)
-    }
-}
-
-private struct SettingsSectionContent: View {
-    var section: SettingsSection
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            switch section {
-            case .rhythm:
-                RhythmSettingsPanel()
-            case .recognition:
-                RecognitionSettingsPanel()
-            case .reminders:
-                ReminderSettingsPanel()
-            case .privacyData:
-                PrivacyDataSettingsPanel()
-            case .about:
-                AboutSettingsPanel()
-            }
+        switch module {
+        case .recognition:
+            RecognitionSettingsPanel()
+        case .reminders:
+            ReminderSettingsPanel()
+        case .data:
+            PrivacyDataSettingsPanel()
+        case .about:
+            AboutSettingsPanel()
         }
     }
 }
@@ -5645,43 +5634,6 @@ struct PetView: View {
         .onAppear {
             model.refreshPetPacks()
         }
-    }
-}
-
-private struct RhythmSettingsPanel: View {
-    @EnvironmentObject private var model: FocusPetModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("节奏", systemImage: "timer")
-                .font(.headline)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 8)], spacing: 8) {
-                NumberStepperControl(
-                    title: "默认专注",
-                    value: $model.settings.focusTargetMinutes,
-                    range: 5...180,
-                    suffix: "分钟",
-                    tint: DashboardPalette.focusBlue
-                )
-                .onChange(of: model.settings.focusTargetMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(
-                    title: "默认休息",
-                    value: $model.settings.breakMinutes,
-                    range: 1...60,
-                    suffix: "分钟",
-                    tint: DashboardPalette.restGreen
-                )
-                .onChange(of: model.settings.breakMinutes) { _, _ in model.saveSettings() }
-                TogglePillButton(
-                    title: "完成后自动休息",
-                    symbol: "cup.and.saucer.fill",
-                    isOn: $model.settings.autoStartBreak,
-                    tint: DashboardPalette.restGreen
-                )
-                .onChange(of: model.settings.autoStartBreak) { _, _ in model.saveSettings() }
-            }
-        }
-        .dashboardCard(12, tint: DashboardPalette.restGreen)
     }
 }
 
@@ -5751,33 +5703,28 @@ private func judgmentPresetOptions() -> [SlidingSegmentOption<JudgmentSensitivit
 
 private struct RecognitionSettingsPanel: View {
     @EnvironmentObject private var model: FocusPetModel
+    @State private var selectedPresetOverride: JudgmentSensitivityPreset?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("识别", systemImage: "slider.horizontal.3")
-                .font(.headline)
             SlidingSegmentedPicker(
                 options: judgmentPresetOptions(),
                 selection: Binding(
-                    get: { JudgmentSensitivityPreset.matching(model.settings.judgment) },
+                    get: { selectedPresetOverride ?? JudgmentSensitivityPreset.matching(model.settings.judgment) },
                     set: { preset in
+                        selectedPresetOverride = preset == .custom ? .custom : nil
                         if let settings = preset.judgmentSettings {
                             model.settings.judgment = settings
-                            model.saveSettings()
                         }
+                        model.saveSettings()
                     }
                 ),
                 compact: true
             )
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 8)], spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 judgmentControls
             }
-            currentAppRulePanel
-            if !model.rules.isEmpty {
-                userRulesPanel
-            }
         }
-        .dashboardCard(12, tint: DashboardPalette.distractedPeach)
     }
 
     @ViewBuilder
@@ -5789,7 +5736,7 @@ private struct RecognitionSettingsPanel: View {
             suffix: "秒",
             tint: FocusPetCore.FocusState.distracted.timelineColor
         )
-        .onChange(of: model.settings.judgment.inputIdleDistractedSeconds) { _, _ in model.saveSettings() }
+        .onChange(of: model.settings.judgment.inputIdleDistractedSeconds) { _, _ in saveCustomJudgment() }
         NumberStepperControl(
             title: "娱乐走神",
             value: $model.settings.judgment.entertainmentDistractedSeconds,
@@ -5797,7 +5744,7 @@ private struct RecognitionSettingsPanel: View {
             suffix: "秒",
             tint: .orange
         )
-        .onChange(of: model.settings.judgment.entertainmentDistractedSeconds) { _, _ in model.saveSettings() }
+        .onChange(of: model.settings.judgment.entertainmentDistractedSeconds) { _, _ in saveCustomJudgment() }
         NumberStepperControl(
             title: "输入恢复专注",
             value: $model.settings.judgment.focusRecoverySeconds,
@@ -5805,7 +5752,7 @@ private struct RecognitionSettingsPanel: View {
             suffix: "秒",
             tint: FocusPetCore.FocusState.focus.timelineColor
         )
-        .onChange(of: model.settings.judgment.focusRecoverySeconds) { _, _ in model.saveSettings() }
+        .onChange(of: model.settings.judgment.focusRecoverySeconds) { _, _ in saveCustomJudgment() }
         NumberStepperControl(
             title: "暂离回填",
             value: $model.settings.judgment.idleAwaySeconds,
@@ -5813,128 +5760,12 @@ private struct RecognitionSettingsPanel: View {
             suffix: "秒",
             tint: FocusPetCore.FocusState.away.timelineColor
         )
-        .onChange(of: model.settings.judgment.idleAwaySeconds) { _, _ in model.saveSettings() }
+        .onChange(of: model.settings.judgment.idleAwaySeconds) { _, _ in saveCustomJudgment() }
     }
 
-    private var currentAppRulePanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                AppIconView(appName: model.currentSnapshot.appName, bundleID: model.currentSnapshot.bundleID, category: model.currentSnapshot.category, size: 26)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.currentSnapshot.appName)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                    Text(model.currentSnapshot.category.title)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 7)], spacing: 7) {
-                ForEach(ActivityCategory.userFacingClassificationCases) { category in
-                    Button {
-                        applyCurrentAppRule(category)
-                    } label: {
-                        Label(category.correctionTitle, systemImage: symbolName(for: category))
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .liquidGlassButtonStyle()
-                    .tint(tint(for: category))
-                    .help(category.correctionTitle)
-                }
-            }
-        }
-        .padding(10)
-        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
-        }
-    }
-
-    private var userRulesPanel: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Text("用户规则")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(model.rules.count) 条")
-                    .font(.caption2.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(model.rules.prefix(6)) { rule in
-                UserRuleRow(rule: rule) {
-                    model.deleteRule(rule)
-                }
-            }
-        }
-        .padding(10)
-        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
-        }
-    }
-
-    private func applyCurrentAppRule(_ category: ActivityCategory) {
-        if let bundleID = model.currentSnapshot.bundleID, !bundleID.isEmpty {
-            model.setRule(pattern: bundleID, matchKind: .bundleID, category: category)
-        } else {
-            model.setRule(pattern: model.currentSnapshot.appName, matchKind: .appName, category: category)
-        }
-    }
-
-    private func symbolName(for category: ActivityCategory) -> String {
-        switch category {
-        case .work: "briefcase.fill"
-        case .entertainment: "play.rectangle.fill"
-        case .ignore: "eye.slash.fill"
-        case .neutral: "circle"
-        }
-    }
-
-    private func tint(for category: ActivityCategory) -> Color {
-        switch category {
-        case .work: DashboardPalette.focusBlue
-        case .entertainment: DashboardPalette.distractedRed
-        case .ignore: DashboardPalette.pauseGray
-        case .neutral: DashboardPalette.secondaryText
-        }
-    }
-}
-
-private struct UserRuleRow: View {
-    var rule: ClassificationRule
-    var delete: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "tag.fill")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(rule.pattern)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text("\(rule.matchKind.title) · \(rule.category.title)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            Button(role: .destructive, action: delete) {
-                Image(systemName: "trash")
-                    .font(.caption.weight(.semibold))
-            }
-            .buttonStyle(.plain)
-            .help("删除规则")
-        }
-        .padding(8)
-        .background(Color.white.opacity(0.42), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    private func saveCustomJudgment() {
+        selectedPresetOverride = .custom
+        model.saveSettings()
     }
 }
 
@@ -6261,12 +6092,10 @@ private struct ReminderSettingsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("提醒", systemImage: "bell.badge.fill")
-                .font(.headline)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 TogglePillButton(title: "气泡提醒", symbol: "bubble.left.and.bubble.right.fill", isOn: $model.settings.reminder.enablePetBubbles, tint: .blue)
                     .onChange(of: model.settings.reminder.enablePetBubbles) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "系统通知", symbol: "bell.fill", isOn: $model.settings.reminder.enableSystemNotifications, tint: .orange)
+                TogglePillButton(title: "系统通知", symbol: "bell.fill", isOn: $model.settings.reminder.enableSystemNotifications, tint: DashboardPalette.focusBlue)
                     .onChange(of: model.settings.reminder.enableSystemNotifications) { _, _ in model.saveSettings() }
                 TogglePillButton(title: "走神提醒", symbol: "eye.trianglebadge.exclamationmark", isOn: $model.settings.reminder.enableDistractedNudges, tint: DashboardPalette.distractedRed)
                     .onChange(of: model.settings.reminder.enableDistractedNudges) { _, _ in model.saveSettings() }
@@ -6275,7 +6104,7 @@ private struct ReminderSettingsPanel: View {
                 TogglePillButton(title: "欢迎回来", symbol: "hand.wave.fill", isOn: $model.settings.reminder.enableWelcomeBackNudges, tint: .cyan)
                     .onChange(of: model.settings.reminder.enableWelcomeBackNudges) { _, _ in model.saveSettings() }
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 NumberStepperControl(title: "暂停时长", value: $model.settings.reminder.pauseMinutes, range: 5...240, suffix: "分钟", tint: .orange)
                     .onChange(of: model.settings.reminder.pauseMinutes) { _, _ in model.saveSettings() }
                 NumberStepperControl(title: "温和走神", value: $model.settings.reminder.lightDistractedMinutes, range: 1...60, suffix: "分钟", tint: DashboardPalette.distractedPeach)
@@ -6303,7 +6132,6 @@ private struct ReminderSettingsPanel: View {
             }
             .liquidGlassButtonStyle()
         }
-        .dashboardCard(12, tint: DashboardPalette.focusBlue)
     }
 }
 
@@ -6312,28 +6140,7 @@ private struct PrivacyDataSettingsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("隐私与数据", systemImage: "lock.shield.fill")
-                .font(.headline)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
-                TogglePillButton(title: "暂停所有记录", symbol: "pause.circle.fill", isOn: $model.settings.privacy.pauseActivityRecording, tint: .orange)
-                    .onChange(of: model.settings.privacy.pauseActivityRecording) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "只保存识别结果", symbol: "tag.fill", isOn: $model.settings.privacy.storeOnlyCategoryResult, tint: .blue)
-                    .onChange(of: model.settings.privacy.storeOnlyCategoryResult) { _, enabled in
-                        if enabled {
-                            model.settings.privacy.storeRawTitle = false
-                        }
-                        model.saveSettings()
-                    }
-                TogglePillButton(title: "保存完整窗口标题", symbol: "text.alignleft", isOn: $model.settings.privacy.storeRawTitle, tint: .purple)
-                    .disabled(model.settings.privacy.storeOnlyCategoryResult)
-                    .opacity(model.settings.privacy.storeOnlyCategoryResult ? 0.45 : 1)
-                    .onChange(of: model.settings.privacy.storeRawTitle) { _, enabled in
-                        if enabled {
-                            model.settings.privacy.storeOnlyCategoryResult = false
-                        }
-                        model.saveSettings()
-                    }
-            }
+            TogglePillButton(title: "记录本地统计", symbol: "internaldrive.fill", isOn: recordingBinding, tint: DashboardPalette.awayPurple)
             HStack(spacing: 9) {
                 Image(systemName: "internaldrive.fill")
                     .font(.system(size: 14, weight: .semibold))
@@ -6343,7 +6150,7 @@ private struct PrivacyDataSettingsPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("本机数据")
                         .font(.caption.weight(.semibold))
-                    Text("持续保存")
+                    Text(model.recordingStatusTitle)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -6358,24 +6165,29 @@ private struct PrivacyDataSettingsPanel: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(DashboardPalette.innerStroke, lineWidth: 1)
             }
-            HStack {
+            VStack(alignment: .leading, spacing: 8) {
                 Button {
                     model.exportData(redacted: true)
                 } label: {
                     Label("导出脱敏统计", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .liquidGlassButtonStyle()
                 Button {
                     model.exportData(redacted: false)
                 } label: {
                     Label("导出完整统计", systemImage: "doc.text")
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .liquidGlassButtonStyle()
                 Button(role: .destructive) {
                     model.deleteAllData()
                 } label: {
                     Label("清空数据", systemImage: "trash")
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .liquidGlassButtonStyle()
             }
-            .liquidGlassButtonStyle()
             if let exportURL = model.exportURL {
                 Text(exportURL.path)
                     .font(.caption)
@@ -6383,21 +6195,27 @@ private struct PrivacyDataSettingsPanel: View {
                     .lineLimit(2)
             }
         }
-        .dashboardCard(12, tint: DashboardPalette.awayPurple)
+    }
+
+    private var recordingBinding: Binding<Bool> {
+        Binding(
+            get: { !model.settings.privacy.pauseActivityRecording },
+            set: { enabled in
+                model.settings.privacy.pauseActivityRecording = !enabled
+                model.saveSettings()
+            }
+        )
     }
 }
 
 private struct AboutSettingsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("关于", systemImage: "info.circle.fill")
-                .font(.headline)
             Text("Focus Pet 使用前台 App、窗口标题、输入空闲和专注/休息会话判断状态。所有统计保存在本机。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .dashboardCard(12, tint: DashboardPalette.gold)
     }
 }
 

@@ -1,3 +1,4 @@
+import FocusPetCore
 import Foundation
 
 public struct PetPackCatalog: Sendable {
@@ -62,10 +63,14 @@ public struct PetPackCatalog: Sendable {
         let workingDirectory = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
         let environmentRoot = ProcessInfo.processInfo.environment["FOCUS_PET_LOCAL_PACKS_ROOT"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let packagedResourceRoot = FocusPetPackagedResources.bundle(
+            named: "FocusPet_FocusPetResources.bundle",
+            fallback: Bundle.module
+        )?.resourceURL
         let candidates: [URL?] = [
             Bundle.main.resourceURL?
                 .appendingPathComponent("LocalPetPacks", isDirectory: true),
-            Bundle.module.resourceURL?
+            packagedResourceRoot?
                 .appendingPathComponent("LocalPetPacks", isDirectory: true),
             workingDirectory
                 .appendingPathComponent("external_generated_packs", isDirectory: true),

@@ -3,6 +3,7 @@ import Foundation
 public struct ReminderSettings: Codable, Hashable, Sendable {
     public var enablePetBubbles: Bool
     public var enableSystemNotifications: Bool
+    public var hasAppliedSystemNotificationDefault: Bool
     public var pauseUntil: Date?
     public var pauseMinutes: Int
     public var enableDistractedNudges: Bool
@@ -16,7 +17,8 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
 
     public init(
         enablePetBubbles: Bool = true,
-        enableSystemNotifications: Bool = false,
+        enableSystemNotifications: Bool = true,
+        hasAppliedSystemNotificationDefault: Bool = true,
         pauseUntil: Date? = nil,
         pauseMinutes: Int = 30,
         enableDistractedNudges: Bool = true,
@@ -30,6 +32,7 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
     ) {
         self.enablePetBubbles = enablePetBubbles
         self.enableSystemNotifications = enableSystemNotifications
+        self.hasAppliedSystemNotificationDefault = hasAppliedSystemNotificationDefault
         self.pauseUntil = pauseUntil
         self.pauseMinutes = min(240, max(5, pauseMinutes))
         self.enableDistractedNudges = enableDistractedNudges
@@ -67,6 +70,7 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
         self = ReminderSettings(
             enablePetBubbles: enablePetBubbles,
             enableSystemNotifications: enableSystemNotifications,
+            hasAppliedSystemNotificationDefault: hasAppliedSystemNotificationDefault,
             pauseUntil: pauseUntil,
             pauseMinutes: pauseMinutes,
             enableDistractedNudges: enableDistractedNudges,
@@ -83,6 +87,7 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case enablePetBubbles
         case enableSystemNotifications
+        case hasAppliedSystemNotificationDefault
         case pauseUntil
         case pauseMinutes
         case enableDistractedNudges
@@ -99,7 +104,8 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             enablePetBubbles: try container.decodeIfPresent(Bool.self, forKey: .enablePetBubbles) ?? true,
-            enableSystemNotifications: try container.decodeIfPresent(Bool.self, forKey: .enableSystemNotifications) ?? false,
+            enableSystemNotifications: try container.decodeIfPresent(Bool.self, forKey: .enableSystemNotifications) ?? true,
+            hasAppliedSystemNotificationDefault: try container.decodeIfPresent(Bool.self, forKey: .hasAppliedSystemNotificationDefault) ?? false,
             pauseUntil: try container.decodeIfPresent(Date.self, forKey: .pauseUntil),
             pauseMinutes: try container.decodeIfPresent(Int.self, forKey: .pauseMinutes) ?? 30,
             enableDistractedNudges: try container.decodeIfPresent(Bool.self, forKey: .enableDistractedNudges) ?? true,

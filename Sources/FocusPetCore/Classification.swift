@@ -152,7 +152,12 @@ public extension ActivityClassifier {
     }
 
     private static func loadCatalogEntries() -> [ClassificationCatalogEntry] {
-        guard let url = Bundle.module.url(forResource: "AppClassificationCatalog", withExtension: "json"),
+        guard let url = FocusPetPackagedResources.url(
+            inBundleNamed: "FocusPet_FocusPetCore.bundle",
+            forResource: "AppClassificationCatalog",
+            withExtension: "json",
+            fallback: Bundle.module.url(forResource: "AppClassificationCatalog", withExtension: "json")
+        ),
               let data = try? Data(contentsOf: url),
               let entries = try? JSONDecoder().decode([ClassificationCatalogEntry].self, from: data) else {
             return fallbackRules.map {

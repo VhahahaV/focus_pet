@@ -336,17 +336,15 @@ final class InputActivityMonitor: @unchecked Sendable {
 
     func drainCounts(fallbackWindowSeconds: TimeInterval?) -> InputEventCounts {
         var counts: InputEventCounts
-        let isTapRunning: Bool
         lock.lock()
         counts = InputEventCounts(keyboardCount: keyboardCount, pointerCount: pointerCount)
         keyboardCount = 0
         pointerCount = 0
-        isTapRunning = eventTap != nil
         lock.unlock()
 
         if let fallbackWindowSeconds {
             let fallback = IdleMonitor.fallbackInputCounts(seconds: fallbackWindowSeconds)
-            if !isTapRunning, counts.keyboardCount == 0 {
+            if counts.keyboardCount == 0 {
                 counts.keyboardCount = fallback.keyboardCount
             }
             if counts.pointerCount == 0 {

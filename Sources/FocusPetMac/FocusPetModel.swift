@@ -134,6 +134,7 @@ final class FocusPetModel: ObservableObject {
         lastSummaryRefreshedAt = now
         refreshPetPacks(saveIfChanged: false)
         configurePetPanelInteractions()
+        applySettingsMigrationsIfNeeded()
     }
 
     var activeFocusSession: FocusSession? {
@@ -735,6 +736,7 @@ final class FocusPetModel: ObservableObject {
     }
 
     func saveSettings() {
+        settings.reminder.hasAppliedSystemNotificationDefault = true
         if settings.privacy.storeOnlyCategoryResult {
             settings.privacy.storeRawTitle = false
         }
@@ -745,6 +747,14 @@ final class FocusPetModel: ObservableObject {
             notificationSender.requestAuthorization()
         }
         updatePet()
+    }
+
+    private func applySettingsMigrationsIfNeeded() {
+        guard !settings.reminder.hasAppliedSystemNotificationDefault else { return }
+        settings.reminder.enableSystemNotifications = true
+        settings.reminder.hasAppliedSystemNotificationDefault = true
+        save()
+        notificationSender.requestAuthorization()
     }
 
     func refreshPetPacks(saveIfChanged: Bool = true) {

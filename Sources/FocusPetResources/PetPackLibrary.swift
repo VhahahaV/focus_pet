@@ -1,3 +1,4 @@
+import FocusPetCore
 import Foundation
 
 public struct ImportedPetPack: Hashable, Sendable {
@@ -36,11 +37,7 @@ public struct PetPackLibrary: Sendable {
     }
 
     public static func defaultInstallRootURL() -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        return appSupport
-            .appendingPathComponent("FocusPetMVP", isDirectory: true)
-            .appendingPathComponent("PetPacks", isDirectory: true)
+        FocusPetDataPaths.petPacksRootURL()
     }
 
     public func importPack(from selectedURL: URL) throws -> ImportedPetPack {
