@@ -9,6 +9,7 @@ OPEN_SMOKE=0
 INSTALL_TO=""
 REPLACE_INSTALL=0
 QUARANTINE=1
+EXPECT_LOCAL_TEST_PETS=0
 LAUNCHED_EXECUTABLE=""
 REPORT_PATH=""
 
@@ -24,6 +25,8 @@ Options:
   --local                 Skip distribution-only gates for local smoke DMGs
   --distribution          Require distribution gates. Default
   --open-smoke            Launch the mounted or installed app and confirm it runs
+  --expect-local-test-pets
+                          Require bundled LocalPetPacks to contain pet manifests
   --install-to DIR        Copy the app into DIR and verify the copied app
   --replace               Replace an existing app at --install-to
   --no-quarantine         Local mode only: skip downloaded-file simulation
@@ -66,6 +69,17 @@ verify_app() {
     fi
 }
 
+verify_local_test_pets() {
+    local app_path="$1"
+    local packs_dir="$app_path/Contents/Resources/LocalPetPacks"
+    local pack_count
+
+    test -d "$packs_dir" || die "LocalPetPacks directory is missing: $packs_dir"
+    pack_count="$(find "$packs_dir" -mindepth 2 -maxdepth 2 -name pet.json -print | wc -l | tr -d '[:space:]')"
+    [[ "$pack_count" -gt 0 ]] || die "LocalPetPacks does not contain any pet.json manifests: $packs_dir"
+    echo "Found $pack_count packaged local pet pack(s)."
+}
+
 verify_install_link() {
     local mount_point="$1"
     local link_path="$mount_point/Applications"
@@ -86,7 +100,7 @@ open_smoke() {
     LAUNCHED_EXECUTABLE="$canonical_executable"
 
     echo "Launching smoke test..."
-    open -n "$app_path"
+    open -n -a "$app_path"
 
     for _ in {1..10}; do
         if pgrep -f "$canonical_executable" >/dev/null || pgrep -f "$executable" >/dev/null; then
@@ -113,6 +127,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --open-smoke)
             OPEN_SMOKE=1
+            shift
+            ;;
+        --expect-local-test-pets)
+            EXPECT_LOCAL_TEST_PETS=1
             shift
             ;;
         --install-to)
@@ -236,6 +254,9 @@ hdiutil attach -nobrowse -readonly "$DOWNLOADED_DMG" -mountpoint "$MOUNT_POINT" 
 MOUNTED_APP="$MOUNT_POINT/$APP_BUNDLE_NAME"
 verify_install_link "$MOUNT_POINT"
 verify_app "$MOUNTED_APP"
+if [[ "$EXPECT_LOCAL_TEST_PETS" -eq 1 ]]; then
+    verify_local_test_pets "$MOUNTED_APP"
+fi
 
 LAUNCH_APP="$MOUNTED_APP"
 if [[ -n "$INSTALL_TO" ]]; then
@@ -250,6 +271,9 @@ if [[ -n "$INSTALL_TO" ]]; then
     echo "Installing app to $INSTALLED_APP..."
     ditto "$MOUNTED_APP" "$INSTALLED_APP"
     verify_app "$INSTALLED_APP"
+    if [[ "$EXPECT_LOCAL_TEST_PETS" -eq 1 ]]; then
+        verify_local_test_pets "$INSTALLED_APP"
+    fi
     LAUNCH_APP="$INSTALLED_APP"
 fi
 

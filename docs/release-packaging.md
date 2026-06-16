@@ -54,8 +54,8 @@ The script performs the release gates in order:
   `--configuration release` by default;
 - creates a stable `Focus Pet.app` bundle;
 - places SwiftPM resource bundles under `Contents/Resources`;
-- excludes `external_generated_packs` by default so local-only or third-party
-  test pet assets are not redistributed accidentally;
+- excludes `external_generated_packs` by default in distribution mode so
+  local-only or third-party test pet assets are not redistributed accidentally;
 - signs the app with hardened runtime;
 - notarizes and staples the app;
 - creates the DMG with the Applications symlink and Finder layout;
@@ -85,9 +85,9 @@ Build a local-only DMG:
 scripts/package-dmg.sh --local
 ```
 
-Pass `--include-local-test-pets` only for internal smoke testing when the local
-asset licenses are understood. The default local build matches distribution
-packaging and excludes `external_generated_packs`.
+Local mode includes `external_generated_packs` by default so pet-resource smoke
+testing catches missing packaged assets. Pass `--exclude-local-test-pets` only
+when you need a local DMG that mirrors the distribution asset policy exactly.
 
 Pass `--native` only for fast local iteration. Uploadable builds should keep the
 default universal executable so Apple Silicon and Intel Macs are both covered.
@@ -106,7 +106,7 @@ Local checks:
 
 ```bash
 scripts/verify-dmg-release.sh --local dist/local/FocusPet-local.dmg
-scripts/verify-dmg-release.sh --local --no-quarantine --open-smoke dist/local/FocusPet-local.dmg
+scripts/verify-dmg-release.sh --local --no-quarantine --open-smoke --expect-local-test-pets dist/local/FocusPet-local.dmg
 ```
 
 The verifier writes `.verification.txt` evidence files next to the checked DMG.

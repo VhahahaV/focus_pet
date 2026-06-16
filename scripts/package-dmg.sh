@@ -14,6 +14,8 @@ WINDOW_WIDTH=720
 WINDOW_HEIGHT=460
 VERIFY=1
 MODE="distribution"
+PET_PACK_MODE_SET=0
+INCLUDE_LOCAL_TEST_PETS_EFFECTIVE=0
 
 SIGN_IDENTITY="${FOCUSPET_CODESIGN_IDENTITY:-${CODESIGN_IDENTITY:-}}"
 NOTARY_PROFILE="${FOCUSPET_NOTARY_PROFILE:-${NOTARY_KEYCHAIN_PROFILE:-}}"
@@ -29,6 +31,8 @@ Usage: scripts/package-dmg.sh [options]
 By default this builds a signed, notarized, stapled distribution DMG that is safe
 to upload and download on another Mac. Use --local for a non-notarized smoke-test
 image; local images are written under dist/local/ and must not be distributed.
+Local mode includes external_generated_packs by default for internal pet-pack
+smoke testing. Distribution mode excludes them unless explicitly overridden.
 
 Options:
   --local                         Build a local-only DMG with ad-hoc signing
@@ -184,6 +188,26 @@ write_release_manifest() {
     } > "$manifest_path"
 }
 
+verify_local_test_pets() {
+    local app_path="$1"
+    local packs_dir="$app_path/Contents/Resources/LocalPetPacks"
+    local pack_count
+
+    test -d "$packs_dir" || die "LocalPetPacks directory is missing: $packs_dir"
+    pack_count="$(find "$packs_dir" -mindepth 2 -maxdepth 2 -name pet.json -print | wc -l | tr -d '[:space:]')"
+    [[ "$pack_count" -gt 0 ]] || die "LocalPetPacks does not contain any pet.json manifests: $packs_dir"
+    echo "Included $pack_count local pet pack(s)."
+}
+
+verify_no_local_test_pets() {
+    local app_path="$1"
+    local packs_dir="$app_path/Contents/Resources/LocalPetPacks"
+
+    if [[ -e "$packs_dir" ]]; then
+        die "LocalPetPacks is present in a build that should exclude local-only pet assets: $packs_dir"
+    fi
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --local)
@@ -222,7 +246,19 @@ while [[ $# -gt 0 ]]; do
             APP_ARGS+=("$1" "${2:-}")
             shift 2
             ;;
-        --universal|--native|--include-local-test-pets|--exclude-local-test-pets)
+        --include-local-test-pets)
+            APP_ARGS+=("$1")
+            PET_PACK_MODE_SET=1
+            INCLUDE_LOCAL_TEST_PETS_EFFECTIVE=1
+            shift
+            ;;
+        --exclude-local-test-pets)
+            APP_ARGS+=("$1")
+            PET_PACK_MODE_SET=1
+            INCLUDE_LOCAL_TEST_PETS_EFFECTIVE=0
+            shift
+            ;;
+        --universal|--native)
             APP_ARGS+=("$1")
             shift
             ;;
@@ -242,6 +278,10 @@ case "$MODE" in
     distribution)
         require_distribution_config
         APP_ARGS+=(--sign-identity "$SIGN_IDENTITY")
+        if [[ "$PET_PACK_MODE_SET" -eq 0 ]]; then
+            APP_ARGS+=(--exclude-local-test-pets)
+            INCLUDE_LOCAL_TEST_PETS_EFFECTIVE=0
+        fi
         DIST_OUTPUT_DIR="$DIST_DIR"
         LATEST_DMG="$DIST_DIR/FocusPet.dmg"
         ;;
@@ -250,6 +290,10 @@ case "$MODE" in
             APP_ARGS+=(--sign-identity "$SIGN_IDENTITY")
         else
             APP_ARGS+=(--ad-hoc-sign)
+        fi
+        if [[ "$PET_PACK_MODE_SET" -eq 0 ]]; then
+            APP_ARGS+=(--include-local-test-pets)
+            INCLUDE_LOCAL_TEST_PETS_EFFECTIVE=1
         fi
         DIST_OUTPUT_DIR="$LOCAL_DIST_DIR"
         LATEST_DMG="$LOCAL_DIST_DIR/FocusPet-local.dmg"
@@ -288,6 +332,11 @@ rm -rf "$STAGING_DIR" "$MOUNT_POINT" "$VERIFY_MOUNT_POINT" "$APP_ZIP" "$RW_DMG" 
 mkdir -p "$STAGING_DIR/.background" "$MOUNT_POINT" "$VERIFY_MOUNT_POINT"
 
 verify_app_signature "$APP_PATH"
+if [[ "$INCLUDE_LOCAL_TEST_PETS_EFFECTIVE" -eq 1 ]]; then
+    verify_local_test_pets "$APP_PATH"
+else
+    verify_no_local_test_pets "$APP_PATH"
+fi
 
 if [[ "$MODE" == "distribution" ]]; then
     echo "Creating app notarization archive..."
@@ -392,6 +441,7 @@ tell application "Finder"
     open dmgFolder
     delay 1
     set dmgWindow to container window of dmgFolder
+    set dmgWindowID to id of dmgWindow
     set current view of dmgWindow to icon view
     try
         set toolbar visible of dmgWindow to false
@@ -399,28 +449,14 @@ tell application "Finder"
     try
         set statusbar visible of dmgWindow to false
     end try
-    try
-        set bounds of dmgWindow to {160, 120, 160 + $WINDOW_WIDTH, 120 + $WINDOW_HEIGHT}
-    end try
+    set bounds of dmgWindow to {160, 120, 160 + $WINDOW_WIDTH, 120 + $WINDOW_HEIGHT}
     set viewOptions to icon view options of dmgWindow
-    try
-        set arrangement of viewOptions to not arranged
-    end try
-    try
-        set icon size of viewOptions to 96
-    end try
-    try
-        set text size of viewOptions to 14
-    end try
-    try
-        set background picture of viewOptions to (POSIX file "$MOUNT_POINT/.background/background.png")
-    end try
-    try
-        set position of item "$APP_BUNDLE_NAME" of dmgFolder to {210, 230}
-    end try
-    try
-        set position of item "Applications" of dmgFolder to {510, 230}
-    end try
+    set arrangement of viewOptions to not arranged
+    set icon size of viewOptions to 96
+    set text size of viewOptions to 14
+    set background picture of viewOptions to ((POSIX file "$MOUNT_POINT/.background/background.png") as alias)
+    set position of item "$APP_BUNDLE_NAME" of dmgFolder to {210, 230}
+    set position of item "Applications" of dmgFolder to {510, 230}
     update dmgFolder without registering applications
     try
         set toolbar visible of dmgWindow to false
@@ -429,9 +465,9 @@ tell application "Finder"
         set statusbar visible of dmgWindow to false
     end try
     delay 1
-    try
-        close dmgWindow
-    end try
+    if position of item "$APP_BUNDLE_NAME" of dmgFolder is not {210, 230} then error "DMG app icon position was not persisted"
+    if position of item "Applications" of dmgFolder is not {510, 230} then error "DMG Applications icon position was not persisted"
+    close Finder window id dmgWindowID
 end tell
 OSA
 
@@ -458,6 +494,11 @@ if [[ "$VERIFY" -eq 1 ]]; then
     test -L "$VERIFY_MOUNT_POINT/Applications"
     /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$VERIFY_MOUNT_POINT/$APP_BUNDLE_NAME/Contents/Info.plist" >/dev/null
     verify_app_signature "$VERIFY_MOUNT_POINT/$APP_BUNDLE_NAME"
+    if [[ "$INCLUDE_LOCAL_TEST_PETS_EFFECTIVE" -eq 1 ]]; then
+        verify_local_test_pets "$VERIFY_MOUNT_POINT/$APP_BUNDLE_NAME"
+    else
+        verify_no_local_test_pets "$VERIFY_MOUNT_POINT/$APP_BUNDLE_NAME"
+    fi
     hdiutil detach "$VERIFY_MOUNT_POINT" >/dev/null
 fi
 
