@@ -47,6 +47,37 @@ struct RecognitionDiagnosticSnapshot: Equatable {
     )
 }
 
+struct SystemPermissionSnapshot: Equatable {
+    var refreshedAt: Date
+    var inputMonitoring: SystemPermissionStatus
+    var screenRecording: SystemPermissionStatus
+    var accessibility: SystemPermissionStatus
+    var notifications: SystemPermissionStatus
+
+    static let pending = SystemPermissionSnapshot(
+        refreshedAt: Date(timeIntervalSince1970: 0),
+        inputMonitoring: .checking,
+        screenRecording: .checking,
+        accessibility: .checking,
+        notifications: .checking
+    )
+
+    func status(for destination: SystemSettingsDestination) -> SystemPermissionStatus? {
+        switch destination {
+        case .inputMonitoring:
+            inputMonitoring
+        case .screenRecording:
+            screenRecording
+        case .accessibility:
+            accessibility
+        case .notifications:
+            notifications
+        case .privacySecurity:
+            nil
+        }
+    }
+}
+
 @MainActor
 final class FocusPetModel: ObservableObject {
     @Published var settings: AppSettings
@@ -64,6 +95,7 @@ final class FocusPetModel: ObservableObject {
     @Published var statusMessage = "Focus Pet 已准备好。"
     @Published var notificationPermissionTitle = "检查中"
     @Published var notificationPermissionIsAllowed = false
+    @Published var systemPermissionSnapshot = SystemPermissionSnapshot.pending
     @Published var recognitionDiagnostic = RecognitionDiagnosticSnapshot.pending
     @Published var exportURL: URL?
     @Published var availablePetPacks: [PetPackRecord] = []
@@ -185,6 +217,7 @@ final class FocusPetModel: ObservableObject {
         refreshPetPacks(saveIfChanged: false)
         configurePetPanelInteractions()
         applySettingsMigrationsIfNeeded()
+        refreshSystemPermissionStatuses(refreshDiagnostics: false)
         refreshRecognitionDiagnostics()
     }
 
@@ -553,6 +586,7 @@ final class FocusPetModel: ObservableObject {
     func openSystemSettings(_ destination: SystemSettingsDestination) {
         destination.open()
         statusMessage = "已打开 macOS \(destination.title) 设置。"
+        schedulePermissionStatusRefresh()
     }
 
     func requestSystemPermission(_ destination: SystemSettingsDestination) {
@@ -568,6 +602,7 @@ final class FocusPetModel: ObservableObject {
             destination.open()
             statusMessage = "已打开 macOS \(destination.title) 设置。"
         }
+        schedulePermissionStatusRefresh()
     }
 
     func showPetStatusBubble() {
@@ -1013,6 +1048,23 @@ final class FocusPetModel: ObservableObject {
         }
     }
 
+    func refreshSystemPermissionStatuses(refreshDiagnostics: Bool = true) {
+        systemPermissionSnapshot = SystemPermissionSnapshot(
+            refreshedAt: Date(),
+            inputMonitoring: SystemSettingsDestination.inputMonitoring.currentStatus ?? .checking,
+            screenRecording: SystemSettingsDestination.screenRecording.currentStatus ?? .checking,
+            accessibility: SystemSettingsDestination.accessibility.currentStatus ?? .checking,
+            notifications: SystemPermissionStatus(
+                title: notificationPermissionTitle,
+                isAllowed: notificationPermissionIsAllowed
+            )
+        )
+        refreshNotificationPermissionStatus()
+        if refreshDiagnostics {
+            refreshRecognitionDiagnostics()
+        }
+    }
+
     func refreshRecognitionDiagnostics() {
         let classifier = activityClassifier
         let userRuleCount = rules.count
@@ -1065,6 +1117,23 @@ final class FocusPetModel: ObservableObject {
     private func applyNotificationPermissionState(_ state: SystemNotificationPermissionState) {
         notificationPermissionTitle = state.title
         notificationPermissionIsAllowed = state.isAllowed
+        var snapshot = systemPermissionSnapshot
+        snapshot.notifications = SystemPermissionStatus(
+            title: state.title,
+            isAllowed: state.isAllowed
+        )
+        snapshot.refreshedAt = Date()
+        systemPermissionSnapshot = snapshot
+    }
+
+    private func schedulePermissionStatusRefresh() {
+        Task { @MainActor in
+            refreshSystemPermissionStatuses(refreshDiagnostics: false)
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            refreshSystemPermissionStatuses(refreshDiagnostics: false)
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            refreshSystemPermissionStatuses(refreshDiagnostics: false)
+        }
     }
 
     func refreshPetPacks(saveIfChanged: Bool = true) {

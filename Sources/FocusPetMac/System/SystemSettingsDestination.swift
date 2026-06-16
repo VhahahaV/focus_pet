@@ -2,6 +2,18 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import IOKit.hid
+
+struct SystemPermissionStatus: Equatable, Sendable {
+    var title: String
+    var isAllowed: Bool
+
+    static let checking = SystemPermissionStatus(title: "检查中", isAllowed: false)
+
+    static func permission(_ granted: Bool) -> SystemPermissionStatus {
+        SystemPermissionStatus(title: granted ? "已允许" : "待开启", isAllowed: granted)
+    }
+}
 
 enum SystemSettingsDestination: String, CaseIterable, Identifiable {
     case inputMonitoring
@@ -23,13 +35,17 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
     }
 
     var statusTitle: String? {
+        currentStatus?.title
+    }
+
+    var currentStatus: SystemPermissionStatus? {
         switch self {
         case .inputMonitoring:
-            return permissionTitle(CGPreflightListenEventAccess())
+            return .permission(Self.inputMonitoringIsGranted())
         case .screenRecording:
-            return permissionTitle(CGPreflightScreenCaptureAccess())
+            return .permission(CGPreflightScreenCaptureAccess())
         case .accessibility:
-            return permissionTitle(AXIsProcessTrusted())
+            return .permission(AXIsProcessTrusted())
         case .notifications, .privacySecurity:
             return nil
         }
@@ -60,7 +76,7 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
     func requestAccessIfAvailable() -> Bool? {
         switch self {
         case .inputMonitoring:
-            return CGRequestListenEventAccess()
+            return IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) || CGRequestListenEventAccess()
         case .screenRecording:
             return CGRequestScreenCaptureAccess()
         case .accessibility, .notifications, .privacySecurity:
@@ -68,7 +84,8 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
         }
     }
 
-    private func permissionTitle(_ granted: Bool) -> String {
-        granted ? "已允许" : "待开启"
+    private static func inputMonitoringIsGranted() -> Bool {
+        IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
+            || CGPreflightListenEventAccess()
     }
 }

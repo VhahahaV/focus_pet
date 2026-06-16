@@ -52,8 +52,8 @@ struct MainDashboardView: View {
             DashboardWindowLifecycleReporter(model: model)
                 .allowsHitTesting(false)
         }
-        .foregroundStyle(DashboardPalette.primaryText)
-        .tint(DashboardPalette.accent)
+        .foregroundStyle(FPColor.textPrimary)
+        .tint(FPColor.focus500)
         .preferredColorScheme(.light)
         .onChange(of: contentTab) { _, tab in
             if pendingContentTab != nil && pendingContentTab != tab {
@@ -369,57 +369,57 @@ private final class DashboardPetAnchorReportingView: NSView {
 }
 
 private enum DashboardPalette {
-    static let backgroundTop = Color(red: 0.96, green: 0.985, blue: 1.0)
-    static let backgroundMiddle = Color(red: 0.90, green: 0.95, blue: 1.0)
-    static let backgroundBottom = Color(red: 0.96, green: 0.94, blue: 1.0)
-    static let sidebarFill = Color.white.opacity(0.46)
-    static let contentFill = Color.white.opacity(0.64)
-    static let cardFill = Color.white.opacity(0.74)
-    static let elevatedCardFill = Color.white.opacity(0.84)
-    static let sidebarButtonHoverFill = Color.white.opacity(0.42)
+    static let backgroundTop = FPColor.appBackgroundTop
+    static let backgroundMiddle = FPColor.appBackgroundMiddle
+    static let backgroundBottom = FPColor.appBackgroundBottom
+    static let sidebarFill = FPColor.sidebarTop.opacity(0.84)
+    static let contentFill = FPColor.card.opacity(0.64)
+    static let cardFill = FPColor.card
+    static let elevatedCardFill = FPColor.card
+    static let sidebarButtonHoverFill = FPColor.cardHover
     static let sidebarSelectedGradient = LinearGradient(
         colors: [
-            Color.white.opacity(0.92),
-            Color(red: 0.88, green: 0.95, blue: 1.0).opacity(0.84),
-            Color(red: 0.92, green: 0.96, blue: 0.91).opacity(0.70)
+            FPColor.card,
+            FPColor.focus100,
+            FPColor.focus050
         ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
     )
-    static let controlFill = Color.white.opacity(0.58)
-    static let rowFill = Color.white.opacity(0.42)
-    static let trackFill = Color(red: 0.62, green: 0.68, blue: 0.78).opacity(0.20)
-    static let border = Color.white.opacity(0.72)
-    static let strongBorder = Color.white.opacity(0.92)
-    static let innerStroke = Color(red: 0.48, green: 0.57, blue: 0.70).opacity(0.16)
-    static let glassRim = Color.white.opacity(0.94)
-    static let glassInnerShadow = Color(red: 0.20, green: 0.32, blue: 0.52).opacity(0.12)
-    static let glassRefractionBlue = Color(red: 0.46, green: 0.68, blue: 1.0).opacity(0.24)
-    static let glassRefractionViolet = Color(red: 0.67, green: 0.58, blue: 0.96).opacity(0.16)
-    static let primaryText = Color(red: 0.15, green: 0.18, blue: 0.24)
-    static let secondaryText = Color(red: 0.35, green: 0.40, blue: 0.50).opacity(0.82)
-    static let mutedText = Color(red: 0.48, green: 0.54, blue: 0.63).opacity(0.70)
-    static let accent = Color(red: 0.14, green: 0.46, blue: 0.92)
-    static let gold = Color(red: 0.78, green: 0.49, blue: 0.10)
-    static let focusBlue = Color(red: 0.10, green: 0.49, blue: 0.88)
-    static let distractedPeach = Color(red: 0.88, green: 0.43, blue: 0.23)
-    static let distractedRed = Color(red: 0.88, green: 0.16, blue: 0.19)
-    static let restGreen = Color(red: 0.13, green: 0.62, blue: 0.34)
-    static let awayPurple = Color(red: 0.47, green: 0.36, blue: 0.84)
-    static let pauseGray = Color(red: 0.63, green: 0.68, blue: 0.74)
-    static let appRose = Color(red: 0.86, green: 0.29, blue: 0.47)
-    static let appCyan = Color(red: 0.05, green: 0.58, blue: 0.78)
-    static let appIndigo = Color(red: 0.28, green: 0.36, blue: 0.86)
-    static let appMint = Color(red: 0.06, green: 0.63, blue: 0.50)
-    static let shadow = Color(red: 0.26, green: 0.34, blue: 0.48).opacity(0.10)
-    static let focusTint = Color(red: 0.14, green: 0.52, blue: 0.95)
-    static let focusInk = Color(red: 0.05, green: 0.23, blue: 0.45)
-    static let warmFocus = Color(red: 0.98, green: 0.70, blue: 0.23)
+    static let controlFill = FPColor.controlSurface
+    static let rowFill = FPColor.cardSoft
+    static let trackFill = FPChartPalette.neutralTrack
+    static let border = FPColor.borderDefault
+    static let strongBorder = FPColor.borderStrong
+    static let innerStroke = FPColor.borderSoft
+    static let glassRim = FPColor.borderSoft
+    static let glassInnerShadow = FPColor.focus600.opacity(0.10)
+    static let glassRefractionBlue = FPColor.focus300.opacity(0.24)
+    static let glassRefractionViolet = FPColor.focus200.opacity(0.16)
+    static let primaryText = FPColor.textPrimary
+    static let secondaryText = FPColor.textSecondary
+    static let mutedText = FPColor.textTertiary
+    static let accent = FPColor.focus500
+    static let gold = FPColor.warning
+    static let focusBlue = FPChartPalette.focus
+    static let distractedPeach = FPChartPalette.distracted
+    static let distractedRed = FPChartPalette.distractedStrong
+    static let restGreen = FPChartPalette.rest
+    static let awayPurple = FPColor.away500
+    static let pauseGray = FPColor.away500
+    static let appRose = FPColor.distracted500
+    static let appCyan = FPColor.systemCyan500
+    static let appIndigo = FPColor.focus600
+    static let appMint = FPColor.rest500
+    static let shadow = FPColor.focus600.opacity(0.08)
+    static let focusTint = FPColor.focus500
+    static let focusInk = FPColor.focus600
+    static let warmFocus = FPColor.distracted500
     static let surfaceHighlight = LinearGradient(
         colors: [
-            Color.white.opacity(0.72),
-            Color.white.opacity(0.24),
-            Color.white.opacity(0.02)
+            FPColor.card.opacity(0.72),
+            FPColor.card.opacity(0.24),
+            FPColor.card.opacity(0.02)
         ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
@@ -428,76 +428,7 @@ private enum DashboardPalette {
 
 private struct DashboardLiquidBackground: View {
     var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                LinearGradient(
-                    colors: [
-                        DashboardPalette.backgroundTop,
-                        DashboardPalette.backgroundMiddle,
-                        DashboardPalette.backgroundBottom
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-
-                Path { path in
-                    let height = proxy.size.height
-                    let width = proxy.size.width
-                    path.move(to: CGPoint(x: -width * 0.05, y: height * 0.18))
-                    path.addCurve(
-                        to: CGPoint(x: width * 1.05, y: height * 0.11),
-                        control1: CGPoint(x: width * 0.26, y: height * 0.03),
-                        control2: CGPoint(x: width * 0.70, y: height * 0.25)
-                    )
-                    path.addLine(to: CGPoint(x: width * 1.05, y: height * 0.36))
-                    path.addCurve(
-                        to: CGPoint(x: -width * 0.05, y: height * 0.44),
-                        control1: CGPoint(x: width * 0.70, y: height * 0.28),
-                        control2: CGPoint(x: width * 0.26, y: height * 0.50)
-                    )
-                    path.closeSubpath()
-                }
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            DashboardPalette.focusBlue.opacity(0.24),
-                            Color.white.opacity(0.20),
-                            DashboardPalette.awayPurple.opacity(0.12)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .opacity(0.68)
-
-                Path { path in
-                    let height = proxy.size.height
-                    let width = proxy.size.width
-                    path.move(to: CGPoint(x: 0, y: height * 0.72))
-                    path.addCurve(
-                        to: CGPoint(x: width, y: height * 0.60),
-                        control1: CGPoint(x: width * 0.22, y: height * 0.56),
-                        control2: CGPoint(x: width * 0.58, y: height * 0.78)
-                    )
-                    path.addLine(to: CGPoint(x: width, y: height))
-                    path.addLine(to: CGPoint(x: 0, y: height))
-                    path.closeSubpath()
-                }
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.34),
-                            DashboardPalette.restGreen.opacity(0.13),
-                            DashboardPalette.focusBlue.opacity(0.11)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .opacity(0.82)
-            }
-            .ignoresSafeArea()
-        }
+        FPPageBackground()
     }
 }
 
@@ -555,11 +486,10 @@ private struct DashboardSidebar: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             .background {
-                Rectangle()
-                    .fill(DashboardPalette.sidebarFill)
+                FPSidebarBackground()
                     .overlay(alignment: .trailing) {
                         Rectangle()
-                            .fill(DashboardPalette.innerStroke)
+                            .fill(FPColor.borderSoft)
                             .frame(width: 1)
                     }
             }
@@ -627,60 +557,14 @@ private struct DashboardSidebarButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 13) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(iconFill)
-                    Image(systemName: tab.symbolName)
-                        .font(.system(size: 17, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
+            FPSidebarItem(title: tab.title, systemImage: tab.symbolName, isSelected: isSelected)
+                .background {
+                    if isHovering && !isSelected {
+                        RoundedRectangle(cornerRadius: FPRadius.large, style: .continuous)
+                            .fill(FPColor.cardHover)
+                    }
                 }
-                .frame(width: 34, height: 34)
-
-                Text(tab.title)
-                    .font(.system(size: 16.5, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-
-                if isSelected {
-                    Circle()
-                        .fill(DashboardPalette.accent.opacity(0.78))
-                        .frame(width: 6, height: 6)
-                        .transition(.scale.combined(with: .opacity))
-                }
-            }
-            .foregroundStyle(isSelected ? DashboardPalette.primaryText : DashboardPalette.secondaryText)
-            .padding(.horizontal, 12)
-            .frame(height: 54)
-            .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(backgroundFill)
-                    .opacity(isSelected || isHovering ? 1 : 0)
-                    .overlay {
-                        if isSelected {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(DashboardPalette.border, lineWidth: 1)
-                        }
-                    }
-                    .overlay(alignment: .topLeading) {
-                        if isSelected {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(DashboardPalette.surfaceHighlight)
-                                .opacity(0.28)
-                        }
-                    }
-                    .overlay(alignment: .leading) {
-                        if isSelected {
-                            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                                .fill(DashboardPalette.accent.opacity(0.78))
-                                .frame(width: 4)
-                                .padding(.vertical, 11)
-                                .padding(.leading, 2)
-                        }
-                    }
-                    .shadow(color: DashboardPalette.shadow.opacity(isSelected ? 0.12 : 0.04), radius: isSelected ? 3 : 1, x: 0, y: 1)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: FPRadius.large, style: .continuous))
         }
         .buttonStyle(DashboardSidebarButtonPressStyle())
         .onHover { inside in
@@ -986,11 +870,11 @@ private struct MenuActionGrid: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 8) {
-            MenuActionButton(title: "打开面板", symbol: "macwindow", tint: .accentColor) {
+            MenuActionButton(title: "打开面板", symbol: "macwindow", tint: FPColor.focus500) {
                 model.openDashboard(tab: .today)
             }
 
-            MenuActionButton(title: "设置", symbol: "gearshape.fill", tint: .gray) {
+            MenuActionButton(title: "设置", symbol: "gearshape.fill", tint: FPColor.textTertiary) {
                 model.openDashboard(tab: .settings)
             }
 
@@ -1016,11 +900,11 @@ private struct MenuActionGrid: View {
             }
 
             if let pauseUntil = model.settings.reminder.pauseUntil, pauseUntil > Date() {
-                MenuActionButton(title: "恢复提醒", symbol: "bell.fill", tint: .orange) {
+                MenuActionButton(title: "恢复提醒", symbol: "bell.fill", tint: FPColor.warning) {
                     model.resumeReminders()
                 }
             } else {
-                MenuActionButton(title: "暂停提醒", symbol: "bell.slash.fill", tint: .orange) {
+                MenuActionButton(title: "暂停提醒", symbol: "bell.slash.fill", tint: FPColor.warning) {
                     model.pauseReminders()
                 }
             }
@@ -1028,7 +912,7 @@ private struct MenuActionGrid: View {
             MenuActionButton(
                 title: model.settings.pet.hidden ? "显示桌宠" : "隐藏桌宠",
                 symbol: model.settings.pet.hidden ? "eye.fill" : "eye.slash.fill",
-                tint: .purple
+                tint: FPColor.petWarm500
             ) {
                 model.togglePetHidden()
             }
@@ -1140,85 +1024,68 @@ private struct TodayFocusFeatureCard: View {
 
     var body: some View {
         let workload = model.todayWorkload
-        ZStack(alignment: .leading) {
-            TodayFocusBackdrop(tint: statusTint)
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("今日态势")
-                            .font(.system(size: 18, weight: .semibold, design: .rounded))
-                            .foregroundStyle(DashboardPalette.focusInk)
-                        Text(statusHeadline)
-                            .font(.system(size: 26, weight: .semibold, design: .rounded))
-                            .foregroundStyle(statusTint)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.78)
-                        Text(statusSubtitle)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(DashboardPalette.secondaryText)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.82)
-                    }
-
-                    Spacer(minLength: 12)
-
-                    VStack(alignment: .trailing, spacing: 3) {
-                        Text(statusDuration)
-                            .font(.system(size: 30, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(DashboardPalette.warmFocus)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.70)
-                        Text(statusDurationLabel)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(DashboardPalette.secondaryText)
-                    }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("今日态势")
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .foregroundStyle(FPColor.focus600)
+                    Text(statusHeadline)
+                        .font(.system(size: 26, weight: .semibold, design: .rounded))
+                        .foregroundStyle(currentState.fpStatus.strongText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                    Text(statusSubtitle)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(FPColor.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
                 }
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 12)
 
-                HStack(spacing: 8) {
-                    TodaySignalChip(
-                        title: currentState.title,
-                        symbol: currentState.symbolName,
-                        tint: statusTint
-                    )
-                    TodaySignalChip(
-                        title: model.currentSnapshot.appName,
-                        symbol: "macwindow",
-                        tint: DashboardPalette.focusBlue,
-                        maxWidth: 190
-                    )
-                    TodaySignalChip(
-                        title: FocusPetFormatters.contextSwitches(workload.contextSwitchCount),
-                        symbol: "arrow.triangle.2.circlepath",
-                        tint: DashboardPalette.appIndigo
-                    )
-                    TodaySignalChip(
-                        title: FocusPetFormatters.estimatedTypedCharacters(workload.estimatedTypedCharacters),
-                        symbol: "keyboard",
-                        tint: DashboardPalette.warmFocus
-                    )
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(statusDuration)
+                        .font(.system(size: 30, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(FPColor.focus600)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.70)
+                    Text(statusDurationLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(FPColor.textSecondary)
                 }
             }
-            .padding(20)
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 8) {
+                TodaySignalChip(
+                    title: currentState.title,
+                    symbol: currentState.symbolName,
+                    status: currentState.fpStatus
+                )
+                TodaySignalChip(
+                    title: model.currentSnapshot.appName,
+                    symbol: "macwindow",
+                    status: .focus,
+                    maxWidth: 190
+                )
+                TodaySignalChip(
+                    title: FocusPetFormatters.contextSwitches(workload.contextSwitchCount),
+                    symbol: "arrow.triangle.2.circlepath",
+                    status: .neutral
+                )
+                TodaySignalChip(
+                    title: FocusPetFormatters.estimatedTypedCharacters(workload.estimatedTypedCharacters),
+                    symbol: "keyboard",
+                    status: .distracted
+                )
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(DashboardPalette.focusTint.opacity(0.86))
-                .frame(width: 5)
-                .padding(.vertical, 18)
-                .padding(.leading, 2)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(DashboardPalette.focusTint.opacity(0.42), lineWidth: 1)
-        }
-        .liquidGlassSurface(cornerRadius: 12)
+        .fpSemanticCard(status: currentState.fpStatus, padding: 20, radius: FPRadius.large)
         .dashboardPetAnchor(.todayFocusCard)
-        .shadow(color: DashboardPalette.shadow.opacity(0.14), radius: 3, x: 0, y: 1)
     }
 
     private var currentState: FocusPetCore.FocusState {
@@ -1326,29 +1193,12 @@ private struct TodayFocusBackdrop: View {
 private struct TodaySignalChip: View {
     var title: String
     var symbol: String
-    var tint: Color
+    var status: FPStatus
     var maxWidth: CGFloat?
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: symbol)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(tint)
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(DashboardPalette.secondaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.76)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        FPBadge(title: title, systemImage: symbol, status: status)
         .frame(maxWidth: maxWidth, alignment: .leading)
-        .background(Color.white.opacity(0.62), in: Capsule())
-        .overlay {
-            Capsule()
-                .stroke(tint.opacity(0.20), lineWidth: 1)
-        }
-        .liquidGlassSurface(cornerRadius: 12)
     }
 }
 
@@ -1510,7 +1360,7 @@ private struct TodayRhythmSummaryPanel: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .dashboardCard(12, tint: DashboardPalette.awayPurple)
+        .dashboardCard(12)
         .animation(.snappy(duration: 0.36, extraBounce: 0.04), value: snapshot.animationKey)
     }
 
@@ -1678,7 +1528,7 @@ private struct TodayDistributionPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .dashboardCard(12, tint: DashboardPalette.awayPurple)
+        .dashboardCard(12)
     }
 
     private func ratio(for item: StateDurationItem) -> Double {
@@ -1781,33 +1631,7 @@ private struct BreakDurationControl: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.82),
-                            DashboardPalette.restGreen.opacity(0.12),
-                            DashboardPalette.elevatedCardFill
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .overlay(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(DashboardPalette.restGreen.opacity(0.82))
-                        .frame(width: 5)
-                        .padding(.vertical, 14)
-                        .padding(.leading, 2)
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(DashboardPalette.restGreen.opacity(0.24), lineWidth: 1)
-                }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .liquidGlassSurface(cornerRadius: 12)
+        .fpSemanticCard(status: .rest, padding: 0, radius: FPRadius.large)
     }
 
     private var breakMinutesKeyBinding: Binding<Int> {
@@ -2180,13 +2004,13 @@ struct RestStatusCompactPanel: View {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
                     RestStatusTile(title: "当前状态", value: model.currentDecision.state.title, symbol: model.currentDecision.state.symbolName, tint: model.currentDecision.state.timelineColor)
-                    RestStatusTile(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
+                    RestStatusTile(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: FPChartPalette.focus)
                     RestStatusTile(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: FocusPetCore.FocusState.distracted.timelineColor)
                     restAction
                 }
                 VStack(spacing: 10) {
                     RestStatusTile(title: "当前状态", value: model.currentDecision.state.title, symbol: model.currentDecision.state.symbolName, tint: model.currentDecision.state.timelineColor)
-                    RestStatusTile(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
+                    RestStatusTile(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: FPChartPalette.focus)
                     RestStatusTile(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: FocusPetCore.FocusState.distracted.timelineColor)
                     restAction
                 }
@@ -2477,22 +2301,7 @@ private struct InputActivityTimelinePanel: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(DashboardPalette.elevatedCardFill)
-                .overlay(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(DashboardPalette.focusBlue.opacity(0.72))
-                        .frame(width: 5)
-                        .padding(.vertical, 14)
-                        .padding(.leading, 2)
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(DashboardPalette.focusBlue.opacity(0.26), lineWidth: 1)
-                }
-        }
-        .liquidGlassSurface(cornerRadius: 12)
+        .fpCard(padding: 0, radius: FPRadius.large, background: FPColor.card, border: FPColor.borderDefault)
         .animation(.snappy(duration: 0.28, extraBounce: 0.02), value: selectedWindow)
     }
 
@@ -2525,10 +2334,10 @@ private struct TimelineWindowPicker: View {
                         .background {
                             if selected {
                                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(Color.white.opacity(0.66))
+                                    .fill(FPColor.focus050)
                                     .overlay {
                                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                            .stroke(DashboardPalette.focusBlue.opacity(0.25), lineWidth: 1)
+                                            .stroke(FPColor.focus300.opacity(0.48), lineWidth: 1)
                                     }
                             }
                         }
@@ -2633,7 +2442,7 @@ private struct InputTimelineChart: View {
                         let x = chartWidth * CGFloat(marker.progress)
                         let lineWidth = max(1, min(4, CGFloat(marker.count)))
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(DashboardPalette.warmFocus.opacity(0.22))
+                            .fill(FPChartPalette.distracted.opacity(0.22))
                             .frame(width: lineWidth, height: inputHeight)
                             .offset(x: x, y: inputY)
                     }
@@ -2731,13 +2540,13 @@ private struct InputTimelineChart: View {
                 path.addLine(to: CGPoint(x: x, y: bottom))
             }
         }
-        .stroke(DashboardPalette.innerStroke.opacity(0.58), style: StrokeStyle(lineWidth: 1, dash: [4, 8]))
+        .stroke(FPChartPalette.gridLine, style: StrokeStyle(lineWidth: 1, dash: [4, 8]))
     }
 
     private func stateBand(width: CGFloat, y: CGFloat, height: CGFloat) -> some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(DashboardPalette.trackFill.opacity(0.30))
+                .fill(FPChartPalette.neutralTrack.opacity(0.70))
                 .overlay(alignment: .top) {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .fill(Color.white.opacity(0.26))
@@ -2797,18 +2606,18 @@ private struct InputTimelineChart: View {
 
         return ZStack(alignment: .bottom) {
             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(DashboardPalette.warmFocus.opacity(0.08))
+                .fill(FPChartPalette.distractedTrack.opacity(0.75))
                 .frame(width: max(barWidth, 8), height: totalHeight)
 
             VStack(spacing: 1.5) {
                 if bar.keyboardCount > 0 {
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(DashboardPalette.focusBlue.opacity(0.82))
+                        .fill(FPChartPalette.focus.opacity(0.82))
                         .frame(height: max(3, keyboardHeight))
                 }
                 if bar.pointerCount > 0 {
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(DashboardPalette.warmFocus.opacity(0.88))
+                        .fill(FPChartPalette.distracted.opacity(0.88))
                         .frame(height: max(3, pointerHeight))
                 }
             }
@@ -2851,7 +2660,7 @@ private struct InputTimelineChart: View {
                 "切换 \(FocusPetFormatters.compactCount(bar.contextSwitchCount)) 次",
                 "本地估算，不记录输入内容"
             ],
-            tint: DashboardPalette.warmFocus,
+            tint: FPChartPalette.distracted,
             x: x,
             y: y
         )
@@ -2866,7 +2675,7 @@ private struct InputTimelineChart: View {
                 "约 \(FocusPetFormatters.clock(date))",
                 "App 或窗口焦点变化"
             ],
-            tint: DashboardPalette.warmFocus,
+            tint: FPChartPalette.distracted,
             x: x,
             y: y
         )
@@ -2986,31 +2795,31 @@ private struct InputTimelineChart: View {
         let identity = segment.identity.lowercased()
         let appName = segment.appName.lowercased()
         if appName.contains("微信") || identity.contains("wechat") {
-            return DashboardPalette.restGreen
+            return FPChartPalette.rest
         }
         if appName.contains("codex") || identity.contains("codex") {
-            return DashboardPalette.appIndigo
+            return FPChartPalette.focusStrong
         }
         if appName.contains("focuspet") || appName.contains("focus pet") || identity.contains("focuspet") {
-            return DashboardPalette.awayPurple
+            return FPChartPalette.away
         }
         if appName.contains("safari") {
-            return DashboardPalette.focusBlue
+            return FPChartPalette.focus
         }
         if appName.contains("chrome") || appName.contains("edge") {
-            return DashboardPalette.warmFocus
+            return FPChartPalette.distracted
         }
 
         let palette: [Color] = [
-            DashboardPalette.focusBlue,
-            DashboardPalette.restGreen,
-            DashboardPalette.awayPurple,
-            DashboardPalette.distractedPeach,
-            DashboardPalette.appCyan,
-            DashboardPalette.appRose,
-            DashboardPalette.appMint,
-            DashboardPalette.appIndigo,
-            DashboardPalette.gold
+            FPChartPalette.focus,
+            FPChartPalette.rest,
+            FPChartPalette.away,
+            FPChartPalette.distracted,
+            FPColor.systemCyan500,
+            FPColor.focus600,
+            FPColor.rest600,
+            FPChartPalette.focusStrong,
+            FPColor.warning
         ]
         return palette[stableColorIndex(for: segment.identity, count: palette.count)]
     }
@@ -3588,12 +3397,21 @@ private struct ChartGridLines: View {
 }
 
 private extension FocusPetCore.FocusState {
+    var fpStatus: FPStatus {
+        switch self {
+        case .focus: .focus
+        case .distracted: .distracted
+        case .breakTime: .rest
+        case .away: .away
+        }
+    }
+
     var timelineColor: Color {
         switch self {
-        case .focus: DashboardPalette.focusBlue
-        case .distracted: DashboardPalette.distractedRed
-        case .breakTime: DashboardPalette.restGreen
-        case .away: DashboardPalette.pauseGray
+        case .focus: FPChartPalette.focus
+        case .distracted: FPChartPalette.distracted
+        case .breakTime: FPChartPalette.rest
+        case .away: FPChartPalette.away
         }
     }
 }
@@ -3610,10 +3428,10 @@ private extension ActivityCategory {
 
     var tint: Color {
         switch self {
-        case .work: DashboardPalette.restGreen
-        case .entertainment: DashboardPalette.distractedPeach
-        case .ignore: DashboardPalette.awayPurple
-        case .neutral: DashboardPalette.focusBlue.opacity(0.85)
+        case .work: FPColor.focus600
+        case .entertainment: FPColor.distracted600
+        case .ignore: FPColor.textTertiary
+        case .neutral: FPColor.textSecondary
         }
     }
 }
@@ -3843,7 +3661,11 @@ private struct NumberStepperControl: View {
     @Binding var value: Int
     var range: ClosedRange<Int>
     var suffix: String
-    var tint: Color = .blue
+    var status: FPStatus = .focus
+
+    private var tint: Color {
+        status.primary
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -3892,7 +3714,11 @@ private struct TogglePillButton: View {
     var title: String
     var symbol: String
     @Binding var isOn: Bool
-    var tint: Color = .blue
+    var status: FPStatus = .focus
+
+    private var tint: Color {
+        status.primary
+    }
 
     var body: some View {
         Button {
@@ -3906,23 +3732,17 @@ private struct TogglePillButton: View {
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                Capsule()
-                    .fill(isOn ? tint.opacity(0.70).gradient : DashboardPalette.trackFill.gradient)
-                    .frame(width: 34, height: 18)
-                    .overlay(alignment: isOn ? .trailing : .leading) {
-                        Circle()
-                            .fill(Color.white)
-                            .frame(width: 14, height: 14)
-                            .padding(2)
-                            .shadow(color: DashboardPalette.shadow.opacity(0.12), radius: 1, x: 0, y: 1)
-                    }
+                Toggle("", isOn: $isOn)
+                    .fpToggleTint(status)
+                    .labelsHidden()
+                    .allowsHitTesting(false)
             }
             .padding(10)
-            .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(FPColor.cardSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .background(isOn ? tint.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(isOn ? tint.opacity(0.22) : DashboardPalette.innerStroke, lineWidth: 1)
+                    .stroke(isOn ? status.border : FPColor.borderSoft, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
@@ -3935,7 +3755,11 @@ private struct ControlSliderRow: View {
     @Binding var value: Double
     var range: ClosedRange<Double>
     var suffix: String = ""
-    var tint: Color = .blue
+    var status: FPStatus = .focus
+
+    private var tint: Color {
+        status.primary
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -3948,13 +3772,13 @@ private struct ControlSliderRow: View {
                     .foregroundStyle(.secondary)
             }
             Slider(value: $value, in: range)
-                .tint(tint)
+                .fpSliderTint(status)
         }
         .padding(10)
-        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(FPColor.cardSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+                .stroke(status.border.opacity(0.72), lineWidth: 1)
         }
     }
 
@@ -3973,8 +3797,29 @@ private func petPlacementOptions() -> [SlidingSegmentOption<PetPlacementMode>] {
             value: placement,
             title: placement.title,
             symbol: placement.symbolName,
-            tint: placement == .custom ? .purple : .blue
+            tint: placement == .custom ? FPColor.petWarm500 : FPColor.focus500
         )
+    }
+}
+
+private extension PetIntentKind {
+    var fpStatus: FPStatus {
+        switch self {
+        case .quietCompanion, .dashboardGuide:
+            return .focus
+        case .focusRestHint, .breakCompanion, .breakEnding:
+            return .rest
+        case .distractedObserve:
+            return .distracted
+        case .nudgeGentle, .nudgeStrong:
+            return .warning
+        case .sleep:
+            return .away
+        case .welcomeBack, .mouseSummon:
+            return .pet
+        case .moveLeft, .moveRight, .moveUp, .moveDown, .dragged, .landing:
+            return .neutral
+        }
     }
 }
 
@@ -4058,13 +3903,13 @@ struct DistributionView: View {
                         title: "操作",
                         value: "\(FocusPetFormatters.compactCount(model.todayWorkload.pointerActionCount)) 次",
                         symbol: "cursorarrow.click",
-                        tint: DashboardPalette.warmFocus
+                        tint: FPChartPalette.distracted
                     )
                     MetricTile(
                         title: "上下文切换",
                         value: "\(FocusPetFormatters.compactCount(model.todayWorkload.contextSwitchCount)) 次",
                         symbol: "arrow.triangle.2.circlepath",
-                        tint: .purple
+                        tint: FPColor.away500
                     )
                 }
             }
@@ -4860,7 +4705,7 @@ private struct AttentionHeatmapPanel: View {
                 }
             }
         }
-        .dashboardCard(14, tint: DashboardPalette.focusBlue)
+        .dashboardCard(14)
         .onAppear {
             scope = .week
         }
@@ -4877,8 +4722,8 @@ private struct AttentionHeatmapPanel: View {
 
     private var scopeOptions: [SlidingSegmentOption<AttentionHeatmapScope>] {
         [
-            SlidingSegmentOption(value: .week, title: "周视图", symbol: "calendar.badge.clock", tint: DashboardPalette.focusBlue),
-            SlidingSegmentOption(value: .month, title: "月视图", symbol: "calendar", tint: DashboardPalette.awayPurple)
+            SlidingSegmentOption(value: .week, title: "周视图", symbol: "calendar.badge.clock", tint: FPColor.focus500),
+            SlidingSegmentOption(value: .month, title: "月视图", symbol: "calendar", tint: FPColor.away500)
         ]
     }
 }
@@ -5178,17 +5023,17 @@ private func attentionHeatmapFocusLevel(_ focusSeconds: Int) -> Int {
 private func attentionHeatmapBlueColor(_ level: Int) -> Color {
     switch min(5, max(0, level)) {
     case 0:
-        return Color(red: 0.88, green: 0.94, blue: 1.00)
+        return FPColor.insetSurface
     case 1:
-        return Color(red: 0.72, green: 0.85, blue: 0.99)
+        return FPColor.focus100
     case 2:
-        return Color(red: 0.53, green: 0.74, blue: 0.98)
+        return FPColor.focus300
     case 3:
-        return Color(red: 0.33, green: 0.62, blue: 0.95)
+        return FPColor.focus400
     case 4:
-        return Color(red: 0.16, green: 0.49, blue: 0.89)
+        return FPColor.focus500
     default:
-        return Color(red: 0.06, green: 0.34, blue: 0.72)
+        return FPColor.focus600
     }
 }
 
@@ -5457,7 +5302,7 @@ private struct FocusHistorySegmentsPanel: View {
                     }
             }
         }
-        .dashboardCard(14, tint: DashboardPalette.awayPurple)
+        .fpSemanticCard(status: .focus, padding: 14, radius: FPRadius.large)
         .dashboardPetAnchor(.historyWorkTimeline)
     }
 
@@ -5854,7 +5699,7 @@ private struct RestControlPanel: View {
                 value: $model.settings.breakMinutes,
                 range: 1...60,
                 suffix: "分钟",
-                tint: .blue
+                status: .rest
             )
             .onChange(of: model.settings.breakMinutes) { _, _ in model.saveSettings() }
             Button {
@@ -5864,7 +5709,7 @@ private struct RestControlPanel: View {
                     .frame(maxWidth: .infinity)
             }
             .liquidGlassButtonStyle(prominent: true)
-            .tint(.blue)
+            .tint(FPColor.rest500)
         }
         .dashboardCard()
     }
@@ -5874,8 +5719,8 @@ private struct RestControlPanel: View {
             Label("自动判定", systemImage: "sparkles")
                 .font(.headline)
             HStack(spacing: 10) {
-                SessionStatPill(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: .green)
-                SessionStatPill(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: .orange)
+                SessionStatPill(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: FPChartPalette.focus)
+                SessionStatPill(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: FPChartPalette.distracted)
             }
             Text("无输入 \(FocusPetFormatters.duration(model.settings.judgment.inputIdleDistractedSeconds)) 后显示走神；持续到 \(FocusPetFormatters.duration(model.settings.judgment.idleAwaySeconds)) 会回填为暂离。")
                 .font(.caption)
@@ -5989,10 +5834,20 @@ private enum SettingsModule: String, CaseIterable, Identifiable, Hashable {
     var tint: Color {
         switch self {
         case .recognition: DashboardPalette.distractedPeach
-        case .permissions: .teal
+        case .permissions: FPColor.systemCyan500
         case .reminders: DashboardPalette.focusBlue
-        case .data: DashboardPalette.awayPurple
+        case .data: FPColor.systemCyan500
         case .about: DashboardPalette.gold
+        }
+    }
+
+    var status: FPStatus {
+        switch self {
+        case .recognition: .distracted
+        case .permissions: .privacy
+        case .reminders: .focus
+        case .data: .privacy
+        case .about: .warning
         }
     }
 }
@@ -6038,7 +5893,8 @@ private struct SettingsAccordionCard<Content: View>: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .dashboardCard(12, tint: module.tint)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fpSemanticCard(status: module.status, padding: 12, radius: FPRadius.large)
     }
 }
 
@@ -6108,7 +5964,7 @@ private enum JudgmentSensitivityPreset: String, CaseIterable, Identifiable, Hash
         case .relaxed: DashboardPalette.restGreen
         case .balanced: DashboardPalette.focusBlue
         case .strict: DashboardPalette.distractedRed
-        case .custom: .purple
+        case .custom: FPColor.away500
         }
     }
 
@@ -6175,7 +6031,7 @@ private struct RecognitionSettingsPanel: View {
             value: $model.settings.judgment.inputIdleDistractedSeconds,
             range: 30...900,
             suffix: "秒",
-            tint: FocusPetCore.FocusState.distracted.timelineColor
+            status: .distracted
         )
         .onChange(of: model.settings.judgment.inputIdleDistractedSeconds) { _, _ in saveCustomJudgment() }
         NumberStepperControl(
@@ -6183,7 +6039,7 @@ private struct RecognitionSettingsPanel: View {
             value: $model.settings.judgment.entertainmentDistractedSeconds,
             range: 15...900,
             suffix: "秒",
-            tint: .orange
+            status: .distracted
         )
         .onChange(of: model.settings.judgment.entertainmentDistractedSeconds) { _, _ in saveCustomJudgment() }
         NumberStepperControl(
@@ -6191,7 +6047,7 @@ private struct RecognitionSettingsPanel: View {
             value: $model.settings.judgment.focusRecoverySeconds,
             range: 1...120,
             suffix: "秒",
-            tint: FocusPetCore.FocusState.focus.timelineColor
+            status: .focus
         )
         .onChange(of: model.settings.judgment.focusRecoverySeconds) { _, _ in saveCustomJudgment() }
         NumberStepperControl(
@@ -6199,7 +6055,7 @@ private struct RecognitionSettingsPanel: View {
             value: $model.settings.judgment.idleAwaySeconds,
             range: 180...3600,
             suffix: "秒",
-            tint: FocusPetCore.FocusState.away.timelineColor
+            status: .away
         )
         .onChange(of: model.settings.judgment.idleAwaySeconds) { _, _ in saveCustomJudgment() }
     }
@@ -6432,19 +6288,11 @@ private struct DiagnosticPermissionChip: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(isAllowed ? DashboardPalette.restGreen : DashboardPalette.distractedRed)
-                .frame(width: 6, height: 6)
-            Text(title)
-            Text(status)
-                .foregroundStyle(isAllowed ? DashboardPalette.restGreen : DashboardPalette.distractedRed)
-        }
-        .font(.caption2.weight(.semibold))
-        .lineLimit(1)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(DashboardPalette.controlFill, in: Capsule())
+        FPBadge(
+            title: "\(title) \(status)",
+            systemImage: isAllowed ? "checkmark.shield.fill" : "exclamationmark.circle.fill",
+            status: isAllowed ? .rest : .warning
+        )
     }
 }
 
@@ -6482,7 +6330,7 @@ private struct PetSettingsPanel: View {
             if let message = model.petImportErrorMessage {
                 Text(message)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(FPColor.error)
             }
 
             if let record = model.availablePetPacks.first(where: { $0.id == model.settings.pet.selectedPackID }) {
@@ -6505,13 +6353,13 @@ private struct PetSettingsPanel: View {
                             model.saveSettings()
                         }
                     ),
-                    tint: .green
+                    status: .rest
                 )
-                TogglePillButton(title: "动画", symbol: "sparkles", isOn: $model.settings.pet.animationEnabled, tint: .purple)
+                TogglePillButton(title: "动画", symbol: "sparkles", isOn: $model.settings.pet.animationEnabled, status: .pet)
                     .onChange(of: model.settings.pet.animationEnabled) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "音效", symbol: "speaker.wave.2.fill", isOn: $model.settings.pet.audioEnabled, tint: .orange)
+                TogglePillButton(title: "音效", symbol: "speaker.wave.2.fill", isOn: $model.settings.pet.audioEnabled, status: .neutral)
                     .onChange(of: model.settings.pet.audioEnabled) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "悬浮状态弹窗", symbol: "text.bubble.fill", isOn: $model.settings.pet.hoverStatusEnabled, tint: .blue)
+                TogglePillButton(title: "悬浮状态弹窗", symbol: "text.bubble.fill", isOn: $model.settings.pet.hoverStatusEnabled, status: .focus)
                     .onChange(of: model.settings.pet.hoverStatusEnabled) { _, _ in model.saveSettings() }
             }
 
@@ -6530,13 +6378,14 @@ private struct PetSettingsPanel: View {
             }
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 8)], spacing: 8) {
-                ControlSliderRow(title: "大小", value: $model.settings.pet.size, range: 96...260, suffix: "px", tint: .purple)
+                ControlSliderRow(title: "大小", value: $model.settings.pet.size, range: 96...260, suffix: "px", status: .pet)
                     .onChange(of: model.settings.pet.size) { _, _ in model.saveSettings() }
-                ControlSliderRow(title: "透明度", value: $model.settings.pet.opacity, range: 0.35...1, suffix: "%", tint: .blue)
+                ControlSliderRow(title: "透明度", value: $model.settings.pet.opacity, range: 0.35...1, suffix: "%", status: .focus)
                     .onChange(of: model.settings.pet.opacity) { _, _ in model.saveSettings() }
             }
         }
-        .dashboardCard(12, tint: DashboardPalette.restGreen)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fpSemanticCard(status: .pet, padding: 12, radius: FPRadius.large)
         .dashboardPetAnchor(.settingsPetPanel)
     }
 }
@@ -6594,24 +6443,7 @@ private struct IntentActionMappingPanel: View {
                                 ?? record.defaultSourceAction(for: intent)?.id
                                 ?? actions.first?.id
                         } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: intent.symbolName)
-                                    .font(.caption2.weight(.semibold))
-                                Text(intent.title)
-                                    .font(.caption.weight(.semibold))
-                                    .lineLimit(1)
-                            }
-                            .foregroundStyle(selected ? Color.accentColor : DashboardPalette.secondaryText)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(selected ? Color.white.opacity(0.62) : DashboardPalette.controlFill)
-                            }
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(selected ? Color.accentColor.opacity(0.24) : DashboardPalette.border, lineWidth: 1)
-                            }
+                            FPBadge(title: intent.title, systemImage: intent.symbolName, status: intent.fpStatus, filled: selected)
                         }
                         .buttonStyle(.plain)
                         .help(intent.title)
@@ -6633,24 +6465,7 @@ private struct IntentActionMappingPanel: View {
                         Button {
                             previewSourceActionID = action.id
                         } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: "play.fill")
-                                    .font(.caption2.weight(.semibold))
-                                Text(action.title)
-                                    .font(.caption.weight(.semibold))
-                                    .lineLimit(1)
-                            }
-                            .foregroundStyle(selected ? Color.accentColor : DashboardPalette.secondaryText)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(selected ? Color.white.opacity(0.62) : DashboardPalette.controlFill)
-                            }
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(selected ? Color.accentColor.opacity(0.24) : DashboardPalette.border, lineWidth: 1)
-                            }
+                            FPBadge(title: action.title, systemImage: "play.fill", status: selected ? .focus : .neutral, filled: selected)
                         }
                         .buttonStyle(.plain)
                         .help(action.title)
@@ -6720,9 +6535,19 @@ private struct SourceActionStageCard: View {
     private func stageContent(at date: Date) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(DashboardPalette.rowFill)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            FPColor.card,
+                            FPColor.petWarm100.opacity(0.28),
+                            FPColor.focus050.opacity(0.32)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+                .stroke(FPColor.borderDefault, lineWidth: 1)
 
             if let url = frameURL(at: date),
                let image = DashboardPreviewImageCache.image(for: url) {
@@ -6756,6 +6581,7 @@ private struct SourceActionStageCard: View {
             }
         }
         .frame(height: 190)
+        .fpCard(padding: 0, radius: FPRadius.large, background: FPColor.card, border: FPColor.borderDefault)
     }
 
     private func frameURL(at date: Date) -> URL? {
@@ -6768,36 +6594,37 @@ private struct SourceActionStageCard: View {
 
 private struct PermissionSettingsPanel: View {
     @EnvironmentObject private var model: FocusPetModel
+    private let permissionRefreshTimer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect()
 
     private let items: [PermissionSettingsItem] = [
         PermissionSettingsItem(
             destination: .inputMonitoring,
             subtitle: "键盘与鼠标事件计数",
-            tint: .teal,
+            status: .privacy,
             canRequest: true
         ),
         PermissionSettingsItem(
             destination: .screenRecording,
             subtitle: "前台窗口标题识别",
-            tint: DashboardPalette.focusBlue,
+            status: .privacy,
             canRequest: true
         ),
         PermissionSettingsItem(
             destination: .accessibility,
             subtitle: "前台窗口与交互状态",
-            tint: DashboardPalette.distractedPeach,
+            status: .warning,
             canRequest: false
         ),
         PermissionSettingsItem(
             destination: .notifications,
             subtitle: "系统提醒横幅",
-            tint: DashboardPalette.gold,
+            status: .warning,
             canRequest: true
         ),
         PermissionSettingsItem(
             destination: .privacySecurity,
             subtitle: "macOS 隐私面板",
-            tint: DashboardPalette.awayPurple,
+            status: .privacy,
             canRequest: false
         )
     ]
@@ -6810,7 +6637,13 @@ private struct PermissionSettingsPanel: View {
             }
         }
         .onAppear {
-            model.refreshNotificationPermissionStatus()
+            model.refreshSystemPermissionStatuses()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshSystemPermissionStatuses()
+        }
+        .onReceive(permissionRefreshTimer) { _ in
+            model.refreshSystemPermissionStatuses(refreshDiagnostics: false)
         }
     }
 }
@@ -6818,7 +6651,7 @@ private struct PermissionSettingsPanel: View {
 private struct PermissionSettingsItem: Identifiable {
     var destination: SystemSettingsDestination
     var subtitle: String
-    var tint: Color
+    var status: FPStatus
     var canRequest: Bool
 
     var id: SystemSettingsDestination { destination }
@@ -6829,58 +6662,42 @@ private struct PermissionSettingsRow: View {
     var item: PermissionSettingsItem
 
     var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: symbolName)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(item.tint)
-                .frame(width: 28, height: 28)
-                .background(item.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        FPListRow(status: item.status) {
+            FPIconBox(systemImage: symbolName, status: item.status)
+        } content: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.destination.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(DashboardPalette.primaryText)
+                    .font(FPTypography.bodyMedium)
+                    .foregroundStyle(FPColor.textPrimary)
                 Text(item.subtitle)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(FPTypography.caption)
+                    .foregroundStyle(FPColor.textSecondary)
                     .lineLimit(1)
             }
-            Spacer(minLength: 0)
-            if let statusTitle {
-                Text(statusTitle)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(statusIsAllowed ? DashboardPalette.restGreen : DashboardPalette.distractedRed)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(DashboardPalette.rowFill, in: Capsule())
-                    .overlay {
-                        Capsule()
-                            .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        } trailing: {
+            HStack(spacing: 8) {
+                if let statusTitle {
+                    FPBadge(title: statusTitle, systemImage: statusSymbol, status: permissionStatus)
+                }
+                if item.canRequest {
+                    Button {
+                        model.requestSystemPermission(item.destination)
+                    } label: {
+                        Label("请求", systemImage: "checkmark.shield.fill")
+                            .labelStyle(.iconOnly)
                     }
-            }
-            if item.canRequest {
+                    .buttonStyle(FPSoftButtonStyle(status: .privacy))
+                    .help("请求\(item.destination.title)权限")
+                }
                 Button {
-                    model.requestSystemPermission(item.destination)
+                    model.openSystemSettings(item.destination)
                 } label: {
-                    Label("请求", systemImage: "checkmark.shield.fill")
+                    Label("打开", systemImage: "arrow.up.forward.app")
                         .labelStyle(.iconOnly)
                 }
-                .liquidGlassButtonStyle()
-                .help("请求\(item.destination.title)权限")
+                .buttonStyle(FPSoftButtonStyle(status: .focus))
+                .help("打开\(item.destination.title)设置")
             }
-            Button {
-                model.openSystemSettings(item.destination)
-            } label: {
-                Label("打开", systemImage: "arrow.up.forward.app")
-                    .labelStyle(.iconOnly)
-            }
-            .liquidGlassButtonStyle()
-            .help("打开\(item.destination.title)设置")
-        }
-        .padding(10)
-        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
         }
     }
 
@@ -6900,17 +6717,33 @@ private struct PermissionSettingsRow: View {
     }
 
     private var statusTitle: String? {
-        if item.destination == .notifications {
-            return model.notificationPermissionTitle
-        }
-        return item.destination.statusTitle
+        model.systemPermissionSnapshot.status(for: item.destination)?.title
     }
 
     private var statusIsAllowed: Bool {
-        if item.destination == .notifications {
-            return model.notificationPermissionIsAllowed
+        model.systemPermissionSnapshot.status(for: item.destination)?.isAllowed ?? false
+    }
+
+    private var permissionStatus: FPStatus {
+        guard let statusTitle else { return .warning }
+        if statusIsAllowed {
+            return .rest
         }
-        return statusTitle == "已允许"
+        if statusTitle.contains("未") {
+            return .error
+        }
+        return .warning
+    }
+
+    private var statusSymbol: String {
+        switch permissionStatus {
+        case .rest:
+            return "checkmark.shield.fill"
+        case .error:
+            return "xmark.octagon.fill"
+        default:
+            return "exclamationmark.circle.fill"
+        }
     }
 }
 
@@ -6921,29 +6754,29 @@ private struct ReminderSettingsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             LazyVGrid(columns: settingColumns, spacing: 8) {
-                TogglePillButton(title: "气泡提醒", symbol: "bubble.left.and.bubble.right.fill", isOn: $model.settings.reminder.enablePetBubbles, tint: .blue)
+                TogglePillButton(title: "气泡提醒", symbol: "bubble.left.and.bubble.right.fill", isOn: $model.settings.reminder.enablePetBubbles, status: .focus)
                     .onChange(of: model.settings.reminder.enablePetBubbles) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "系统通知", symbol: "bell.fill", isOn: $model.settings.reminder.enableSystemNotifications, tint: DashboardPalette.focusBlue)
+                TogglePillButton(title: "系统通知", symbol: "bell.fill", isOn: $model.settings.reminder.enableSystemNotifications, status: .focus)
                     .onChange(of: model.settings.reminder.enableSystemNotifications) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "走神提醒", symbol: "eye.trianglebadge.exclamationmark", isOn: $model.settings.reminder.enableDistractedNudges, tint: DashboardPalette.distractedRed)
+                TogglePillButton(title: "走神提醒", symbol: "eye.trianglebadge.exclamationmark", isOn: $model.settings.reminder.enableDistractedNudges, status: .distracted)
                     .onChange(of: model.settings.reminder.enableDistractedNudges) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "专注休息提醒", symbol: "figure.cooldown", isOn: $model.settings.reminder.enableFocusRestNudges, tint: DashboardPalette.restGreen)
+                TogglePillButton(title: "专注休息提醒", symbol: "figure.cooldown", isOn: $model.settings.reminder.enableFocusRestNudges, status: .rest)
                     .onChange(of: model.settings.reminder.enableFocusRestNudges) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "欢迎回来", symbol: "hand.wave.fill", isOn: $model.settings.reminder.enableWelcomeBackNudges, tint: .cyan)
+                TogglePillButton(title: "欢迎回来", symbol: "hand.wave.fill", isOn: $model.settings.reminder.enableWelcomeBackNudges, status: .pet)
                     .onChange(of: model.settings.reminder.enableWelcomeBackNudges) { _, _ in model.saveSettings() }
             }
             LazyVGrid(columns: settingColumns, spacing: 8) {
-                NumberStepperControl(title: "暂停时长", value: $model.settings.reminder.pauseMinutes, range: 5...240, suffix: "分钟", tint: .orange)
+                NumberStepperControl(title: "暂停时长", value: $model.settings.reminder.pauseMinutes, range: 5...240, suffix: "分钟", status: .warning)
                     .onChange(of: model.settings.reminder.pauseMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(title: "温和走神", value: $model.settings.reminder.lightDistractedMinutes, range: 1...60, suffix: "分钟", tint: DashboardPalette.distractedPeach)
+                NumberStepperControl(title: "温和走神", value: $model.settings.reminder.lightDistractedMinutes, range: 1...60, suffix: "分钟", status: .distracted)
                     .onChange(of: model.settings.reminder.lightDistractedMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(title: "强提醒", value: $model.settings.reminder.strongDistractedMinutes, range: 2...120, suffix: "分钟", tint: DashboardPalette.distractedRed)
+                NumberStepperControl(title: "强提醒", value: $model.settings.reminder.strongDistractedMinutes, range: 2...120, suffix: "分钟", status: .distracted)
                     .onChange(of: model.settings.reminder.strongDistractedMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(title: "长专注", value: $model.settings.reminder.longFocusMinutes, range: 5...180, suffix: "分钟", tint: DashboardPalette.focusBlue)
+                NumberStepperControl(title: "长专注", value: $model.settings.reminder.longFocusMinutes, range: 5...180, suffix: "分钟", status: .focus)
                     .onChange(of: model.settings.reminder.longFocusMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(title: "超长专注", value: $model.settings.reminder.veryLongFocusMinutes, range: 10...240, suffix: "分钟", tint: .purple)
+                NumberStepperControl(title: "超长专注", value: $model.settings.reminder.veryLongFocusMinutes, range: 10...240, suffix: "分钟", status: .focus)
                     .onChange(of: model.settings.reminder.veryLongFocusMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(title: "提醒冷却", value: $model.settings.reminder.cooldownMinutes, range: 1...60, suffix: "分钟", tint: .gray)
+                NumberStepperControl(title: "提醒冷却", value: $model.settings.reminder.cooldownMinutes, range: 1...60, suffix: "分钟", status: .neutral)
                     .onChange(of: model.settings.reminder.cooldownMinutes) { _, _ in model.saveSettings() }
             }
             HStack {
@@ -6965,16 +6798,17 @@ private struct ReminderSettingsPanel: View {
 
 private struct PrivacyDataSettingsPanel: View {
     @EnvironmentObject private var model: FocusPetModel
+    private let actionColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TogglePillButton(title: "记录本地统计", symbol: "internaldrive.fill", isOn: recordingBinding, tint: DashboardPalette.awayPurple)
+            TogglePillButton(title: "记录本地统计", symbol: "internaldrive.fill", isOn: recordingBinding, status: .privacy)
             HStack(spacing: 9) {
                 Image(systemName: "internaldrive.fill")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(DashboardPalette.awayPurple)
+                    .foregroundStyle(FPColor.systemCyan500)
                     .frame(width: 28, height: 28)
-                    .background(DashboardPalette.awayPurple.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                    .background(FPColor.systemCyan100, in: RoundedRectangle(cornerRadius: 7))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("本机数据")
                         .font(.caption.weight(.semibold))
@@ -6993,26 +6827,32 @@ private struct PrivacyDataSettingsPanel: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(DashboardPalette.innerStroke, lineWidth: 1)
             }
-            VStack(alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: actionColumns, spacing: 8) {
                 Button {
                     model.exportData(redacted: true)
                 } label: {
                     Label("导出脱敏统计", systemImage: "square.and.arrow.up")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .frame(maxWidth: .infinity)
                 }
                 .liquidGlassButtonStyle()
                 Button {
                     model.exportData(redacted: false)
                 } label: {
                     Label("导出完整统计", systemImage: "doc.text")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .frame(maxWidth: .infinity)
                 }
                 .liquidGlassButtonStyle()
                 Button(role: .destructive) {
                     model.deleteAllData()
                 } label: {
                     Label("清空数据", systemImage: "trash")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .frame(maxWidth: .infinity)
                 }
                 .liquidGlassButtonStyle()
             }
@@ -7094,21 +6934,12 @@ private struct PetPackSelectionCard: View {
                 }
                 Spacer(minLength: 0)
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? .green : .secondary)
+                    .foregroundStyle(isSelected ? FPColor.rest500 : FPColor.textTertiary)
             }
-            .padding(8)
             .frame(minHeight: 54)
-            .background(cardBackground, in: RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.05), lineWidth: 1)
-            }
+            .fpInsetCard(status: .focus, isSelected: isSelected)
         }
         .buttonStyle(.plain)
-    }
-
-    private var cardBackground: Color {
-        isSelected ? Color.accentColor.opacity(0.1) : Color.primary.opacity(0.025)
     }
 }
 
@@ -7197,7 +7028,11 @@ struct PetPackSummaryView: View {
                 HStack {
                     Text(record.pack.name)
                         .font(.headline)
-                    StatusPill(record.validation.isValid ? "可用" : "需修复", symbol: record.validation.isValid ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    StatusPill(
+                        record.validation.isValid ? "可用" : "需修复",
+                        symbol: record.validation.isValid ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                        status: record.validation.isValid ? .neutral : .error
+                    )
                 }
                 Text("作者 \(record.pack.author) · \(record.pack.style)")
                     .font(.caption)
@@ -7208,7 +7043,7 @@ struct PetPackSummaryView: View {
                 if !record.validation.errors.isEmpty {
                     Text("错误：\(record.validation.errors.map(\.title).joined(separator: "、"))")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(FPColor.error)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !record.validation.warnings.isEmpty {
@@ -7290,10 +7125,10 @@ struct CategoryUsageTile: View {
 
     private var tint: Color {
         switch category {
-        case .work: .green
-        case .entertainment: .orange
-        case .ignore: .blue
-        case .neutral: .secondary
+        case .work: FPColor.focus600
+        case .entertainment: FPColor.distracted600
+        case .ignore: FPColor.textTertiary
+        case .neutral: FPColor.textSecondary
         }
     }
 }
@@ -7311,29 +7146,16 @@ struct SectionTitle: View {
 struct StatusPill: View {
     var title: String
     var symbol: String
+    var status: FPStatus
 
-    init(_ title: String, symbol: String) {
+    init(_ title: String, symbol: String, status: FPStatus = .neutral) {
         self.title = title
         self.symbol = symbol
+        self.status = status
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(DashboardPalette.secondaryText)
-            Text(title)
-                .lineLimit(1)
-        }
-        .font(.caption.weight(.medium))
-        .foregroundStyle(DashboardPalette.secondaryText)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(DashboardPalette.border, lineWidth: 1)
-        }
+        FPBadge(title: title, systemImage: symbol, status: status)
     }
 }
 
@@ -7383,33 +7205,7 @@ extension View {
     func dashboardCard(_ padding: CGFloat = 16, tint: Color = DashboardPalette.accent) -> some View {
         self.padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(DashboardPalette.cardFill)
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .fill(tint.opacity(0.82))
-                            .frame(width: 4)
-                            .padding(.vertical, 12)
-                            .padding(.leading, 1)
-                    }
-                    .overlay(alignment: .topLeading) {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(DashboardPalette.surfaceHighlight)
-                            .opacity(0.24)
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(tint.opacity(0.30), lineWidth: 1)
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(DashboardPalette.innerStroke, lineWidth: 0.5)
-                            .padding(1)
-                    }
-                    .shadow(color: DashboardPalette.shadow.opacity(0.08), radius: 2, x: 0, y: 1)
-            }
-            .liquidGlassSurface(cornerRadius: 12)
+            .fpCard(padding: 0, radius: FPRadius.large, background: FPColor.card, border: FPColor.borderDefault)
     }
 
     @ViewBuilder
@@ -7420,10 +7216,9 @@ extension View {
     @ViewBuilder
     func liquidGlassButtonStyle(prominent: Bool = false) -> some View {
         if prominent {
-            buttonStyle(.borderedProminent)
-                .foregroundStyle(.white)
+            buttonStyle(FPPrimaryButtonStyle(status: .focus))
         } else {
-            buttonStyle(.bordered)
+            buttonStyle(FPSoftButtonStyle(status: .neutral))
         }
     }
 }
