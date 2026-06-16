@@ -9,7 +9,9 @@ private enum DashboardLayout {
     static let shellCornerRadius: CGFloat = 16
     static let titlebarClearance: CGFloat = 10
     static let cardGap: CGFloat = 14
-    static let todayCanvasMinHeight: CGFloat = 710
+    static let todayCanvasMinHeight: CGFloat = 840
+    static let todayTimelineMinHeight: CGFloat = 300
+    static let todayInsightsMinHeight: CGFloat = 300
 }
 
 private enum DashboardInteraction {
@@ -1074,7 +1076,7 @@ struct TodayView: View {
             let canvasHeight = max(proxy.size.height - topBreathingRoom - bottomBreathingRoom, DashboardLayout.todayCanvasMinHeight)
             ScrollView(.vertical) {
                 TodayDashboardCanvas(size: CGSize(width: proxy.size.width, height: canvasHeight))
-                    .frame(width: proxy.size.width, alignment: .topLeading)
+                    .frame(width: proxy.size.width, height: canvasHeight, alignment: .topLeading)
                     .padding(.top, topBreathingRoom)
                     .padding(.bottom, bottomBreathingRoom)
             }
@@ -1092,11 +1094,11 @@ private struct TodayDashboardCanvas: View {
     var body: some View {
         let now = Date()
         let spacing = DashboardLayout.cardGap
-        let contentHeight = max(0, size.height)
+        let contentHeight = max(size.height, DashboardLayout.todayCanvasMinHeight)
         let rowSpace = max(0, contentHeight - spacing * 2)
         let topHeight = clamped(rowSpace * 0.24, min: 170, max: 192)
-        let timelineHeight = clamped(rowSpace * 0.30, min: 210, max: 238)
-        let insightsHeight = clamped(rowSpace - topHeight - timelineHeight, min: 252, max: 298)
+        let timelineHeight = clamped(rowSpace * 0.36, min: DashboardLayout.todayTimelineMinHeight, max: 340)
+        let insightsHeight = max(DashboardLayout.todayInsightsMinHeight, rowSpace - topHeight - timelineHeight)
         let breakWidth = clamped(size.width * 0.30, min: 288, max: 360)
         let insightSnapshot = TodayWindowInsightSnapshot(
             window: selectedInsightWindow,
@@ -2468,6 +2470,9 @@ private struct InputActivityTimelinePanel: View {
 
             InputTimelineChart(snapshot: snapshot)
                 .id(selectedWindow)
+                .layoutPriority(1)
+                .frame(minHeight: 188)
+                .clipped()
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
         }
         .padding(12)
@@ -2608,12 +2613,13 @@ private struct InputTimelineChart: View {
         GeometryReader { proxy in
             let chartWidth = max(1, proxy.size.width - labelWidth)
             let chartHeight = max(1, proxy.size.height)
-            let statusY: CGFloat = 3
+            let statusY: CGFloat = 4
             let statusHeight: CGFloat = 34
-            let inputY: CGFloat = statusY + statusHeight + 20
-            let axisReserve: CGFloat = 28
-            let inputHeight = max(84, chartHeight - inputY - axisReserve)
+            let inputY: CGFloat = statusY + statusHeight + 18
+            let axisReserve: CGFloat = 34
+            let inputHeight = max(24, chartHeight - inputY - axisReserve)
             let markerBottom = inputY + inputHeight
+            let axisY = min(markerBottom + 7, max(0, chartHeight - 24))
 
             ZStack(alignment: .topLeading) {
                 rowLabels(statusY: statusY, inputY: inputY, inputHeight: inputHeight)
@@ -2643,11 +2649,11 @@ private struct InputTimelineChart: View {
                         Spacer()
                         TimelineTimeChip(snapshot.timeLabels.last ?? "")
                     }
-                    .offset(y: markerBottom + 5)
+                    .offset(y: axisY)
 
                     Rectangle()
                         .fill(Color.white.opacity(0.001))
-                        .frame(width: chartWidth, height: markerBottom + 24)
+                        .frame(width: chartWidth, height: min(chartHeight, markerBottom + axisReserve))
                         .contentShape(Rectangle())
                         .onContinuousHover { phase in
                             switch phase {
@@ -2784,15 +2790,15 @@ private struct InputTimelineChart: View {
         let slotWidth = max(3, chartWidth * CGFloat(bar.endProgress - bar.startProgress))
         let barWidth = max(5, min(14, slotWidth * 0.72))
         let totalRatio = CGFloat(bar.totalCount) / CGFloat(max(1, snapshot.maxInputCount))
-        let totalHeight = max(bar.totalCount > 0 ? 10 : 0, height * 0.94 * totalRatio)
-        let pointerRatio = CGFloat(bar.pointerCount) / CGFloat(max(1, bar.totalCount))
+        let totalHeight = min(height, max(bar.totalCount > 0 ? 8 : 0, height * 0.90 * totalRatio))
+        let pointerRatio = bar.totalCount > 0 ? CGFloat(bar.pointerCount) / CGFloat(bar.totalCount) : 0
         let pointerHeight = totalHeight * pointerRatio
         let keyboardHeight = totalHeight - pointerHeight
 
         return ZStack(alignment: .bottom) {
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(DashboardPalette.warmFocus.opacity(0.08))
-                .frame(width: max(barWidth, 8), height: max(12, totalHeight + 5))
+                .frame(width: max(barWidth, 8), height: totalHeight)
 
             VStack(spacing: 1.5) {
                 if bar.keyboardCount > 0 {

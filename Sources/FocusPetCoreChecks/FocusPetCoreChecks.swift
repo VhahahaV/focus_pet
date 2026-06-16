@@ -40,6 +40,7 @@ enum FocusPetCoreChecks {
         checkUserRulesOverrideCatalog()
         checkStoredBuiltInsAreFiltered()
         checkPetFallback()
+        checkPetCatalogDoesNotExposeFallbackAsDefault()
         checkLocalPetPackActions()
         checkPetHoverPresentation()
         checkPetNonLoopFramesDoNotFreeze()
@@ -678,6 +679,16 @@ enum FocusPetCoreChecks {
         expect(PetActionResolver().animationKey(for: .nudgeStrong, in: pack) == .nudgeGentle, "strong nudge should fall back to gentle nudge")
     }
 
+    private static func checkPetCatalogDoesNotExposeFallbackAsDefault() {
+        let defaultSettings = AppSettings()
+        let fallbackPack = PetPackCatalog.fallbackPack
+
+        expect(PetPackCatalog().bundledPacks().isEmpty, "placeholder pet should not be exposed as a selectable bundled pack")
+        expect(defaultSettings.pet.selectedPackID == PetPackCatalog.localXiaoDaiPackID, "default pet selection should prefer a local pack")
+        expect(fallbackPack.id == PetPackCatalog.bundledPackID, "fallback pack id should match its catalog id")
+        expect(fallbackPack.name == "Local Pet Placeholder", "fallback pack should be a generic placeholder")
+    }
+
     private static func checkLocalPetPackActions() {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("external_generated_packs", isDirectory: true)
@@ -735,7 +746,7 @@ enum FocusPetCoreChecks {
             size: 150,
             opacity: 0.94,
             animationEnabled: true,
-            packName: "Focus Dino",
+            packName: "Local Pet Placeholder",
             frameURLs: [normalFrame],
             framesPerSecond: 6,
             loops: true,
@@ -762,7 +773,7 @@ enum FocusPetCoreChecks {
             size: 150,
             opacity: 0.94,
             animationEnabled: true,
-            packName: "Focus Dino",
+            packName: "Local Pet Placeholder",
             frameURLs: [first, second],
             framesPerSecond: 1,
             loops: false,

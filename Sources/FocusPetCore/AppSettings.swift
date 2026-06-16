@@ -232,7 +232,7 @@ public struct JudgmentSettings: Codable, Hashable, Sendable {
 }
 
 public struct PetSettings: Codable, Hashable, Sendable {
-    public static let defaultSelectedPackID = "focus_dino"
+    public static let defaultSelectedPackID = "xiaodai_local"
 
     public var opacity: Double
     public var size: Double

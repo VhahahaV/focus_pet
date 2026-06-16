@@ -186,7 +186,7 @@ public struct PetRenderState: Hashable, Sendable {
         size: 150,
         opacity: 0.94,
         animationEnabled: true,
-        packName: "Focus Dino",
+        packName: "Local Pet Placeholder",
         placement: .bottomRight,
         customOriginX: nil,
         customOriginY: nil,

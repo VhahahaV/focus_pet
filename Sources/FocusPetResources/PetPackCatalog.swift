@@ -2,7 +2,7 @@ import FocusPetCore
 import Foundation
 
 public struct PetPackCatalog: Sendable {
-    public static let bundledPackID = "focus_dino"
+    public static let bundledPackID = "local_pet_placeholder"
     public static let localLuoXiaoHeiPackID = "luo_xiaohei_local"
     public static let localXiaoDaiPackID = "xiaodai_local"
     public static let localPixelCatMemePackID = "pixel_cat_meme_local"
@@ -10,9 +10,7 @@ public struct PetPackCatalog: Sendable {
     public init() {}
 
     public func bundledPacks() -> [PetPackRecord] {
-        [
-            PetPackRecord(pack: Self.fallbackPack, rootURL: nil, isBundled: true)
-        ]
+        []
     }
 
     public func availablePacks(userRootURL: URL = PetPackLibrary.defaultInstallRootURL()) -> [PetPackRecord] {
@@ -53,7 +51,9 @@ public struct PetPackCatalog: Sendable {
             return []
         }
 
-        return urls.compactMap { record(at: $0, isBundled: isBundled) }
+        return urls
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            .compactMap { record(at: $0, isBundled: isBundled) }
     }
 
     private func localGeneratedPackRecords() -> [PetPackRecord] {
@@ -100,11 +100,11 @@ public struct PetPackCatalog: Sendable {
     public static let fallbackPack = PetPack(
         schemaVersion: 1,
         id: bundledPackID,
-        name: "Focus Dino",
+        name: "Local Pet Placeholder",
         author: "Focus Pet",
-        style: "minimal_2d",
+        style: "placeholder",
         license: "original",
-        distribution: "redistributable",
+        distribution: "internalFallback",
         defaultSize: PetPackSize(width: 160, height: 160),
         anchor: PetPackAnchor(x: 0.5, y: 1.0),
         animations: [
