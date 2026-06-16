@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
+            InstallationNoticeCoordinator.showLaunchNoticeIfNeeded()
         }
     }
 

@@ -103,7 +103,7 @@ public struct DailySummaryBuilder: Sendable {
 
         for usage in appUsage where overlaps(usage.start, usage.end, bounds: bounds) {
             let category = normalizedCategory(usage.category)
-            guard category != .ignore else { continue }
+            guard !isHiddenSystemUsage(appName: usage.appName, bundleID: usage.bundleID) else { continue }
             let key = "\(usage.bundleID ?? usage.appName)-\(category.rawValue)"
             var summary = result[key] ?? AppUsageSummary(
                 appName: usage.appName,
@@ -118,7 +118,7 @@ public struct DailySummaryBuilder: Sendable {
 
         for segment in segments {
             let category = normalizedCategory(segment.category)
-            guard category != .ignore else { continue }
+            guard !isHiddenSystemUsage(appName: segment.appName, bundleID: segment.bundleID) else { continue }
             let key = "\(segment.bundleID ?? segment.appName)-\(category.rawValue)"
             var summary = result[key] ?? AppUsageSummary(
                 appName: segment.appName,
@@ -191,6 +191,17 @@ public struct DailySummaryBuilder: Sendable {
 
     private func normalizedCategory(_ category: ActivityCategory) -> ActivityCategory {
         category == .neutral ? .ignore : category
+    }
+
+    private func isHiddenSystemUsage(appName: String, bundleID: String?) -> Bool {
+        let normalizedName = appName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedBundleID = bundleID?.lowercased() ?? ""
+        return normalizedName == "sleep"
+            || normalizedName == "loginwindow"
+            || normalizedName == "locked screen"
+            || normalizedName == "break"
+            || normalizedName == "away"
+            || normalizedBundleID.contains("loginwindow")
     }
 
     private static func dayBounds(for date: Date) -> (start: Date, end: Date) {

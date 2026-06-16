@@ -5,6 +5,7 @@ public enum NudgeReason: String, Codable, Hashable, Sendable, CaseIterable, Iden
     case distractedStrong
     case longFocusRest
     case veryLongFocusRest
+    case focusSessionCompleted
     case breakEnding
     case welcomeBack
     case frequentSwitching
@@ -13,13 +14,14 @@ public enum NudgeReason: String, Codable, Hashable, Sendable, CaseIterable, Iden
 
     public var title: String {
         switch self {
-        case .distractedOverThreshold: "走神过久"
-        case .distractedStrong: "走神持续过久"
-        case .longFocusRest: "长时间专注"
-        case .veryLongFocusRest: "超长专注"
-        case .breakEnding: "休息将结束"
+        case .distractedOverThreshold: "注意力提醒"
+        case .distractedStrong: "需要收束一下"
+        case .longFocusRest: "建议休息"
+        case .veryLongFocusRest: "该休息了"
+        case .focusSessionCompleted: "专注完成"
+        case .breakEnding: "休息结束"
         case .welcomeBack: "回到电脑"
-        case .frequentSwitching: "频繁切换"
+        case .frequentSwitching: "切换过多"
         }
     }
 }
@@ -144,6 +146,7 @@ public struct NudgePolicyThresholds: Codable, Hashable, Sendable {
     public var strongDistractedSeconds: TimeInterval
     public var longFocusSeconds: TimeInterval
     public var veryLongFocusSeconds: TimeInterval
+    public var welcomeBackAwaySeconds: TimeInterval
     public var cooldownSeconds: TimeInterval
 
     public init(
@@ -151,13 +154,36 @@ public struct NudgePolicyThresholds: Codable, Hashable, Sendable {
         strongDistractedSeconds: TimeInterval = 15 * 60,
         longFocusSeconds: TimeInterval = 25 * 60,
         veryLongFocusSeconds: TimeInterval = 60 * 60,
+        welcomeBackAwaySeconds: TimeInterval = 15 * 60,
         cooldownSeconds: TimeInterval = 10 * 60
     ) {
         self.lightDistractedSeconds = lightDistractedSeconds
         self.strongDistractedSeconds = strongDistractedSeconds
         self.longFocusSeconds = longFocusSeconds
         self.veryLongFocusSeconds = veryLongFocusSeconds
+        self.welcomeBackAwaySeconds = welcomeBackAwaySeconds
         self.cooldownSeconds = cooldownSeconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case lightDistractedSeconds
+        case strongDistractedSeconds
+        case longFocusSeconds
+        case veryLongFocusSeconds
+        case welcomeBackAwaySeconds
+        case cooldownSeconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            lightDistractedSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .lightDistractedSeconds) ?? 8 * 60,
+            strongDistractedSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .strongDistractedSeconds) ?? 15 * 60,
+            longFocusSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .longFocusSeconds) ?? 25 * 60,
+            veryLongFocusSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .veryLongFocusSeconds) ?? 60 * 60,
+            welcomeBackAwaySeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .welcomeBackAwaySeconds) ?? 15 * 60,
+            cooldownSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .cooldownSeconds) ?? 10 * 60
+        )
     }
 }
 
@@ -171,27 +197,30 @@ public struct NudgePolicy: Sendable {
     public func nudge(
         for state: FocusStateSnapshot,
         previousState: FocusState?,
+        previousStateDuration: TimeInterval? = nil,
         now: Date,
         lastTriggeredAt: [NudgeReason: Date]
     ) -> NudgeEvent? {
-        if previousState == .away, state.state != .away {
-            return event(.welcomeBack, state: state, now: now, intent: .welcomeBack, message: "欢迎回来，要继续吗？", lastTriggeredAt: lastTriggeredAt)
+        if previousState == .away,
+           state.state == .focus,
+           (previousStateDuration ?? 0) >= thresholds.welcomeBackAwaySeconds {
+            return event(.welcomeBack, state: state, now: now, intent: .welcomeBack, message: "欢迎回来，先接上刚才的节奏。", lastTriggeredAt: lastTriggeredAt)
         }
 
         switch state.state {
         case .focus:
             if state.stableDuration >= thresholds.veryLongFocusSeconds {
-                return event(.veryLongFocusRest, state: state, now: now, intent: .focusRestHint, message: "已经专注很久了，要休息一下吗？", lastTriggeredAt: lastTriggeredAt)
+                return event(.veryLongFocusRest, state: state, now: now, intent: .focusRestHint, message: "已经连续专注很久了，先离屏活动几分钟。", lastTriggeredAt: lastTriggeredAt)
             }
             if state.stableDuration >= thresholds.longFocusSeconds {
-                return event(.longFocusRest, state: state, now: now, intent: .focusRestHint, message: "已经专注一阵子了，要休息一下吗？", lastTriggeredAt: lastTriggeredAt)
+                return event(.longFocusRest, state: state, now: now, intent: .focusRestHint, message: "这段专注已经够长了，可以安排一次短休息。", lastTriggeredAt: lastTriggeredAt)
             }
         case .distracted:
             if state.stableDuration >= thresholds.strongDistractedSeconds {
-                return event(.distractedStrong, state: state, now: now, intent: .nudgeStrong, message: "已经偏离一会儿啦，要回来吗？", lastTriggeredAt: lastTriggeredAt)
+                return event(.distractedStrong, state: state, now: now, intent: .nudgeStrong, message: "这段已经偏离比较久了，建议暂停一下或回到任务。", lastTriggeredAt: lastTriggeredAt)
             }
             if state.stableDuration >= thresholds.lightDistractedSeconds {
-                return event(.distractedOverThreshold, state: state, now: now, intent: .nudgeGentle, message: "要不要回到刚才的任务？", lastTriggeredAt: lastTriggeredAt)
+                return event(.distractedOverThreshold, state: state, now: now, intent: .nudgeGentle, message: "先回到当前任务两分钟，节奏会更容易接上。", lastTriggeredAt: lastTriggeredAt)
             }
         case .breakTime, .away:
             return nil
@@ -233,7 +262,7 @@ public extension NudgeReason {
             .nudgeGentle
         case .distractedStrong, .frequentSwitching:
             .nudgeStrong
-        case .longFocusRest, .veryLongFocusRest:
+        case .longFocusRest, .veryLongFocusRest, .focusSessionCompleted:
             .focusRestHint
         case .breakEnding:
             .breakEnding

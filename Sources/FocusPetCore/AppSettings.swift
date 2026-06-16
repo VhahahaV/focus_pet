@@ -17,7 +17,7 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
 
     public init(
         enablePetBubbles: Bool = true,
-        enableSystemNotifications: Bool = true,
+        enableSystemNotifications: Bool = false,
         hasAppliedSystemNotificationDefault: Bool = true,
         pauseUntil: Date? = nil,
         pauseMinutes: Int = 30,
@@ -59,7 +59,7 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
         switch reason {
         case .distractedOverThreshold, .distractedStrong, .frequentSwitching:
             enableDistractedNudges
-        case .longFocusRest, .veryLongFocusRest, .breakEnding:
+        case .longFocusRest, .veryLongFocusRest, .focusSessionCompleted, .breakEnding:
             enableFocusRestNudges
         case .welcomeBack:
             enableWelcomeBackNudges
@@ -104,7 +104,7 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             enablePetBubbles: try container.decodeIfPresent(Bool.self, forKey: .enablePetBubbles) ?? true,
-            enableSystemNotifications: try container.decodeIfPresent(Bool.self, forKey: .enableSystemNotifications) ?? true,
+            enableSystemNotifications: try container.decodeIfPresent(Bool.self, forKey: .enableSystemNotifications) ?? false,
             hasAppliedSystemNotificationDefault: try container.decodeIfPresent(Bool.self, forKey: .hasAppliedSystemNotificationDefault) ?? false,
             pauseUntil: try container.decodeIfPresent(Date.self, forKey: .pauseUntil),
             pauseMinutes: try container.decodeIfPresent(Int.self, forKey: .pauseMinutes) ?? 30,
@@ -232,6 +232,8 @@ public struct JudgmentSettings: Codable, Hashable, Sendable {
 }
 
 public struct PetSettings: Codable, Hashable, Sendable {
+    public static let defaultSelectedPackID = "focus_dino"
+
     public var opacity: Double
     public var size: Double
     public var animationEnabled: Bool
@@ -251,7 +253,7 @@ public struct PetSettings: Codable, Hashable, Sendable {
         animationEnabled: Bool = true,
         audioEnabled: Bool = true,
         hidden: Bool = false,
-        selectedPackID: String = "luo_xiaohei_local",
+        selectedPackID: String = Self.defaultSelectedPackID,
         placement: PetPlacementMode = .bottomRight,
         customOriginX: Double? = nil,
         customOriginY: Double? = nil,
@@ -300,7 +302,7 @@ public struct PetSettings: Codable, Hashable, Sendable {
             animationEnabled: try container.decodeIfPresent(Bool.self, forKey: .animationEnabled) ?? true,
             audioEnabled: try container.decodeIfPresent(Bool.self, forKey: .audioEnabled) ?? true,
             hidden: try container.decodeIfPresent(Bool.self, forKey: .hidden) ?? false,
-            selectedPackID: try container.decodeIfPresent(String.self, forKey: .selectedPackID) ?? "luo_xiaohei_local",
+            selectedPackID: try container.decodeIfPresent(String.self, forKey: .selectedPackID) ?? Self.defaultSelectedPackID,
             placement: try container.decodeIfPresent(PetPlacementMode.self, forKey: .placement) ?? .bottomRight,
             customOriginX: try container.decodeIfPresent(Double.self, forKey: .customOriginX),
             customOriginY: try container.decodeIfPresent(Double.self, forKey: .customOriginY),

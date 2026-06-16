@@ -50,9 +50,12 @@ Only these distribution-mode DMGs should be uploaded for users to download.
 
 The script performs the release gates in order:
 
-- builds the Swift executable with `--configuration release`;
+- builds a universal `arm64+x86_64` Swift executable with
+  `--configuration release` by default;
 - creates a stable `Focus Pet.app` bundle;
 - places SwiftPM resource bundles under `Contents/Resources`;
+- excludes `external_generated_packs` by default so local-only or third-party
+  test pet assets are not redistributed accidentally;
 - signs the app with hardened runtime;
 - notarizes and staples the app;
 - creates the DMG with the Applications symlink and Finder layout;
@@ -81,6 +84,13 @@ Build a local-only DMG:
 ```bash
 scripts/package-dmg.sh --local
 ```
+
+Pass `--include-local-test-pets` only for internal smoke testing when the local
+asset licenses are understood. The default local build matches distribution
+packaging and excludes `external_generated_packs`.
+
+Pass `--native` only for fast local iteration. Uploadable builds should keep the
+default universal executable so Apple Silicon and Intel Macs are both covered.
 
 Successful output:
 
@@ -148,6 +158,21 @@ Older builds used:
 
 The app migrates this legacy directory into `Focus Pet` on startup when the new
 directory is empty.
+
+If the app sees existing data without a schema file, it backs up the data
+directory, adopts the current schema metadata, and continues reading the data.
+If it sees a schema version this build does not understand, it backs up the
+directory and blocks writes so an older build cannot damage newer-format data.
+
+## Install Notice
+
+The drag-and-drop DMG cannot run code at the exact moment Finder finishes
+copying the app into Applications. Instead, Focus Pet shows an install or update
+success alert the first time each build is launched from `/Applications` or
+`~/Applications`.
+
+If a user opens the app directly from the mounted DMG, Focus Pet shows a warning
+asking them to drag the app into Applications first.
 
 ## Verification Checklist
 

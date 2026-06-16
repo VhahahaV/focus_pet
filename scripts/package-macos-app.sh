@@ -12,11 +12,12 @@ CONFIGURATION="${FOCUSPET_BUILD_CONFIGURATION:-release}"
 BUNDLE_IDENTIFIER="${FOCUSPET_BUNDLE_IDENTIFIER:-com.focuspet.FocusPet}"
 VERSION="${FOCUSPET_VERSION:-0.0.1}"
 BUILD_NUMBER="${FOCUSPET_BUILD_NUMBER:-1}"
-INCLUDE_LOCAL_TEST_PETS=1
+INCLUDE_LOCAL_TEST_PETS=0
 SIGN_MODE="auto"
 SIGN_IDENTITY="${FOCUSPET_CODESIGN_IDENTITY:-${CODESIGN_IDENTITY:-}}"
 ENTITLEMENTS="${FOCUSPET_ENTITLEMENTS:-}"
 HARDENED_RUNTIME=1
+ARCH_MODE="${FOCUSPET_ARCH_MODE:-universal}"
 
 usage() {
     cat <<'USAGE'
@@ -27,8 +28,10 @@ Options:
   --bundle-identifier ID            CFBundleIdentifier. Default: com.focuspet.FocusPet
   --version VERSION                 CFBundleShortVersionString. Default: 0.0.1
   --build BUILD                     CFBundleVersion. Default: 1
-  --include-local-test-pets         Include external_generated_packs. Default
-  --exclude-local-test-pets         Exclude external_generated_packs
+  --universal                       Build arm64+x86_64 app executable. Default
+  --native                          Build only the current machine architecture
+  --include-local-test-pets         Include external_generated_packs for local testing only
+  --exclude-local-test-pets         Exclude external_generated_packs. Default
   --sign-identity IDENTITY          Sign with a Developer ID/Application identity
   --ad-hoc-sign                     Sign ad-hoc for local-only testing
   --skip-sign                       Leave the bundle unsigned
@@ -42,6 +45,7 @@ Environment:
   FOCUSPET_VERSION                  Default short version
   FOCUSPET_BUILD_NUMBER             Default build number
   FOCUSPET_ENTITLEMENTS             Default entitlements plist path
+  FOCUSPET_ARCH_MODE                universal or native. Default: universal
 USAGE
 }
 
@@ -62,6 +66,14 @@ while [[ $# -gt 0 ]]; do
         --build)
             BUILD_NUMBER="${2:-}"
             shift 2
+            ;;
+        --universal)
+            ARCH_MODE="universal"
+            shift
+            ;;
+        --native)
+            ARCH_MODE="native"
+            shift
             ;;
         --include-local-test-pets)
             INCLUDE_LOCAL_TEST_PETS=1
@@ -120,6 +132,15 @@ if [[ -z "$BUNDLE_IDENTIFIER" || -z "$VERSION" || -z "$BUILD_NUMBER" ]]; then
     exit 64
 fi
 
+case "$ARCH_MODE" in
+    universal|native)
+        ;;
+    *)
+        echo "Invalid architecture mode: $ARCH_MODE" >&2
+        exit 64
+        ;;
+esac
+
 if [[ "$SIGN_MODE" == "auto" ]]; then
     if [[ -n "$SIGN_IDENTITY" ]]; then
         SIGN_MODE="identity"
@@ -135,20 +156,47 @@ if [[ -n "$ENTITLEMENTS" && ! -f "$ENTITLEMENTS" ]]; then
 fi
 
 cd "$ROOT_DIR"
-swift build --configuration "$CONFIGURATION"
 
-BUILD_PRODUCTS_DIR="$ROOT_DIR/.build/$CONFIGURATION"
-EXECUTABLE="$BUILD_PRODUCTS_DIR/FocusPet"
+if [[ "$ARCH_MODE" == "universal" ]]; then
+    ARM_TRIPLE="arm64-apple-macosx14.0"
+    X86_TRIPLE="x86_64-apple-macosx14.0"
+    swift build --configuration "$CONFIGURATION" --triple "$ARM_TRIPLE"
+    swift build --configuration "$CONFIGURATION" --triple "$X86_TRIPLE"
 
-if [[ ! -x "$EXECUTABLE" ]]; then
-    echo "Built executable is missing: $EXECUTABLE" >&2
-    exit 70
+    ARM_BUILD_PRODUCTS_DIR="$ROOT_DIR/.build/arm64-apple-macosx/$CONFIGURATION"
+    X86_BUILD_PRODUCTS_DIR="$ROOT_DIR/.build/x86_64-apple-macosx/$CONFIGURATION"
+    BUILD_PRODUCTS_DIR="$ARM_BUILD_PRODUCTS_DIR"
+    ARM_EXECUTABLE="$ARM_BUILD_PRODUCTS_DIR/FocusPet"
+    X86_EXECUTABLE="$X86_BUILD_PRODUCTS_DIR/FocusPet"
+
+    if [[ ! -x "$ARM_EXECUTABLE" ]]; then
+        echo "Built arm64 executable is missing: $ARM_EXECUTABLE" >&2
+        exit 70
+    fi
+    if [[ ! -x "$X86_EXECUTABLE" ]]; then
+        echo "Built x86_64 executable is missing: $X86_EXECUTABLE" >&2
+        exit 70
+    fi
+else
+    swift build --configuration "$CONFIGURATION"
+    BUILD_PRODUCTS_DIR="$ROOT_DIR/.build/$CONFIGURATION"
+    EXECUTABLE="$BUILD_PRODUCTS_DIR/FocusPet"
+
+    if [[ ! -x "$EXECUTABLE" ]]; then
+        echo "Built executable is missing: $EXECUTABLE" >&2
+        exit 70
+    fi
 fi
 
 rm -rf "$APP_DIR"
 rm -rf "$LEGACY_APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
-cp "$EXECUTABLE" "$APP_DIR/Contents/MacOS/FocusPet"
+if [[ "$ARCH_MODE" == "universal" ]]; then
+    lipo -create "$ARM_EXECUTABLE" "$X86_EXECUTABLE" -output "$APP_DIR/Contents/MacOS/FocusPet"
+    lipo "$APP_DIR/Contents/MacOS/FocusPet" -verify_arch arm64 x86_64
+else
+    cp "$EXECUTABLE" "$APP_DIR/Contents/MacOS/FocusPet"
+fi
 
 for RESOURCE_BUNDLE in "$BUILD_PRODUCTS_DIR"/FocusPet_*.bundle; do
     [[ -d "$RESOURCE_BUNDLE" ]] || continue

@@ -4,8 +4,16 @@
     "matchKind": "bundleID",
     "category": "work",
     "priority": 650,
-    "regions": ["global"],
-    "aliases": ["IDE", "code editor", "terminal", "database", "API"],
+    "regions": [
+      "global"
+    ],
+    "aliases": [
+      "IDE",
+      "code editor",
+      "terminal",
+      "database",
+      "API"
+    ],
     "notes": "Developer tools and engineering environments.",
     "patterns": [
       "com.apple.dt.Xcode",
@@ -51,7 +59,20 @@
       "org.pgadmin.pgadmin4",
       "com.kapeli.dashdoc",
       "com.luckymarmot.Paw",
-      "com.insomnia.app"
+      "com.insomnia.app",
+      "dev.zed.Zed",
+      "io.dbeaver.core.product",
+      "com.sequel-ace.sequel-ace",
+      "io.beekeeperstudio.desktop",
+      "com.redislabs.redisinsight",
+      "dev.orbstack.OrbStack",
+      "io.rancherdesktop.app",
+      "io.podman_desktop.PodmanDesktop",
+      "com.github.wez.wezterm",
+      "org.alacritty",
+      "net.kovidgoyal.kitty",
+      "com.mitchellh.ghostty",
+      "com.openai.codex"
     ]
   },
   {
@@ -59,8 +80,14 @@
     "matchKind": "appName",
     "category": "work",
     "priority": 560,
-    "regions": ["global"],
-    "aliases": ["coding", "terminal", "developer"],
+    "regions": [
+      "global"
+    ],
+    "aliases": [
+      "coding",
+      "terminal",
+      "developer"
+    ],
     "patterns": [
       "Xcode",
       "Visual Studio Code",
@@ -100,7 +127,28 @@
       "MongoDB Compass",
       "pgAdmin",
       "Dash",
-      "Paw"
+      "Paw",
+      "Zed",
+      "Windsurf",
+      "Trae",
+      "DBeaver",
+      "Sequel Ace",
+      "Beekeeper Studio",
+      "Redis Insight",
+      "Lens",
+      "OpenLens",
+      "Kaleidoscope",
+      "Fork",
+      "GitKraken",
+      "OrbStack",
+      "Rancher Desktop",
+      "Podman Desktop",
+      "WezTerm",
+      "Alacritty",
+      "Kitty",
+      "Ghostty",
+      "Codex",
+      "Cortex"
     ]
   },
   {
@@ -108,8 +156,15 @@
     "matchKind": "bundleID",
     "category": "work",
     "priority": 610,
-    "regions": ["global"],
-    "aliases": ["office", "docs", "notes", "knowledge"],
+    "regions": [
+      "global"
+    ],
+    "aliases": [
+      "office",
+      "docs",
+      "notes",
+      "knowledge"
+    ],
     "patterns": [
       "com.microsoft.Word",
       "com.microsoft.Excel",
@@ -143,8 +198,16 @@
     "matchKind": "appName",
     "category": "work",
     "priority": 540,
-    "regions": ["global", "cn"],
-    "aliases": ["office", "writing", "notes", "tasks"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "office",
+      "writing",
+      "notes",
+      "tasks"
+    ],
     "patterns": [
       "Microsoft Word",
       "Word",
@@ -177,7 +240,13 @@
       "飞书文档",
       "腾讯文档",
       "语雀",
-      "石墨文档"
+      "石墨文档",
+      "Anytype",
+      "AFFiNE",
+      "SiYuan",
+      "思源笔记",
+      "RemNote",
+      "UpNote"
     ]
   },
   {
@@ -185,8 +254,15 @@
     "matchKind": "bundleID",
     "category": "work",
     "priority": 610,
-    "regions": ["global"],
-    "aliases": ["design", "creative", "video editing", "3d"],
+    "regions": [
+      "global"
+    ],
+    "aliases": [
+      "design",
+      "creative",
+      "video editing",
+      "3d"
+    ],
     "patterns": [
       "com.figma.Desktop",
       "com.bohemiancoding.sketch3",
@@ -215,7 +291,9 @@
     "matchKind": "appName",
     "category": "work",
     "priority": 535,
-    "regions": ["global"],
+    "regions": [
+      "global"
+    ],
     "patterns": [
       "Figma",
       "Sketch",
@@ -244,8 +322,15 @@
     "matchKind": "bundleID",
     "category": "work",
     "priority": 560,
-    "regions": ["global", "cn"],
-    "aliases": ["chat", "meeting", "collaboration"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "chat",
+      "meeting",
+      "collaboration"
+    ],
     "notes": "Collaboration apps are treated as work by default, but users can override them as distracting or ignored.",
     "patterns": [
       "com.tinyspeck.slackmacgap",
@@ -274,7 +359,10 @@
     "matchKind": "appName",
     "category": "work",
     "priority": 520,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "Slack",
       "Microsoft Teams",
@@ -305,7 +393,10 @@
     "matchKind": "windowTitle",
     "category": "work",
     "priority": 720,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "GitHub",
       "GitLab",
@@ -351,7 +442,9 @@
     "matchKind": "bundleID",
     "category": "ignore",
     "priority": 180,
-    "regions": ["global"],
+    "regions": [
+      "global"
+    ],
     "notes": "Browsers do not decide focus by themselves; window title/site rules have higher priority.",
     "patterns": [
       "com.apple.Safari",
@@ -375,7 +468,9 @@
     "matchKind": "appName",
     "category": "ignore",
     "priority": 160,
-    "regions": ["global"],
+    "regions": [
+      "global"
+    ],
     "patterns": [
       "Safari",
       "Google Chrome",
@@ -398,8 +493,15 @@
     "matchKind": "windowTitle",
     "category": "entertainment",
     "priority": 820,
-    "regions": ["global", "cn"],
-    "aliases": ["video", "streaming", "short video"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "video",
+      "streaming",
+      "short video"
+    ],
     "patterns": [
       "YouTube",
       "youtube.com",
@@ -456,8 +558,15 @@
     "matchKind": "windowTitle",
     "category": "entertainment",
     "priority": 800,
-    "regions": ["global", "cn"],
-    "aliases": ["social", "feed", "community"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "social",
+      "feed",
+      "community"
+    ],
     "patterns": [
       "Twitter",
       "twitter.com",
@@ -494,7 +603,10 @@
     "matchKind": "windowTitle",
     "category": "entertainment",
     "priority": 760,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "Amazon",
       "amazon.com",
@@ -523,8 +635,14 @@
     "matchKind": "bundleID",
     "category": "entertainment",
     "priority": 700,
-    "regions": ["global", "cn"],
-    "aliases": ["games", "game launcher"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "games",
+      "game launcher"
+    ],
     "patterns": [
       "com.valvesoftware.steam",
       "com.epicgames.EpicGamesLauncher",
@@ -548,7 +666,10 @@
     "matchKind": "appName",
     "category": "entertainment",
     "priority": 620,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "Steam",
       "Epic Games Launcher",
@@ -574,7 +695,10 @@
     "matchKind": "bundleID",
     "category": "entertainment",
     "priority": 580,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "com.spotify.client",
       "com.apple.Music",
@@ -595,7 +719,10 @@
     "matchKind": "appName",
     "category": "entertainment",
     "priority": 500,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "Spotify",
       "Music",
@@ -619,8 +746,15 @@
     "matchKind": "bundleID",
     "category": "ignore",
     "priority": 640,
-    "regions": ["global"],
-    "aliases": ["system", "utility", "launcher", "password"],
+    "regions": [
+      "global"
+    ],
+    "aliases": [
+      "system",
+      "utility",
+      "launcher",
+      "password"
+    ],
     "patterns": [
       "com.apple.finder",
       "com.apple.systempreferences",
@@ -658,7 +792,10 @@
     "matchKind": "appName",
     "category": "ignore",
     "priority": 560,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "Finder",
       "访达",
@@ -696,14 +833,30 @@
     "matchKind": "windowTitle",
     "category": "work",
     "priority": 790,
-    "regions": ["global", "cn"],
-    "aliases": ["AI", "research", "writing", "translation"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "AI",
+      "research",
+      "writing",
+      "translation"
+    ],
     "notes": "AI assistants, research databases, academic writing and translation tools that are usually used intentionally.",
     "patterns": [
       "ChatGPT",
       "chatgpt.com",
+      "chat.openai.com",
       "OpenAI",
       "openai.com",
+      "Codex",
+      "codex.openai.com",
+      "Cortex",
+      "GPT",
+      "GPT-5",
+      "GPT-4",
+      "GPTs",
       "Claude",
       "claude.ai",
       "Anthropic",
@@ -789,9 +942,15 @@
     "matchKind": "appName",
     "category": "work",
     "priority": 560,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "ChatGPT",
+      "ChatGPT Atlas",
+      "Codex",
+      "Cortex",
       "Claude",
       "Gemini",
       "Perplexity",
@@ -823,8 +982,16 @@
     "matchKind": "windowTitle",
     "category": "work",
     "priority": 835,
-    "regions": ["global", "cn"],
-    "aliases": ["cloud", "devops", "observability", "package registry"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "cloud",
+      "devops",
+      "observability",
+      "package registry"
+    ],
     "patterns": [
       "AWS",
       "AWS Console",
@@ -916,8 +1083,15 @@
     "matchKind": "windowTitle",
     "category": "work",
     "priority": 760,
-    "regions": ["global", "cn"],
-    "aliases": ["documentation", "education", "reference"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "documentation",
+      "education",
+      "reference"
+    ],
     "patterns": [
       "Apple Developer",
       "developer.apple.com",
@@ -1044,8 +1218,17 @@
     "matchKind": "appName",
     "category": "work",
     "priority": 540,
-    "regions": ["global", "cn"],
-    "aliases": ["notes", "tasks", "calendar", "writing", "mind map"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "notes",
+      "tasks",
+      "calendar",
+      "writing",
+      "mind map"
+    ],
     "patterns": [
       "Todoist",
       "Things",
@@ -1119,7 +1302,10 @@
     "matchKind": "windowTitle",
     "category": "work",
     "priority": 750,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "Todoist",
       "todoist.com",
@@ -1209,8 +1395,15 @@
     "matchKind": "windowTitle",
     "category": "work",
     "priority": 740,
-    "regions": ["global", "cn"],
-    "aliases": ["business", "analytics", "finance"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "business",
+      "analytics",
+      "finance"
+    ],
     "patterns": [
       "Salesforce",
       "HubSpot",
@@ -1257,12 +1450,281 @@
     ]
   },
   {
+    "id": "work-collab-web-title",
+    "matchKind": "windowTitle",
+    "category": "work",
+    "priority": 770,
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "collaboration",
+      "meeting",
+      "team chat"
+    ],
+    "notes": "Browser-hosted collaboration surfaces that usually represent active work communication.",
+    "patterns": [
+      "Slack",
+      "slack.com",
+      "Microsoft Teams",
+      "teams.microsoft.com",
+      "Zoom",
+      "zoom.us",
+      "Google Meet",
+      "meet.google.com",
+      "Webex",
+      "webex.com",
+      "Lark",
+      "larksuite.com",
+      "Feishu",
+      "feishu.cn",
+      "飞书",
+      "DingTalk",
+      "dingtalk.com",
+      "钉钉",
+      "WeCom",
+      "work.weixin.qq.com",
+      "企业微信",
+      "Mattermost",
+      "Rocket.Chat",
+      "Gather",
+      "gather.town",
+      "Around",
+      "Krisp",
+      "tl;dv",
+      "Fireflies.ai",
+      "Otter.ai",
+      "Fathom"
+    ]
+  },
+  {
+    "id": "work-job-career-title",
+    "matchKind": "windowTitle",
+    "category": "work",
+    "priority": 730,
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "recruiting",
+      "career",
+      "job search",
+      "hiring"
+    ],
+    "notes": "Career and recruiting workflows are classified as intentional work; social feeds remain covered by social rules.",
+    "patterns": [
+      "Greenhouse",
+      "greenhouse.io",
+      "Lever",
+      "lever.co",
+      "Ashby",
+      "ashbyhq.com",
+      "Workable",
+      "workable.com",
+      "SmartRecruiters",
+      "smartrecruiters.com",
+      "iCIMS",
+      "BambooHR",
+      "bamboohr.com",
+      "Workday Careers",
+      "Myworkdayjobs",
+      "myworkdayjobs.com",
+      "Indeed Job Search",
+      "indeed.com",
+      "LinkedIn Jobs",
+      "Glassdoor",
+      "glassdoor.com",
+      "Wellfound",
+      "wellfound.com",
+      "AngelList Talent",
+      "Hired",
+      "Otta",
+      "Welcome to the Jungle",
+      "Upwork",
+      "upwork.com",
+      "Fiverr",
+      "fiverr.com",
+      "Freelancer.com",
+      "Boss直聘",
+      "zhipin.com",
+      "拉勾",
+      "lagou.com",
+      "猎聘",
+      "liepin.com",
+      "前程无忧",
+      "51job",
+      "智联招聘",
+      "zhaopin.com",
+      "脉脉招聘"
+    ]
+  },
+  {
+    "id": "work-data-analysis-title",
+    "matchKind": "windowTitle",
+    "category": "work",
+    "priority": 745,
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "data",
+      "BI",
+      "notebook",
+      "warehouse"
+    ],
+    "patterns": [
+      "Looker",
+      "looker.com",
+      "Apache Superset",
+      "Preset",
+      "preset.io",
+      "Redash",
+      "redash.io",
+      "Hex",
+      "hex.tech",
+      "Deepnote",
+      "deepnote.com",
+      "Observable",
+      "observablehq.com",
+      "Sigma Computing",
+      "Holistics",
+      "holistics.io",
+      "Evidence.dev",
+      "DataHub",
+      "datahubproject.io",
+      "dbt Docs",
+      "MotherDuck",
+      "motherduck.com",
+      "ClickHouse Cloud",
+      "clickhouse.com",
+      "DuckDB",
+      "duckdb.org",
+      "JupyterLab",
+      "Jupyter Notebook",
+      "Google Colab",
+      "colab.research.google.com",
+      "Kaggle Notebook",
+      "Metabase Question",
+      "Tableau Cloud",
+      "Power BI Report",
+      "Grafana Dashboard",
+      "Apache Airflow",
+      "Airflow DAG"
+    ]
+  },
+  {
+    "id": "work-security-admin-title",
+    "matchKind": "windowTitle",
+    "category": "work",
+    "priority": 745,
+    "regions": [
+      "global"
+    ],
+    "aliases": [
+      "security",
+      "identity",
+      "IT admin"
+    ],
+    "patterns": [
+      "Okta Admin",
+      "okta.com",
+      "Auth0",
+      "auth0.com",
+      "Microsoft Entra",
+      "entra.microsoft.com",
+      "Azure Active Directory",
+      "Google Admin",
+      "admin.google.com",
+      "Cloudflare Zero Trust",
+      "one.dash.cloudflare.com",
+      "Jamf Pro",
+      "jamfcloud.com",
+      "Kandji",
+      "kandji.io",
+      "Rippling",
+      "rippling.com",
+      "Duo Security",
+      "duo.com",
+      "1Password Admin",
+      "Bitwarden Admin",
+      "Tailscale Admin",
+      "login.tailscale.com",
+      "Teleport",
+      "goteleport.com",
+      "Wiz",
+      "wiz.io",
+      "Lacework",
+      "lacework.com",
+      "CrowdStrike Falcon",
+      "falcon.crowdstrike.com"
+    ]
+  },
+  {
+    "id": "work-sales-ops-title",
+    "matchKind": "windowTitle",
+    "category": "work",
+    "priority": 830,
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "sales",
+      "marketing ops",
+      "ecommerce admin"
+    ],
+    "patterns": [
+      "Amazon Seller Central",
+      "sellercentral.amazon",
+      "Etsy Shop Manager",
+      "shopmanager.etsy.com",
+      "TikTok Shop Seller Center",
+      "seller.tiktokglobalshop.com",
+      "Meta Business Suite",
+      "business.facebook.com",
+      "Google Merchant Center",
+      "merchantcenter.google.com",
+      "Square Dashboard",
+      "squareup.com/dashboard",
+      "WooCommerce",
+      "woocommerce.com",
+      "BigCommerce",
+      "bigcommerce.com",
+      "commercetools",
+      "Klaviyo",
+      "klaviyo.com",
+      "Mailchimp",
+      "mailchimp.com",
+      "Customer.io",
+      "Braze",
+      "Iterable",
+      "Pipedrive",
+      "Zoho CRM",
+      "Freshsales",
+      "Gong",
+      "Outreach",
+      "Salesloft",
+      "Apollo.io",
+      "Attio"
+    ]
+  },
+  {
     "id": "distracting-social-extended-title",
     "matchKind": "windowTitle",
     "category": "entertainment",
     "priority": 815,
-    "regions": ["global", "cn"],
-    "aliases": ["social", "feed", "messaging"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "social",
+      "feed",
+      "messaging"
+    ],
     "patterns": [
       "Facebook",
       "facebook.com",
@@ -1323,7 +1785,10 @@
     "matchKind": "appName",
     "category": "entertainment",
     "priority": 520,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "Facebook",
       "Instagram",
@@ -1355,8 +1820,16 @@
     "matchKind": "windowTitle",
     "category": "entertainment",
     "priority": 820,
-    "regions": ["global", "cn"],
-    "aliases": ["video", "streaming", "sports streaming", "anime"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "video",
+      "streaming",
+      "sports streaming",
+      "anime"
+    ],
     "patterns": [
       "Dailymotion",
       "dailymotion.com",
@@ -1417,8 +1890,15 @@
     "matchKind": "windowTitle",
     "category": "entertainment",
     "priority": 805,
-    "regions": ["global", "cn"],
-    "aliases": ["shopping", "delivery", "marketplace"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "shopping",
+      "delivery",
+      "marketplace"
+    ],
     "patterns": [
       "Amazon",
       "amazon.com",
@@ -1487,8 +1967,15 @@
     "matchKind": "windowTitle",
     "category": "entertainment",
     "priority": 700,
-    "regions": ["global", "cn"],
-    "aliases": ["sports", "casual reading", "gossip"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "sports",
+      "casual reading",
+      "gossip"
+    ],
     "notes": "Only obvious casual/sports/viral consumption sites are included here; general news is intentionally sparse to reduce false positives.",
     "patterns": [
       "ESPN",
@@ -1528,7 +2015,10 @@
     "matchKind": "appName",
     "category": "entertainment",
     "priority": 540,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "Steam",
       "Epic Games Launcher",
@@ -1577,7 +2067,10 @@
     "matchKind": "windowTitle",
     "category": "entertainment",
     "priority": 810,
-    "regions": ["global", "cn"],
+    "regions": [
+      "global",
+      "cn"
+    ],
     "patterns": [
       "Steam Store",
       "store.steampowered.com",
@@ -1625,8 +2118,15 @@
     "matchKind": "windowTitle",
     "category": "entertainment",
     "priority": 700,
-    "regions": ["global", "cn"],
-    "aliases": ["music", "podcast", "audiobook"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "music",
+      "podcast",
+      "audiobook"
+    ],
     "patterns": [
       "Spotify",
       "spotify.com",
@@ -1657,12 +2157,248 @@
     ]
   },
   {
+    "id": "distracting-gambling-betting-title",
+    "matchKind": "windowTitle",
+    "category": "entertainment",
+    "priority": 825,
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "gambling",
+      "casino",
+      "sports betting",
+      "lottery"
+    ],
+    "notes": "Inspired by public blacklist categories for gambling and betting; intentionally keeps to explicit brands/terms.",
+    "patterns": [
+      "DraftKings Sportsbook",
+      "draftkings.com",
+      "FanDuel Sportsbook",
+      "fanduel.com",
+      "BetMGM",
+      "betmgm.com",
+      "Caesars Sportsbook",
+      "caesars.com/sportsbook",
+      "Bovada",
+      "bovada.lv",
+      "Stake Casino",
+      "stake.com/casino",
+      "Bet365",
+      "bet365.com",
+      "PokerStars",
+      "888 Casino",
+      "888casino",
+      "William Hill",
+      "Paddy Power",
+      "Betfair",
+      "Bwin",
+      "Unibet",
+      "Sportsbook",
+      "Online Casino",
+      "Casino Games",
+      "博彩",
+      "体育投注",
+      "彩票平台",
+      "双色球",
+      "大乐透"
+    ]
+  },
+  {
+    "id": "distracting-dating-title",
+    "matchKind": "windowTitle",
+    "category": "entertainment",
+    "priority": 795,
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "dating",
+      "matching"
+    ],
+    "patterns": [
+      "Tinder",
+      "tinder.com",
+      "Bumble",
+      "bumble.com",
+      "Hinge",
+      "hinge.co",
+      "OkCupid",
+      "okcupid.com",
+      "Match.com",
+      "Plenty of Fish",
+      "pof.com",
+      "Grindr",
+      "grindr.com",
+      "Badoo",
+      "badoo.com",
+      "Coffee Meets Bagel",
+      "The League Dating",
+      "Raya Dating",
+      "HER Dating",
+      "Feeld",
+      "feeld.co",
+      "Soul App",
+      "soulapp.cn",
+      "探探",
+      "tantanapp.com",
+      "陌陌",
+      "momo.com",
+      "青藤之恋",
+      "伊对",
+      "世纪佳缘",
+      "珍爱网"
+    ]
+  },
+  {
+    "id": "distracting-manga-comics-title",
+    "matchKind": "windowTitle",
+    "category": "entertainment",
+    "priority": 790,
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "manga",
+      "comics",
+      "anime reading"
+    ],
+    "patterns": [
+      "MangaDex",
+      "mangadex.org",
+      "WEBTOON",
+      "webtoons.com",
+      "Tapas Comics",
+      "tapas.io",
+      "Bato.to",
+      "Mangakakalot",
+      "MangaReader",
+      "ReadComicOnline",
+      "ComicK",
+      "manhuagui",
+      "漫画柜",
+      "腾讯动漫",
+      "快看漫画",
+      "哔哩哔哩漫画",
+      "Bilibili Comics",
+      "拷贝漫画",
+      "动漫之家",
+      "AGE动漫",
+      "樱花动漫",
+      "番剧索引",
+      "Bangumi",
+      "bangumi.tv"
+    ]
+  },
+  {
+    "id": "distracting-memes-casual-forums-title",
+    "matchKind": "windowTitle",
+    "category": "entertainment",
+    "priority": 785,
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "memes",
+      "imageboard",
+      "casual forums",
+      "fandom"
+    ],
+    "patterns": [
+      "Imgur",
+      "imgur.com",
+      "Tumblr",
+      "tumblr.com",
+      "Know Your Meme",
+      "knowyourmeme.com",
+      "TV Tropes",
+      "tvtropes.org",
+      "Fandom",
+      "fandom.com",
+      "Lofter",
+      "lofter.com",
+      "NGA玩家社区",
+      "Chiphell",
+      "Stage1st",
+      "S1论坛",
+      "虎扑步行街",
+      "LADbible",
+      "The Chive",
+      "iFunny",
+      "ifunny.co",
+      "爆笑",
+      "段子",
+      "梗图"
+    ]
+  },
+  {
+    "id": "distracting-shopping-deals-title",
+    "matchKind": "windowTitle",
+    "category": "entertainment",
+    "priority": 795,
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "deals",
+      "coupons",
+      "flash sale",
+      "shopping"
+    ],
+    "patterns": [
+      "Slickdeals",
+      "slickdeals.net",
+      "Dealmoon",
+      "dealmoon.com",
+      "什么值得买",
+      "smzdm.com",
+      "HotUKDeals",
+      "hotukdeals.com",
+      "OzBargain",
+      "ozbargain.com.au",
+      "Woot",
+      "woot.com",
+      "Rakuten Shopping",
+      "rakuten.com",
+      "Vipshop",
+      "唯品会",
+      "Farfetch",
+      "farfetch.com",
+      "NET-A-PORTER",
+      "net-a-porter.com",
+      "SSENSE",
+      "ssense.com",
+      "StockX",
+      "stockx.com",
+      "GOAT",
+      "goat.com",
+      "小米有品",
+      "小米商城",
+      "苏宁易购",
+      "国美",
+      "海淘"
+    ]
+  },
+  {
     "id": "ignored-utility-extended-name",
     "matchKind": "appName",
     "category": "ignore",
     "priority": 540,
-    "regions": ["global", "cn"],
-    "aliases": ["utility", "vpn", "window management", "backup"],
+    "regions": [
+      "global",
+      "cn"
+    ],
+    "aliases": [
+      "utility",
+      "vpn",
+      "window management",
+      "backup"
+    ],
     "patterns": [
       "CleanMyMac",
       "Bartender",
@@ -1717,7 +2453,23 @@
       "Migration Assistant",
       "VoiceOver Utility",
       "打印机与扫描仪",
-      "钥匙串访问"
+      "钥匙串访问",
+      "Stats",
+      "Itsycal",
+      "Dato",
+      "Clocker",
+      "MeetingBar",
+      "Hammerspoon",
+      "Mos",
+      "Scroll Reverser",
+      "BetterZip",
+      "Pearcleaner",
+      "Logi Options+",
+      "Logitech G HUB",
+      "SteerMouse",
+      "App Store",
+      "Installer",
+      "DiskImageMounter"
     ]
   },
   {
@@ -1725,7 +2477,9 @@
     "matchKind": "bundleID",
     "category": "ignore",
     "priority": 620,
-    "regions": ["global"],
+    "regions": [
+      "global"
+    ],
     "patterns": [
       "com.macpaw.CleanMyMac",
       "com.surteesstudios.Bartender",
@@ -1764,7 +2518,19 @@
       "cc.ffitch.shottr",
       "com.wulkano.kap",
       "com.bombich.ccc",
-      "com.backblaze.Backblaze"
+      "com.backblaze.Backblaze",
+      "eu.exelban.Stats",
+      "com.mowglii.ItsycalApp",
+      "com.sindresorhus.Dato",
+      "com.apple.AppStore",
+      "com.apple.installer",
+      "com.apple.DiskImageMounter",
+      "org.hammerspoon.Hammerspoon",
+      "caldis.Mos",
+      "com.pilotmoon.scroll-reverser",
+      "com.macitbetter.betterzip",
+      "com.logitech.manager.daemon",
+      "com.logitech.gaming"
     ]
   }
 ]

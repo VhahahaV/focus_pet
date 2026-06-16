@@ -10,7 +10,9 @@ public struct PetPackCatalog: Sendable {
     public init() {}
 
     public func bundledPacks() -> [PetPackRecord] {
-        []
+        [
+            PetPackRecord(pack: Self.fallbackPack, rootURL: nil, isBundled: true)
+        ]
     }
 
     public func availablePacks(userRootURL: URL = PetPackLibrary.defaultInstallRootURL()) -> [PetPackRecord] {

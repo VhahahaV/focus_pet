@@ -277,6 +277,7 @@ public enum PetPanelAnchorEdge: Hashable, Sendable {
     case top
     case bottom
     case bottomLeft
+    case insetBottomLeft
 }
 
 private enum PetDockEdge {
@@ -417,7 +418,8 @@ public final class PetPanelController {
 
     public func pin(
         near targetFrame: CGRect,
-        preferredEdge: PetPanelAnchorEdge = .right
+        preferredEdge: PetPanelAnchorEdge = .right,
+        duration: TimeInterval? = nil
     ) {
         if panel == nil {
             panel = makePanel()
@@ -431,10 +433,21 @@ public final class PetPanelController {
             preferredVisibleFrame: visibleFrame
         )
         temporaryFrame = frame
-        temporaryFrameExpiresAt = .distantFuture
+        let expiresAt = duration.map { Date().addingTimeInterval(max(0.25, $0)) } ?? .distantFuture
+        temporaryFrameExpiresAt = expiresAt
         lastPlacedFrame = nil
         panel.setFrame(frame, display: true, animate: false)
         panel.orderFrontRegardless()
+        if duration != nil {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(max(0.25, duration ?? 0) * 1_000_000_000))
+                if self.temporaryFrameExpiresAt == expiresAt, self.temporaryFrameIsExpired {
+                    self.temporaryFrame = nil
+                    self.temporaryFrameExpiresAt = nil
+                    self.positionPanel(animate: false)
+                }
+            }
+        }
     }
 
     public func clearTemporaryPlacement(reposition: Bool = true) {
@@ -616,6 +629,8 @@ public final class PetPanelController {
             return CGPoint(x: targetFrame.midX - panelSize.width * 0.50, y: targetFrame.minY - panelSize.height * 0.70)
         case .bottomLeft:
             return CGPoint(x: targetFrame.minX + 18, y: targetFrame.minY + 18)
+        case .insetBottomLeft:
+            return CGPoint(x: targetFrame.minX + 8, y: targetFrame.minY + 18)
         }
     }
 
@@ -882,11 +897,12 @@ private struct PetRendererView: View {
     var body: some View {
         let renderState = model.renderState
         let isHovering = model.isHovering
-        let displayIntent = renderState.displayIntent(isHovering: isHovering)
-        let showsHoverContext = isHovering && renderState.hoverStatusEnabled
+        let usesHoverPresentation = isHovering && !isDragging
+        let displayIntent = renderState.displayIntent(isHovering: usesHoverPresentation)
+        let showsHoverContext = usesHoverPresentation && renderState.hoverStatusEnabled
         let hasStatusSurface = renderState.message != nil || showsHoverContext
-        let displayFramesPerSecond = min(10, max(1, renderState.displayFramesPerSecond(isHovering: isHovering)))
-        let throttledFramesPerSecond = (!isHovering && displayIntent == .quietCompanion)
+        let displayFramesPerSecond = min(10, max(1, renderState.displayFramesPerSecond(isHovering: usesHoverPresentation)))
+        let throttledFramesPerSecond = (!usesHoverPresentation && displayIntent == .quietCompanion)
             ? min(2, displayFramesPerSecond)
             : displayFramesPerSecond
         let frameInterval = 1 / throttledFramesPerSecond
@@ -916,7 +932,7 @@ private struct PetRendererView: View {
 
             petVisual(
                 renderState: renderState,
-                isHovering: isHovering,
+                isHovering: usesHoverPresentation,
                 displayIntent: displayIntent,
                 frameInterval: frameInterval
             )
@@ -924,7 +940,7 @@ private struct PetRendererView: View {
             .gesture(tapGesture)
             .simultaneousGesture(dragGesture)
             .overlay(alignment: .center) {
-                if isHovering {
+                if usesHoverPresentation {
                     Circle()
                         .stroke(Color.accentColor.opacity(0.22), lineWidth: 3)
                         .frame(width: renderState.size * 1.08, height: renderState.size * 1.08)
@@ -1129,6 +1145,14 @@ private struct DinoBody: View {
                     .offset(x: 48, y: -54 + bounce * 4)
             }
 
+            if intent == .dragged {
+                Image(systemName: "hand.draw.fill")
+                    .font(.system(size: 23, weight: .semibold))
+                    .foregroundStyle(.purple)
+                    .rotationEffect(.degrees(sin(phase * 9) * 8))
+                    .offset(x: 48, y: -54 + bounce * 4)
+            }
+
             if state == .away {
                 Text("zZ")
                     .font(.system(size: 20, weight: .bold))
@@ -1177,6 +1201,8 @@ private struct DinoBody: View {
             return sin(phase * 6.0) * 4
         case .moveLeft, .moveRight, .moveUp, .moveDown, .mouseSummon:
             return sin(phase * 8.0) * 5
+        case .dragged:
+            return 8 + sin(phase * 6.0) * 3
         default:
             return 0
         }
@@ -1190,6 +1216,8 @@ private struct DinoBody: View {
             return -abs(bounce) * 5
         case .moveLeft, .moveRight, .moveUp, .moveDown, .mouseSummon:
             return -abs(bounce) * 8
+        case .dragged:
+            return -6 - abs(bounce) * 4
         default:
             return breath * 1.5
         }
@@ -1203,6 +1231,8 @@ private struct DinoBody: View {
             return 20
         case .moveLeft, .moveRight, .moveUp, .moveDown, .mouseSummon:
             return 34
+        case .dragged:
+            return 22
         default:
             return 30
         }
@@ -1218,6 +1248,8 @@ private struct DinoBody: View {
             return 0.98 + breath * 0.01
         case .moveLeft, .moveRight, .moveUp, .moveDown, .mouseSummon:
             return 1.02 + abs(bounce) * 0.035
+        case .dragged:
+            return 1.04 + abs(bounce) * 0.025
         default:
             return 1.0 + breath * 0.008
         }
@@ -1233,6 +1265,8 @@ private struct DinoBody: View {
             return CGFloat(sin(phase * 10.0)) * 12
         case .mouseSummon:
             return CGFloat(sin(phase * 6.0)) * 5
+        case .dragged:
+            return CGFloat(sin(phase * 8.0)) * 4
         default:
             return 0
         }
@@ -1250,6 +1284,8 @@ private struct DinoBody: View {
             return abs(bounce) * 8
         case .moveLeft, .moveRight, .mouseSummon:
             return -abs(bounce) * 5
+        case .dragged:
+            return -abs(bounce) * 6
         default:
             return 0
         }

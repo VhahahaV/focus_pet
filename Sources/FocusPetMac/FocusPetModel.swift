@@ -6,6 +6,47 @@ import FocusPetResources
 import FocusPetStorage
 import Foundation
 
+struct RecognitionDiagnosticSnapshot: Equatable {
+    var sampledAt: Date
+    var appName: String
+    var bundleID: String?
+    var windowTitle: String?
+    var category: ActivityCategory
+    var catalogEntryCount: Int
+    var defaultRuleCount: Int
+    var userRuleCount: Int
+    var screenRecordingStatus: String
+    var inputMonitoringStatus: String
+    var accessibilityStatus: String
+    var recordingPaused: Bool
+
+    var catalogStatus: String {
+        catalogEntryCount >= 20 ? "目录已加载" : "仅使用兜底规则"
+    }
+
+    var windowTitleStatus: String {
+        if let windowTitle, !windowTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "已读取"
+        }
+        return "未读取到"
+    }
+
+    static let pending = RecognitionDiagnosticSnapshot(
+        sampledAt: Date(timeIntervalSince1970: 0),
+        appName: "等待刷新",
+        bundleID: nil,
+        windowTitle: nil,
+        category: .ignore,
+        catalogEntryCount: 0,
+        defaultRuleCount: 0,
+        userRuleCount: 0,
+        screenRecordingStatus: "检查中",
+        inputMonitoringStatus: "检查中",
+        accessibilityStatus: "检查中",
+        recordingPaused: false
+    )
+}
+
 @MainActor
 final class FocusPetModel: ObservableObject {
     @Published var settings: AppSettings
@@ -21,6 +62,9 @@ final class FocusPetModel: ObservableObject {
     @Published var selectedTab: DashboardTab = .today
     @Published var rules: [ClassificationRule]
     @Published var statusMessage = "Focus Pet 已准备好。"
+    @Published var notificationPermissionTitle = "检查中"
+    @Published var notificationPermissionIsAllowed = false
+    @Published var recognitionDiagnostic = RecognitionDiagnosticSnapshot.pending
     @Published var exportURL: URL?
     @Published var availablePetPacks: [PetPackRecord] = []
     @Published var petImportMessage: String?
@@ -71,6 +115,12 @@ final class FocusPetModel: ObservableObject {
     private var openDashboardRequest: (@MainActor (DashboardTab) -> Void)?
     private var dashboardAnchorFrames: [DashboardPetAnchor: DashboardAnchorSnapshot] = [:]
     private var dashboardPetAttachment: DashboardPetAttachment?
+    private var dashboardPetPinIsActive = false
+    private var dashboardVisibilityTask: Task<Void, Never>?
+    private var dashboardActivationTask: Task<Void, Never>?
+    private var lastDashboardActivationRefreshAt = Date.distantPast
+    private weak var observedDashboardWindow: NSWindow?
+    private var dashboardWindowObserverTokens: [NSObjectProtocol] = []
     private var saveTask: Task<Void, Never>?
     private var pendingSaveSnapshot: LocalStoreSnapshot?
     private var lastEnqueuedSaveSnapshot: LocalStoreSnapshot?
@@ -135,6 +185,7 @@ final class FocusPetModel: ObservableObject {
         refreshPetPacks(saveIfChanged: false)
         configurePetPanelInteractions()
         applySettingsMigrationsIfNeeded()
+        refreshRecognitionDiagnostics()
     }
 
     var activeFocusSession: FocusSession? {
@@ -196,8 +247,7 @@ final class FocusPetModel: ObservableObject {
 
     private var dashboardPetIsAttached: Bool {
         guard dashboardPetAttachment != nil,
-              let window = dashboardWindow(),
-              window.isVisible else { return false }
+              visibleDashboardWindow() != nil else { return false }
         return true
     }
 
@@ -258,7 +308,9 @@ final class FocusPetModel: ObservableObject {
             petPanel.show()
         }
         if settings.reminder.enableSystemNotifications {
-            notificationSender.requestAuthorization()
+            requestNotificationAuthorization()
+        } else {
+            refreshNotificationPermissionStatus()
         }
     }
 
@@ -346,6 +398,7 @@ final class FocusPetModel: ObservableObject {
         )
 
         let stateBeforeTick = currentDecision.state
+        let stateDurationBeforeTick = currentDecision.stableDuration
         let rawDecision = stateEngine.evaluate(snapshot, previousStableState: currentDecision.state)
         let decision = stabilized(rawDecision, now: now)
         currentSnapshot = snapshot
@@ -366,7 +419,16 @@ final class FocusPetModel: ObservableObject {
         appUsage = decision.state == .away ? appUsage : tickTracker.recordAppUsage(snapshot: snapshot, appUsage: appUsage)
         applySessionAccounting(decision: decision, previousTickState: stateBeforeTick, tickSeconds: tickSeconds)
         reclassifyLongInputIdleAwayIfNeeded(decision: decision, snapshot: snapshot)
-        triggerNudgeIfNeeded(decision: decision, snapshot: snapshot, now: now)
+        let completedFocusSession = closeExpiredFocusSessionIfNeeded(now: now)
+        if !completedFocusSession {
+            triggerNudgeIfNeeded(
+                decision: decision,
+                snapshot: snapshot,
+                now: now,
+                previousState: stateBeforeTick == decision.state ? nil : stateBeforeTick,
+                previousStateDuration: stateDurationBeforeTick
+            )
+        }
         refreshSummary()
         save()
         updatePet()
@@ -488,6 +550,26 @@ final class FocusPetModel: ObservableObject {
         updatePet()
     }
 
+    func openSystemSettings(_ destination: SystemSettingsDestination) {
+        destination.open()
+        statusMessage = "已打开 macOS \(destination.title) 设置。"
+    }
+
+    func requestSystemPermission(_ destination: SystemSettingsDestination) {
+        switch destination {
+        case .notifications:
+            requestNotificationAuthorization(force: true)
+            statusMessage = "已请求通知权限。"
+        case .inputMonitoring, .screenRecording:
+            _ = destination.requestAccessIfAvailable()
+            destination.open()
+            statusMessage = "已打开 macOS \(destination.title) 设置。"
+        case .accessibility, .privacySecurity:
+            destination.open()
+            statusMessage = "已打开 macOS \(destination.title) 设置。"
+        }
+    }
+
     func showPetStatusBubble() {
         let idleText = FocusPetFormatters.duration(Int(currentSnapshot.idleSeconds))
         showTransientPetMessage("\(currentDecision.state.title) · \(currentSnapshot.appName) · 空闲 \(idleText)", seconds: 6)
@@ -521,6 +603,7 @@ final class FocusPetModel: ObservableObject {
             dashboardWindow.collectionBehavior.insert(.moveToActiveSpace)
             dashboardWindow.makeKeyAndOrderFront(nil)
             dashboardWindow.orderFrontRegardless()
+            configureDashboardWindowObservers()
             return true
         }
         return false
@@ -550,6 +633,7 @@ final class FocusPetModel: ObservableObject {
         let now = Date()
         let expiresAt = now.addingTimeInterval(plan.duration)
         dashboardPetAttachment = DashboardPetAttachment(plan: plan, tab: tab)
+        configureDashboardWindowObservers()
         transientPetIntent = plan.intent
         transientPetIntentSource = .interaction
         transientPetIntentExpiresAt = expiresAt
@@ -564,6 +648,36 @@ final class FocusPetModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 180_000_000)
             guard self.transientPetIntentExpiresAt == expiresAt else { return }
             self.positionDashboardAttachedPet(requiringFreshAnchor: true)
+        }
+    }
+
+    func dashboardWindowDidActivate() {
+        guard !settings.pet.hidden,
+              dashboardWindow() != nil else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastDashboardActivationRefreshAt) >= 0.45 else { return }
+        lastDashboardActivationRefreshAt = now
+        configureDashboardWindowObservers()
+
+        let tab = selectedTab
+        dashboardActivationTask?.cancel()
+        dashboardActivationTask = Task { @MainActor in
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 70_000_000)
+            guard !Task.isCancelled,
+                  self.dashboardWindow() != nil else { return }
+
+            if self.visibleDashboardWindow() == nil {
+                try? await Task.sleep(nanoseconds: 180_000_000)
+            }
+
+            guard !Task.isCancelled,
+                  self.visibleDashboardWindow() != nil else { return }
+            self.presentPetForDashboard(tab: tab)
+
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard !Task.isCancelled else { return }
+            self.positionDashboardAttachedPet(requiringFreshAnchor: false)
         }
     }
 
@@ -586,6 +700,8 @@ final class FocusPetModel: ObservableObject {
         var tab: DashboardTab
     }
 
+    private static let minimumDashboardWindowSize = CGSize(width: 600, height: 500)
+
     private func schedulePetDashboardPresentation(tab: DashboardTab, delayNanoseconds: UInt64) {
         Task { @MainActor in
             if delayNanoseconds > 0 {
@@ -602,7 +718,7 @@ final class FocusPetModel: ObservableObject {
         DashboardPetPresentationPlan(
             anchor: .sidebarPetDock,
             fallbackAnchors: [.dashboardPanel],
-            edge: .bottomLeft,
+            edge: .insetBottomLeft,
             intent: tab == .sessions ? .focusRestHint : .dashboardGuide,
             message: nil,
             duration: 8
@@ -611,7 +727,7 @@ final class FocusPetModel: ObservableObject {
 
     private func refreshDashboardPetAttachmentIfNeeded(changedAnchor: DashboardPetAnchor) {
         guard let attachment = dashboardPetAttachment else { return }
-        guard dashboardWindow()?.isVisible == true else {
+        guard visibleDashboardWindow() != nil else {
             detachDashboardPet(reposition: true)
             return
         }
@@ -621,9 +737,9 @@ final class FocusPetModel: ObservableObject {
         positionDashboardAttachedPet(requiringFreshAnchor: false)
     }
 
-    private func positionDashboardAttachedPet(requiringFreshAnchor: Bool) {
+    private func positionDashboardAttachedPet(requiringFreshAnchor: Bool, refreshVisibilityWatch: Bool = true) {
         guard let attachment = dashboardPetAttachment else { return }
-        guard dashboardWindow()?.isVisible == true else {
+        guard visibleDashboardWindow() != nil else {
             detachDashboardPet(reposition: true)
             return
         }
@@ -634,8 +750,13 @@ final class FocusPetModel: ObservableObject {
         ) else { return }
         petPanel.pin(
             near: frame,
-            preferredEdge: attachment.plan.edge
+            preferredEdge: attachment.plan.edge,
+            duration: 0.75
         )
+        dashboardPetPinIsActive = true
+        if refreshVisibilityWatch {
+            startDashboardVisibilityWatch()
+        }
     }
 
     private func dashboardPresentationFrame(
@@ -662,7 +783,7 @@ final class FocusPetModel: ObservableObject {
         if requiringFresh && Date().timeIntervalSince(snapshot.updatedAt) > 1.5 {
             return nil
         }
-        if let windowFrame = dashboardWindow()?.frame,
+        if let windowFrame = visibleDashboardWindow()?.frame,
            !windowFrame.insetBy(dx: -120, dy: -120).intersects(snapshot.frame) {
             return nil
         }
@@ -670,16 +791,142 @@ final class FocusPetModel: ObservableObject {
     }
 
     private func dashboardWindowFallbackFrame(for tab: DashboardTab) -> CGRect? {
-        guard let windowFrame = dashboardWindow()?.frame else { return nil }
+        guard let windowFrame = visibleDashboardWindow()?.frame else { return nil }
         return DashboardPetDockingGeometry.sidebarDockFrame(windowFrame: windowFrame)
     }
 
     private func dashboardWindow() -> NSWindow? {
-        NSApp.windows.first { $0.title == "Focus Pet" || $0.identifier?.rawValue == "dashboard" }
+        let windows = NSApp.windows
+        return windows.first { $0.identifier?.rawValue == "dashboard" }
+            ?? windows.first {
+                $0.title == "Focus Pet"
+                    && $0.frame.width >= Self.minimumDashboardWindowSize.width
+                    && $0.frame.height >= Self.minimumDashboardWindowSize.height
+            }
+    }
+
+    private func visibleDashboardWindow() -> NSWindow? {
+        guard let window = dashboardWindow(),
+              window.isVisible,
+              !window.isMiniaturized,
+              window.occlusionState.contains(.visible),
+              Self.dashboardWindowIsOnScreen(window) else { return nil }
+        return window
+    }
+
+    private static func dashboardWindowIsOnScreen(_ window: NSWindow) -> Bool {
+        guard window.windowNumber > 0,
+              let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+
+        return windows.contains { info in
+            guard let number = info[kCGWindowNumber as String] as? Int,
+                  number == window.windowNumber,
+                  let layer = info[kCGWindowLayer as String] as? Int,
+                  layer == 0,
+                  let bounds = info[kCGWindowBounds as String] as? [String: CGFloat] else {
+                return false
+            }
+            return (bounds["Width"] ?? 0) >= minimumDashboardWindowSize.width
+                && (bounds["Height"] ?? 0) >= minimumDashboardWindowSize.height
+        }
+    }
+
+    private func configureDashboardWindowObservers() {
+        guard let window = dashboardWindow() else {
+            clearDashboardWindowObservers()
+            return
+        }
+        guard observedDashboardWindow !== window else { return }
+        clearDashboardWindowObservers()
+        observedDashboardWindow = window
+        let names: [Notification.Name] = [
+            NSWindow.willCloseNotification,
+            NSWindow.willMiniaturizeNotification,
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.didDeminiaturizeNotification,
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didBecomeMainNotification,
+            NSWindow.didExposeNotification,
+            NSWindow.didChangeOcclusionStateNotification
+        ]
+        dashboardWindowObserverTokens = names.map { name in
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    switch name {
+                    case NSWindow.willCloseNotification,
+                        NSWindow.willMiniaturizeNotification,
+                        NSWindow.didMiniaturizeNotification:
+                        self.dashboardWindowDidDismiss()
+                    case NSWindow.didChangeOcclusionStateNotification:
+                        if self.visibleDashboardWindow() == nil {
+                            self.dashboardWindowDidDismiss()
+                        } else {
+                            self.dashboardWindowDidActivate()
+                        }
+                    default:
+                        self.dashboardWindowDidActivate()
+                    }
+                }
+            }
+        }
+        dashboardWindowObserverTokens.append(
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: NSApp,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.dashboardWindowDidActivate()
+                }
+            }
+        )
+    }
+
+    private func clearDashboardWindowObservers() {
+        for token in dashboardWindowObserverTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        dashboardWindowObserverTokens = []
+        observedDashboardWindow = nil
+    }
+
+    private func startDashboardVisibilityWatch() {
+        dashboardVisibilityTask?.cancel()
+        dashboardVisibilityTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard self.dashboardPetAttachment != nil || self.dashboardPetPinIsActive else { return }
+                if self.visibleDashboardWindow() == nil {
+                    self.detachDashboardPet(reposition: true)
+                    self.updatePet()
+                    return
+                }
+                if self.dashboardPetAttachment != nil {
+                    self.positionDashboardAttachedPet(requiringFreshAnchor: false, refreshVisibilityWatch: false)
+                }
+            }
+        }
+    }
+
+    private func stopDashboardVisibilityWatch() {
+        dashboardVisibilityTask?.cancel()
+        dashboardVisibilityTask = nil
     }
 
     private func detachDashboardPet(reposition: Bool) {
+        dashboardActivationTask?.cancel()
+        dashboardActivationTask = nil
         dashboardPetAttachment = nil
+        dashboardPetPinIsActive = false
+        stopDashboardVisibilityWatch()
+        clearDashboardWindowObservers()
         petPanel.clearTemporaryPlacement(reposition: reposition)
     }
 
@@ -744,17 +991,80 @@ final class FocusPetModel: ObservableObject {
         settings.judgment.normalize()
         save()
         if settings.reminder.enableSystemNotifications {
-            notificationSender.requestAuthorization()
+            requestNotificationAuthorization()
+        } else {
+            refreshNotificationPermissionStatus()
         }
         updatePet()
     }
 
     private func applySettingsMigrationsIfNeeded() {
         guard !settings.reminder.hasAppliedSystemNotificationDefault else { return }
-        settings.reminder.enableSystemNotifications = true
         settings.reminder.hasAppliedSystemNotificationDefault = true
         save()
-        notificationSender.requestAuthorization()
+        refreshNotificationPermissionStatus()
+    }
+
+    func refreshNotificationPermissionStatus() {
+        notificationSender.authorizationStatus { [weak self] state in
+            Task { @MainActor in
+                self?.applyNotificationPermissionState(state)
+            }
+        }
+    }
+
+    func refreshRecognitionDiagnostics() {
+        let classifier = activityClassifier
+        let userRuleCount = rules.count
+        let recordingPaused = settings.privacy.pauseActivityRecording
+        Task { [weak self, activitySampler] in
+            let now = Date()
+            let sample = await activitySampler.snapshot(now: now, windowTitleRefreshInterval: 0)
+            let front = sample.frontmostApplication
+            let category = classifier.classify(
+                appName: front.appName,
+                bundleID: front.bundleID,
+                windowTitle: front.windowTitle
+            )
+            let diagnostic = RecognitionDiagnosticSnapshot(
+                sampledAt: now,
+                appName: front.appName,
+                bundleID: front.bundleID,
+                windowTitle: front.windowTitle,
+                category: category,
+                catalogEntryCount: ActivityClassifier.catalogEntries.count,
+                defaultRuleCount: ActivityClassifier.defaultRules.count,
+                userRuleCount: userRuleCount,
+                screenRecordingStatus: SystemSettingsDestination.screenRecording.statusTitle ?? "未知",
+                inputMonitoringStatus: SystemSettingsDestination.inputMonitoring.statusTitle ?? "未知",
+                accessibilityStatus: SystemSettingsDestination.accessibility.statusTitle ?? "未知",
+                recordingPaused: recordingPaused
+            )
+            await MainActor.run {
+                self?.recognitionDiagnostic = diagnostic
+            }
+        }
+    }
+
+    func resetRecognitionRules() {
+        rules.removeAll()
+        activityClassifier = ActivityClassifier()
+        statusMessage = "识别例外已清空，已恢复内置规则。"
+        save()
+        refreshRecognitionDiagnostics()
+    }
+
+    private func requestNotificationAuthorization(force: Bool = false) {
+        notificationSender.requestAuthorization(force: force) { [weak self] state in
+            Task { @MainActor in
+                self?.applyNotificationPermissionState(state)
+            }
+        }
+    }
+
+    private func applyNotificationPermissionState(_ state: SystemNotificationPermissionState) {
+        notificationPermissionTitle = state.title
+        notificationPermissionIsAllowed = state.isAllowed
     }
 
     func refreshPetPacks(saveIfChanged: Bool = true) {
@@ -963,19 +1273,18 @@ final class FocusPetModel: ObservableObject {
         )
     }
 
-    private func triggerNudgeIfNeeded(decision: StateDecision, snapshot: ActivitySnapshot, now: Date) {
+    private func triggerNudgeIfNeeded(
+        decision: StateDecision,
+        snapshot: ActivitySnapshot,
+        now: Date,
+        previousState: FocusState?,
+        previousStateDuration: TimeInterval?
+    ) {
         if let pauseUntil = settings.reminder.pauseUntil {
             if pauseUntil > now {
                 return
             }
             settings.reminder.pauseUntil = nil
-        }
-
-        guard settings.reminder.enablePetBubbles || settings.reminder.enableSystemNotifications else {
-            return
-        }
-        guard !decision.reason.contains(.inputIdleDistracted) else {
-            return
         }
 
         let state = FocusStateSnapshot(
@@ -990,13 +1299,34 @@ final class FocusPetModel: ObservableObject {
         guard let event = nudgePolicy.nudge(
             for: state,
             previousState: previousState,
+            previousStateDuration: previousStateDuration,
             now: now,
             lastTriggeredAt: lastNudgeAt
         ) else { return }
-        guard settings.reminder.allows(event.reason) else { return }
-
-        recordNudge(event)
+        guard recordNudgeIfAllowed(event, now: now) else { return }
         lastNudgeAt[event.reason] = event.time
+    }
+
+    private func remindersCanRecord(_ reason: NudgeReason, now: Date) -> Bool {
+        if let pauseUntil = settings.reminder.pauseUntil {
+            if pauseUntil > now {
+                return false
+            }
+            settings.reminder.pauseUntil = nil
+        }
+
+        guard settings.reminder.enablePetBubbles || settings.reminder.enableSystemNotifications else {
+            return false
+        }
+
+        return settings.reminder.allows(reason)
+    }
+
+    @discardableResult
+    private func recordNudgeIfAllowed(_ event: NudgeEvent, now: Date) -> Bool {
+        guard remindersCanRecord(event.reason, now: now) else { return false }
+        recordNudge(event)
+        return true
     }
 
     private func reclassifyLongInputIdleAwayIfNeeded(decision: StateDecision, snapshot: ActivitySnapshot) {
@@ -1101,9 +1431,9 @@ final class FocusPetModel: ObservableObject {
         return currentSnapshot.appName
     }
 
-    private func finishFocusSession(_ session: FocusSession, status: FocusSessionStatus) {
+    private func finishFocusSession(_ session: FocusSession, status: FocusSessionStatus, end: Date = Date()) {
         guard let index = focusSessions.firstIndex(where: { $0.id == session.id }) else { return }
-        focusSessions[index].end = Date()
+        focusSessions[index].end = end
         focusSessions[index].status = status
         focusSessions[index].completed = status == .completed
         statusMessage = status == .completed ? "专注会话已完成。" : "专注会话已取消。"
@@ -1188,7 +1518,8 @@ final class FocusPetModel: ObservableObject {
 
     private func handleScreenDidUnlock() {
         let now = Date()
-        if let start = screenLockedStartedAt {
+        let lockStartedAt = screenLockedStartedAt
+        if let start = lockStartedAt {
             recordAwayInterval(
                 start: screenLockedRecordedUntil ?? start,
                 end: now,
@@ -1201,7 +1532,12 @@ final class FocusPetModel: ObservableObject {
         screenLockedStateBeforeLock = nil
         lastTickAt = now
         statusMessage = "屏幕已解锁，回到活跃判断。"
-        showTransientPetMessage("欢迎回来。", seconds: 4)
+        let lockedDuration = lockStartedAt.map { now.timeIntervalSince($0) } ?? 0
+        if lockedDuration >= settings.reminder.nudgePolicyThresholds.welcomeBackAwaySeconds,
+           settings.reminder.enableWelcomeBackNudges,
+           settings.reminder.enablePetBubbles {
+            showTransientPetMessage("欢迎回来。", seconds: 4)
+        }
         advanceStateTick()
     }
 
@@ -1373,16 +1709,45 @@ final class FocusPetModel: ObservableObject {
         clearTransientPetIntent(after: 1.7)
     }
 
+    @discardableResult
+    private func closeExpiredFocusSessionIfNeeded(now: Date) -> Bool {
+        guard let index = focusSessions.lastIndex(where: { $0.status == .active }) else { return false }
+        let session = focusSessions[index]
+        guard session.remainingSeconds(now: now) == 0 else { return false }
+
+        finishFocusSession(session, status: .completed, end: now)
+        let event = NudgeEvent(
+            time: now,
+            reason: .focusSessionCompleted,
+            state: .focus,
+            appName: session.taskName,
+            category: .work,
+            petIntent: .focusRestHint,
+            cooldownSeconds: 0,
+            message: "\(session.taskName) 完成啦，要休息一下吗？"
+        )
+        let didRecordNudge = recordNudgeIfAllowed(event, now: now)
+        if didRecordNudge && settings.reminder.enablePetBubbles {
+            showTransientPetMessage(event.message, seconds: 6)
+        }
+
+        if session.autoStartBreak {
+            startBreak(minutes: max(1, session.breakDurationSeconds / 60), source: .afterFocusSession)
+        } else {
+            refreshSummary(force: true)
+            save()
+            updatePet()
+        }
+
+        return true
+    }
+
     private func closeExpiredBreakIfNeeded(now: Date) {
         guard let index = breakSessions.lastIndex(where: { $0.end == nil && !$0.completed }) else { return }
         if breakSessions[index].remainingSeconds(now: now) == 0 {
             breakSessions[index].end = now
             breakSessions[index].completed = true
-            transientPetIntent = .mouseSummon
-            transientPetIntentSource = .interaction
-            transientPetIntentExpiresAt = now.addingTimeInterval(6)
-            petAnimationIdentity = nil
-            recordNudge(NudgeEvent(
+            let event = NudgeEvent(
                 time: now,
                 reason: .breakEnding,
                 state: .breakTime,
@@ -1391,9 +1756,17 @@ final class FocusPetModel: ObservableObject {
                 petIntent: .breakEnding,
                 cooldownSeconds: 0,
                 message: "休息时间结束啦。"
-            ))
-            petPanel.summonNearMouse(duration: 12)
-            showTransientPetMessage("休息结束，回来工作啦。", seconds: 6)
+            )
+            if recordNudgeIfAllowed(event, now: now) {
+                transientPetIntent = .mouseSummon
+                transientPetIntentSource = .interaction
+                transientPetIntentExpiresAt = now.addingTimeInterval(6)
+                petAnimationIdentity = nil
+                petPanel.summonNearMouse(duration: 12)
+                if settings.reminder.enablePetBubbles {
+                    showTransientPetMessage("休息结束，回来工作啦。", seconds: 6)
+                }
+            }
             statusMessage = "休息结束。"
             refreshSummary(force: true)
             save()
@@ -1412,6 +1785,11 @@ final class FocusPetModel: ObservableObject {
     }
 
     private func refreshLivePetPresentationIfNeeded() {
+        if (dashboardPetAttachment != nil || dashboardPetPinIsActive), visibleDashboardWindow() == nil {
+            detachDashboardPet(reposition: true)
+            updatePet()
+            return
+        }
         if activeBreakSession != nil || isPetHovering {
             refreshSummary()
             updatePet()
@@ -1680,9 +2058,38 @@ final class FocusPetModel: ObservableObject {
         if nudges.count > 200 {
             nudges.removeFirst(nudges.count - 200)
         }
-        if settings.reminder.enableSystemNotifications,
+        if shouldDeliverSystemNotification(for: event.reason),
+           settings.reminder.enableSystemNotifications,
            settings.reminder.pauseUntil.map({ $0 <= Date() }) ?? true {
-            notificationSender.deliver(event)
+            notificationSender.deliver(event) { [weak self] result in
+                Task { @MainActor in
+                    self?.handleNotificationDeliveryResult(result)
+                }
+            }
+        }
+    }
+
+    private func shouldDeliverSystemNotification(for reason: NudgeReason) -> Bool {
+        switch reason {
+        case .distractedOverThreshold, .welcomeBack, .frequentSwitching:
+            return false
+        case .distractedStrong, .longFocusRest, .veryLongFocusRest, .focusSessionCompleted, .breakEnding:
+            return true
+        }
+    }
+
+    private func handleNotificationDeliveryResult(_ result: SystemNotificationDeliveryResult) {
+        switch result {
+        case .delivered:
+            notificationPermissionTitle = SystemNotificationPermissionState.allowed.title
+            notificationPermissionIsAllowed = true
+        case .permissionDenied, .notGranted:
+            notificationPermissionTitle = SystemNotificationPermissionState.denied.title
+            notificationPermissionIsAllowed = false
+            statusMessage = "系统通知未开启，请在设置中允许通知。"
+        case .failed:
+            statusMessage = "系统通知发送失败。"
+            refreshNotificationPermissionStatus()
         }
     }
 

@@ -15,6 +15,7 @@ private enum VerificationError: Error, CustomStringConvertible {
     case petNotNearSidebarBottom(WindowSnapshot, WindowSnapshot)
     case petLooksLikeBubbleIsVisible(WindowSnapshot)
     case petStillDockedAfterClose(WindowSnapshot, CGRect)
+    case petDidNotMoveAfterDrag(WindowSnapshot, WindowSnapshot)
 
     var description: String {
         switch self {
@@ -30,11 +31,18 @@ private enum VerificationError: Error, CustomStringConvertible {
             return "Pet panel is taller than expected for a no-bubble docked pet. pet=\(pet.frame)"
         case let .petStillDockedAfterClose(pet, previousDockZone):
             return "Pet panel is still in the previous dashboard dock zone after closing the dashboard. pet=\(pet.frame) previousDockZone=\(previousDockZone)"
+        case let .petDidNotMoveAfterDrag(before, after):
+            return "Pet panel did not move enough after dragging. before=\(before.frame) after=\(after.frame)"
         }
     }
 }
 
 private let sidebarWidth: CGFloat = 218
+private let minimumDashboardSize = CGSize(width: 600, height: 500)
+
+private func eventPoint(fromWindowListPoint point: CGPoint) -> CGPoint {
+    point
+}
 
 private func focusPetWindows() -> [WindowSnapshot] {
     let windows = (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]) ?? []
@@ -60,10 +68,58 @@ private func focusPetWindows() -> [WindowSnapshot] {
     }
 }
 
+private func dashboardWindow(in windows: [WindowSnapshot]) -> WindowSnapshot? {
+    windows.first {
+        $0.layer == 0
+            && $0.name == "Focus Pet"
+            && $0.frame.width >= minimumDashboardSize.width
+            && $0.frame.height >= minimumDashboardSize.height
+    }
+}
+
+private func petWindow(in windows: [WindowSnapshot]) -> WindowSnapshot? {
+    windows.first { $0.layer > 0 && $0.name.isEmpty }
+}
+
+private func raiseDashboardWindowIfPossible() {
+    let script = """
+    tell application "Focus Pet" to reopen
+    tell application "System Events"
+      tell process "Focus Pet"
+        try
+          perform action "AXRaise" of window "Focus Pet"
+        end try
+        try
+          set frontmost to true
+        end try
+      end tell
+    end tell
+    """
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    process.arguments = ["-e", script]
+    try? process.run()
+    process.waitUntilExit()
+    Thread.sleep(forTimeInterval: 0.6)
+}
+
 private func focusPetPID() -> pid_t? {
+    let patterns = [
+        ".build/Focus Pet.app/Contents/MacOS/FocusPet",
+        ".build/FocusPet.app/Contents/MacOS/FocusPet"
+    ]
+    for pattern in patterns {
+        if let pid = focusPetPID(matching: pattern) {
+            return pid
+        }
+    }
+    return nil
+}
+
+private func focusPetPID(matching pattern: String) -> pid_t? {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-    task.arguments = ["-f", ".build/FocusPet.app/Contents/MacOS/FocusPet"]
+    task.arguments = ["-f", pattern]
     let pipe = Pipe()
     task.standardOutput = pipe
     do {
@@ -79,39 +135,96 @@ private func focusPetPID() -> pid_t? {
         .first
 }
 
+private func postPetDrag(to pid: pid_t, pet: WindowSnapshot, delta: CGSize) {
+    let petBodyOffsetFromBottom = min(34, max(18, pet.frame.height * 0.12))
+    let windowListStart = CGPoint(x: pet.frame.midX, y: pet.frame.maxY - petBodyOffsetFromBottom)
+    let windowListEnd = CGPoint(x: windowListStart.x + delta.width, y: windowListStart.y + delta.height)
+    let start = eventPoint(fromWindowListPoint: windowListStart)
+    let end = eventPoint(fromWindowListPoint: windowListEnd)
+    let source = CGEventSource(stateID: .combinedSessionState)
+
+    func post(_ type: CGEventType, at point: CGPoint, clickState: Int64) {
+        if let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) {
+            event.setIntegerValueField(.mouseEventClickState, value: clickState)
+            event.post(tap: .cghidEventTap)
+        }
+    }
+
+    post(.mouseMoved, at: start, clickState: 0)
+    usleep(90_000)
+    post(.leftMouseDown, at: start, clickState: 1)
+    usleep(120_000)
+    for step in 1...8 {
+        let progress = CGFloat(step) / 8
+        let windowListPoint = CGPoint(
+            x: windowListStart.x + delta.width * progress,
+            y: windowListStart.y + delta.height * progress
+        )
+        let point = eventPoint(fromWindowListPoint: windowListPoint)
+        post(.leftMouseDragged, at: point, clickState: 1)
+        usleep(45_000)
+    }
+    post(.leftMouseUp, at: end, clickState: 1)
+    print("Posted pet drag to pid \(pid) from \(Int(start.x)),\(Int(start.y)) to \(Int(end.x)),\(Int(end.y)).")
+}
+
 private func postSidebarClick(to pid: pid_t, dashboard: WindowSnapshot, tabIndex: Int) {
-    let tabCentersFromTop: [CGFloat] = [170, 256, 342, 428]
+    let tabCentersFromTop: [CGFloat] = [180, 245, 310, 375]
     let yOffset = tabCentersFromTop[max(0, min(tabIndex, tabCentersFromTop.count - 1))]
-    let point = CGPoint(x: dashboard.frame.minX + 82, y: dashboard.frame.minY + yOffset)
+    let windowListPoint = CGPoint(x: dashboard.frame.minX + 82, y: dashboard.frame.minY + yOffset)
+    let point = eventPoint(fromWindowListPoint: windowListPoint)
     let source = CGEventSource(stateID: .combinedSessionState)
     for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
         if let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) {
             event.setIntegerValueField(.mouseEventClickState, value: type == .mouseMoved ? 0 : 1)
-            event.postToPid(pid)
+            event.post(tap: .cghidEventTap)
         }
         usleep(type == .mouseMoved ? 70_000 : 90_000)
     }
     print("Posted sidebar click to pid \(pid) at \(Int(point.x)),\(Int(point.y)).")
 }
 
-private func postCommandW(to pid: pid_t) {
+private func postMinimizeButtonClick(to pid: pid_t, dashboard: WindowSnapshot) {
+    let script = """
+    tell application "System Events"
+      tell process "Focus Pet"
+        perform action "AXPress" of (first button of window "Focus Pet" whose subrole is "AXMinimizeButton")
+      end tell
+    end tell
+    """
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    process.arguments = ["-e", script]
+    try? process.run()
+    process.waitUntilExit()
+    print("Pressed minimize button for pid \(pid) on dashboard id \(dashboard.id).")
+}
+
+private func postCommandKey(to pid: pid_t, keyCode: CGKeyCode, label: String) {
     guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
-    let keyCodeW: CGKeyCode = 13
     for keyDown in [true, false] {
-        if let event = CGEvent(keyboardEventSource: source, virtualKey: keyCodeW, keyDown: keyDown) {
+        if let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown) {
             event.flags = .maskCommand
             event.postToPid(pid)
         }
         usleep(120_000)
     }
-    print("Posted Command-W to pid \(pid).")
+    print("Posted \(label) to pid \(pid).")
+}
+
+private func postCommandW(to pid: pid_t) {
+    postCommandKey(to: pid, keyCode: 13, label: "Command-W")
+}
+
+private func postCommandM(to pid: pid_t) {
+    postCommandKey(to: pid, keyCode: 46, label: "Command-M")
 }
 
 private func verify(windows: [WindowSnapshot]) throws {
-    guard let dashboard = windows.first(where: { $0.layer == 0 && $0.name == "Focus Pet" }) else {
+    guard let dashboard = dashboardWindow(in: windows) else {
         throw VerificationError.missingDashboard
     }
-    guard let pet = windows.first(where: { $0.layer > 0 && $0.name.isEmpty }) else {
+    guard let pet = petWindow(in: windows) else {
         throw VerificationError.missingPet
     }
 
@@ -138,9 +251,61 @@ private func verify(windows: [WindowSnapshot]) throws {
     print("PASS: pet panel is docked inside the sidebar bottom zone and no status bubble is visible.")
 }
 
-private func verifyCommandWReturnsPetToDefault() throws {
+private func verifyPetDragMovesPanel() throws {
     var windows = focusPetWindows()
-    guard let dashboard = windows.first(where: { $0.layer == 0 && $0.name == "Focus Pet" }),
+    guard let pid = focusPetPID() else {
+        throw VerificationError.missingPet
+    }
+    guard let before = petWindow(in: windows) else {
+        throw VerificationError.missingPet
+    }
+
+    let displayBounds = CGDisplayBounds(CGMainDisplayID())
+    let delta = CGSize(
+        width: before.frame.midX < displayBounds.midX ? 96 : -96,
+        height: before.frame.midY < displayBounds.midY ? 72 : -72
+    )
+    postPetDrag(to: pid, pet: before, delta: delta)
+    Thread.sleep(forTimeInterval: 0.8)
+    windows = focusPetWindows()
+    guard let after = petWindow(in: windows) else {
+        throw VerificationError.missingPet
+    }
+
+    let movement = hypot(after.frame.midX - before.frame.midX, after.frame.midY - before.frame.midY)
+    guard movement >= 32 else {
+        throw VerificationError.petDidNotMoveAfterDrag(before, after)
+    }
+
+    print("Pet panel before drag: id=\(before.id) frame=\(before.frame)")
+    print("Pet panel after drag: id=\(after.id) frame=\(after.frame)")
+    print("PASS: dragging the pet moves the panel and persists a custom placement candidate.")
+}
+
+private func verifyCommandWReturnsPetToDefault() throws {
+    try verifyDashboardDismissalReturnsPetToDefault(actionName: "Command-W", dismiss: postCommandW)
+}
+
+private func verifyCommandMReturnsPetToDefault() throws {
+    try verifyDashboardDismissalReturnsPetToDefault(actionName: "Command-M", dismiss: postCommandM)
+}
+
+private func verifyMinimizeButtonReturnsPetToDefault() throws {
+    try verifyDashboardDismissalReturnsPetToDefault(actionName: "minimize button") { pid in
+        let windows = focusPetWindows()
+        if let dashboard = dashboardWindow(in: windows) {
+            postMinimizeButtonClick(to: pid, dashboard: dashboard)
+        }
+    }
+}
+
+private func verifyDashboardDismissalReturnsPetToDefault(
+    actionName: String,
+    dismiss: (pid_t) -> Void
+) throws {
+    raiseDashboardWindowIfPossible()
+    var windows = focusPetWindows()
+    guard let dashboard = dashboardWindow(in: windows),
           let pid = focusPetPID() else {
         throw VerificationError.missingDashboard
     }
@@ -151,41 +316,58 @@ private func verifyCommandWReturnsPetToDefault() throws {
         height: dashboard.frame.height * 0.42 + 24
     )
 
-    postCommandW(to: pid)
+    dismiss(pid)
     Thread.sleep(forTimeInterval: 0.9)
     windows = focusPetWindows()
-    if windows.contains(where: { $0.layer == 0 && $0.name == "Focus Pet" }) {
+    if dashboardWindow(in: windows) != nil {
         throw VerificationError.petStillDockedAfterClose(
-            windows.first(where: { $0.layer > 0 && $0.name.isEmpty }) ?? dashboard,
+            petWindow(in: windows) ?? dashboard,
             previousDockZone
         )
     }
-    guard let pet = windows.first(where: { $0.layer > 0 && $0.name.isEmpty }) else {
+    guard let pet = petWindow(in: windows) else {
         throw VerificationError.missingPet
     }
     guard !previousDockZone.intersects(pet.frame) else {
         throw VerificationError.petStillDockedAfterClose(pet, previousDockZone)
     }
 
-    print("Pet panel after Command-W: id=\(pet.id) frame=\(pet.frame)")
-    print("PASS: closing the dashboard releases the sidebar dock and returns the pet toward its default placement.")
+    print("Pet panel after \(actionName): id=\(pet.id) frame=\(pet.frame)")
+    print("PASS: dismissing the dashboard with \(actionName) releases the sidebar dock and returns the pet toward its default placement.")
 }
 
 private func main() throws {
     let shouldClick = CommandLine.arguments.contains("--click-sidebar")
+    let shouldClickSettings = CommandLine.arguments.contains("--click-settings")
     let shouldClose = CommandLine.arguments.contains("--command-w-expect-default")
+    let shouldMinimize = CommandLine.arguments.contains("--command-m-expect-default")
+    let shouldClickMinimize = CommandLine.arguments.contains("--click-minimize-expect-default")
+    let shouldDrag = CommandLine.arguments.contains("--drag-pet-expect-move")
+    if shouldDrag {
+        try verifyPetDragMovesPanel()
+        return
+    }
     if shouldClose {
         try verifyCommandWReturnsPetToDefault()
         return
     }
+    if shouldMinimize {
+        try verifyCommandMReturnsPetToDefault()
+        return
+    }
+    if shouldClickMinimize {
+        try verifyMinimizeButtonReturnsPetToDefault()
+        return
+    }
 
+    raiseDashboardWindowIfPossible()
     var windows = focusPetWindows()
-    if shouldClick {
-        guard let dashboard = windows.first(where: { $0.layer == 0 && $0.name == "Focus Pet" }),
+    if shouldClick || shouldClickSettings {
+        guard let dashboard = dashboardWindow(in: windows),
               let pid = focusPetPID() else {
             throw VerificationError.missingDashboard
         }
-        postSidebarClick(to: pid, dashboard: dashboard, tabIndex: 2)
+        postSidebarClick(to: pid, dashboard: dashboard, tabIndex: shouldClickSettings ? 3 : 2)
         Thread.sleep(forTimeInterval: 0.8)
         windows = focusPetWindows()
     }

@@ -9,7 +9,7 @@ private enum DashboardLayout {
     static let shellCornerRadius: CGFloat = 16
     static let titlebarClearance: CGFloat = 10
     static let cardGap: CGFloat = 14
-    static let todayCanvasMinHeight: CGFloat = 820
+    static let todayCanvasMinHeight: CGFloat = 710
 }
 
 private enum DashboardInteraction {
@@ -45,6 +45,10 @@ struct MainDashboardView: View {
             }
 
             DashboardEventBridge(contentTab: $contentTab)
+        }
+        .background {
+            DashboardWindowLifecycleReporter(model: model)
+                .allowsHitTesting(false)
         }
         .foregroundStyle(DashboardPalette.primaryText)
         .tint(DashboardPalette.accent)
@@ -106,6 +110,10 @@ private struct DashboardEventBridge: View {
                     model.selectedTab = tab
                     openWindow(id: "dashboard")
                 }
+                Task { @MainActor in
+                    await Task.yield()
+                    model.dashboardWindowDidActivate()
+                }
             }
             .onChange(of: contentTab) { _, tab in
                 guard model.selectedTab != tab else { return }
@@ -118,6 +126,113 @@ private struct DashboardEventBridge: View {
             .onReceive(NotificationCenter.default.publisher(for: .focusPetOpenDashboardRequested)) { notification in
                 model.openDashboard(tab: notification.object as? DashboardTab ?? model.selectedTab)
             }
+    }
+}
+
+private struct DashboardWindowLifecycleReporter: NSViewRepresentable {
+    weak var model: FocusPetModel?
+
+    func makeNSView(context: Context) -> DashboardWindowLifecycleReportingView {
+        let view = DashboardWindowLifecycleReportingView()
+        view.dismiss = { [weak model] in
+            Task { @MainActor in
+                model?.dashboardWindowDidDismiss()
+            }
+        }
+        view.activate = { [weak model] in
+            Task { @MainActor in
+                model?.dashboardWindowDidActivate()
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: DashboardWindowLifecycleReportingView, context: Context) {
+        nsView.configureWindowObservers()
+    }
+}
+
+@MainActor
+private final class DashboardWindowLifecycleReportingView: NSView {
+    var dismiss: () -> Void = {}
+    var activate: () -> Void = {}
+    private nonisolated(unsafe) var observerTokens: [NSObjectProtocol] = []
+    private weak var observedWindow: NSWindow?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        configureWindowObservers()
+    }
+
+    deinit {
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
+    func configureWindowObservers() {
+        guard observedWindow !== window else { return }
+        clearWindowObservers()
+        guard let window else { return }
+        observedWindow = window
+        let names: [Notification.Name] = [
+            NSWindow.willCloseNotification,
+            NSWindow.willMiniaturizeNotification,
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.didDeminiaturizeNotification,
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didBecomeMainNotification,
+            NSWindow.didExposeNotification,
+            NSWindow.didChangeOcclusionStateNotification
+        ]
+        observerTokens = names.map { name in
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.handleWindowNotification(name)
+                }
+            }
+        }
+        observerTokens.append(
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: NSApp,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.activate()
+                }
+            }
+        )
+    }
+
+    private func handleWindowNotification(_ name: Notification.Name) {
+        guard let window = observedWindow else { return }
+        switch name {
+        case NSWindow.willCloseNotification,
+            NSWindow.willMiniaturizeNotification,
+            NSWindow.didMiniaturizeNotification:
+            dismiss()
+        case NSWindow.didChangeOcclusionStateNotification:
+            if window.isVisible, !window.isMiniaturized, window.occlusionState.contains(.visible) {
+                activate()
+            } else {
+                dismiss()
+            }
+        default:
+            activate()
+        }
+    }
+
+    private func clearWindowObservers() {
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        observerTokens = []
+        observedWindow = nil
     }
 }
 
@@ -150,6 +265,11 @@ private struct DashboardPetAnchorReporter: NSViewRepresentable {
                 model?.dashboardWindowDidDismiss()
             }
         }
+        view.activate = { [weak model] in
+            Task { @MainActor in
+                model?.dashboardWindowDidActivate()
+            }
+        }
         return view
     }
 
@@ -164,6 +284,7 @@ private final class DashboardPetAnchorReportingView: NSView {
     var anchor: DashboardPetAnchor = .todayFocusCard
     var report: (DashboardPetAnchor, CGRect) -> Void = { _, _ in }
     var dismiss: () -> Void = {}
+    var activate: () -> Void = {}
     private nonisolated(unsafe) var observerTokens: [NSObjectProtocol] = []
 
     override func layout() {
@@ -218,6 +339,11 @@ private final class DashboardPetAnchorReportingView: NSView {
             NSWindow.didMoveNotification,
             NSWindow.didResizeNotification,
             NSWindow.didBecomeKeyNotification,
+            NSWindow.didBecomeMainNotification,
+            NSWindow.didDeminiaturizeNotification,
+            NSWindow.didExposeNotification,
+            NSWindow.didChangeOcclusionStateNotification,
+            NSWindow.willMiniaturizeNotification,
             NSWindow.didMiniaturizeNotification,
             NSWindow.willCloseNotification
         ]
@@ -228,10 +354,11 @@ private final class DashboardPetAnchorReportingView: NSView {
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in
-                    if name == NSWindow.didMiniaturizeNotification || name == NSWindow.willCloseNotification {
+                    if name == NSWindow.willMiniaturizeNotification || name == NSWindow.didMiniaturizeNotification || name == NSWindow.willCloseNotification {
                         self?.dismiss()
                     } else {
                         self?.reportFrameSoon()
+                        self?.activate()
                     }
                 }
             }
@@ -865,6 +992,17 @@ private struct MenuActionGrid: View {
                 model.openDashboard(tab: .settings)
             }
 
+            if let active = model.activeFocusSession {
+                MenuActionButton(title: "完成任务", symbol: "checkmark.circle.fill", tint: DashboardPalette.focusBlue) {
+                    model.finishCurrentFocusSession(completed: true)
+                }
+                .help(active.taskName)
+            } else if model.activeBreakSession == nil {
+                MenuActionButton(title: "专注 \(model.settings.focusTargetMinutes) 分钟", symbol: "play.fill", tint: DashboardPalette.focusBlue) {
+                    model.startFocusSession(taskName: "专注任务", minutes: model.settings.focusTargetMinutes)
+                }
+            }
+
             if model.activeBreakSession == nil {
                 MenuActionButton(title: "休息 \(model.settings.breakMinutes) 分钟", symbol: "cup.and.saucer.fill", tint: DashboardPalette.restGreen) {
                     model.toggleBreakFromPet()
@@ -931,12 +1069,12 @@ private struct MenuActionButton: View {
 struct TodayView: View {
     var body: some View {
         GeometryReader { proxy in
-            let topBreathingRoom: CGFloat = 18
-            let bottomBreathingRoom: CGFloat = 10
+            let topBreathingRoom: CGFloat = 8
+            let bottomBreathingRoom: CGFloat = 0
             let canvasHeight = max(proxy.size.height - topBreathingRoom - bottomBreathingRoom, DashboardLayout.todayCanvasMinHeight)
             ScrollView(.vertical) {
                 TodayDashboardCanvas(size: CGSize(width: proxy.size.width, height: canvasHeight))
-                    .frame(width: proxy.size.width, height: canvasHeight, alignment: .topLeading)
+                    .frame(width: proxy.size.width, alignment: .topLeading)
                     .padding(.top, topBreathingRoom)
                     .padding(.bottom, bottomBreathingRoom)
             }
@@ -948,16 +1086,24 @@ struct TodayView: View {
 
 private struct TodayDashboardCanvas: View {
     @EnvironmentObject private var model: FocusPetModel
+    @State private var selectedInsightWindow: ActivityTimelineWindow = .fourHours
     var size: CGSize
 
     var body: some View {
+        let now = Date()
         let spacing = DashboardLayout.cardGap
         let contentHeight = max(0, size.height)
         let rowSpace = max(0, contentHeight - spacing * 2)
-        let topHeight = clamped(rowSpace * 0.20, min: 168, max: 184)
-        let timelineHeight = clamped(rowSpace * 0.31, min: 250, max: 270)
-        let insightsHeight = max(300, rowSpace - topHeight - timelineHeight)
-        let breakWidth = clamped(size.width * 0.31, min: 300, max: 390)
+        let topHeight = clamped(rowSpace * 0.24, min: 170, max: 192)
+        let timelineHeight = clamped(rowSpace * 0.30, min: 210, max: 238)
+        let insightsHeight = clamped(rowSpace - topHeight - timelineHeight, min: 252, max: 298)
+        let breakWidth = clamped(size.width * 0.30, min: 288, max: 360)
+        let insightSnapshot = TodayWindowInsightSnapshot(
+            window: selectedInsightWindow,
+            stateSegments: model.stateSegments,
+            appUsage: model.appUsage,
+            now: now
+        )
 
         VStack(alignment: .leading, spacing: spacing) {
             HStack(alignment: .top, spacing: spacing) {
@@ -970,14 +1116,15 @@ private struct TodayDashboardCanvas: View {
             }
             .frame(maxWidth: .infinity, minHeight: topHeight, maxHeight: topHeight)
 
-            InputActivityTimelinePanel()
+            InputActivityTimelinePanel(selectedWindow: $selectedInsightWindow, now: now)
                 .frame(maxWidth: .infinity, minHeight: timelineHeight, maxHeight: timelineHeight)
                 .dashboardPetAnchor(.todayTimeline)
 
-            TodayInsightsGrid()
+            TodayInsightsGrid(snapshot: insightSnapshot)
                 .frame(maxWidth: .infinity, minHeight: insightsHeight, maxHeight: insightsHeight)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .animation(.snappy(duration: 0.34, extraBounce: 0.03), value: selectedInsightWindow)
 
     }
 
@@ -992,47 +1139,65 @@ private struct TodayFocusFeatureCard: View {
     var body: some View {
         let workload = model.todayWorkload
         ZStack(alignment: .leading) {
-            DashboardMoonLandscape()
-            VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("专注")
-                        .font(.system(size: 21, weight: .semibold, design: .rounded))
-                        .foregroundStyle(DashboardPalette.focusInk)
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(FocusPetFormatters.duration(model.summary.focusSeconds))
-                            .font(.system(size: 36, weight: .semibold, design: .rounded))
+            TodayFocusBackdrop(tint: statusTint)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("今日态势")
+                            .font(.system(size: 18, weight: .semibold, design: .rounded))
+                            .foregroundStyle(DashboardPalette.focusInk)
+                        Text(statusHeadline)
+                            .font(.system(size: 26, weight: .semibold, design: .rounded))
+                            .foregroundStyle(statusTint)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                        Text(statusSubtitle)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(DashboardPalette.secondaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text(statusDuration)
+                            .font(.system(size: 30, weight: .semibold, design: .rounded))
                             .monospacedDigit()
                             .foregroundStyle(DashboardPalette.warmFocus)
-                            .minimumScaleFactor(0.68)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.70)
+                        Text(statusDurationLabel)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(DashboardPalette.secondaryText)
                     }
-                    Text(focusSubtitle)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(DashboardPalette.secondaryText)
-                        .lineLimit(1)
                 }
 
-                Spacer(minLength: 18)
+                Spacer(minLength: 8)
 
-                HStack(spacing: 10) {
-                    Label(displayedCurrentState.title, systemImage: displayedCurrentState.symbolName)
-                        .foregroundStyle(displayedCurrentState.timelineColor)
-                    Text(model.currentSnapshot.appName)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Text(FocusPetFormatters.estimatedTypedCharacters(workload.estimatedTypedCharacters))
-                        .monospacedDigit()
+                HStack(spacing: 8) {
+                    TodaySignalChip(
+                        title: currentState.title,
+                        symbol: currentState.symbolName,
+                        tint: statusTint
+                    )
+                    TodaySignalChip(
+                        title: model.currentSnapshot.appName,
+                        symbol: "macwindow",
+                        tint: DashboardPalette.focusBlue,
+                        maxWidth: 190
+                    )
+                    TodaySignalChip(
+                        title: FocusPetFormatters.contextSwitches(workload.contextSwitchCount),
+                        symbol: "arrow.triangle.2.circlepath",
+                        tint: DashboardPalette.appIndigo
+                    )
+                    TodaySignalChip(
+                        title: FocusPetFormatters.estimatedTypedCharacters(workload.estimatedTypedCharacters),
+                        symbol: "keyboard",
+                        tint: DashboardPalette.warmFocus
+                    )
                 }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(DashboardPalette.secondaryText)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(DashboardPalette.border, lineWidth: 1)
-                }
-                .liquidGlassSurface(cornerRadius: 8)
             }
             .padding(20)
         }
@@ -1054,15 +1219,134 @@ private struct TodayFocusFeatureCard: View {
         .shadow(color: DashboardPalette.shadow.opacity(0.14), radius: 3, x: 0, y: 1)
     }
 
-    private var focusSubtitle: String {
-        if model.summary.focusSeconds == 0 {
-            return "开始记录后会在这里显示今日专注时间"
-        }
-        return "当前节奏稳定，继续保持"
+    private var currentState: FocusPetCore.FocusState {
+        model.currentDecision.state
     }
 
-    private var displayedCurrentState: FocusPetCore.FocusState {
-        model.currentDecision.state == .away ? .focus : model.currentDecision.state
+    private var statusTint: Color {
+        currentState.timelineColor
+    }
+
+    private var statusHeadline: String {
+        switch currentState {
+        case .focus:
+            return model.summary.focusSeconds == 0 ? "正在自动识别" : "已进入稳定工作"
+        case .distracted:
+            return "注意力正在偏离"
+        case .breakTime:
+            return "正在休息恢复"
+        case .away:
+            return "暂离中"
+        }
+    }
+
+    private var statusSubtitle: String {
+        switch currentState {
+        case .focus:
+            return "App、输入和切换节奏保持稳定"
+        case .distracted:
+            return "建议先回到当前任务两分钟"
+        case .breakTime:
+            return "这段时间会单独记录"
+        case .away:
+            return "回来后继续接上今日记录"
+        }
+    }
+
+    private var statusDuration: String {
+        switch currentState {
+        case .focus:
+            return FocusPetFormatters.duration(model.summary.focusSeconds)
+        default:
+            return FocusPetFormatters.duration(Int(model.currentDecision.stableDuration))
+        }
+    }
+
+    private var statusDurationLabel: String {
+        switch currentState {
+        case .focus:
+            return "今日专注"
+        case .distracted:
+            return "已偏离"
+        case .breakTime:
+            return "休息中"
+        case .away:
+            return "暂离时长"
+        }
+    }
+}
+
+private struct TodayFocusBackdrop: View {
+    var tint: Color
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.86),
+                        tint.opacity(0.12),
+                        DashboardPalette.elevatedCardFill
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                tint.opacity(0.11),
+                                DashboardPalette.restGreen.opacity(0.08),
+                                Color.white.opacity(0.0)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(height: 42)
+            }
+            .overlay(alignment: .topTrailing) {
+                HStack(spacing: 4) {
+                    ForEach(0..<12, id: \.self) { index in
+                        Capsule()
+                            .fill(tint.opacity(index.isMultiple(of: 3) ? 0.16 : 0.08))
+                            .frame(width: 2, height: CGFloat(10 + (index % 4) * 5))
+                    }
+                }
+                .padding(.top, 16)
+                .padding(.trailing, 18)
+            }
+    }
+}
+
+private struct TodaySignalChip: View {
+    var title: String
+    var symbol: String
+    var tint: Color
+    var maxWidth: CGFloat?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(tint)
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(DashboardPalette.secondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.76)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: maxWidth, alignment: .leading)
+        .background(Color.white.opacity(0.62), in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(tint.opacity(0.20), lineWidth: 1)
+        }
+        .liquidGlassSurface(cornerRadius: 12)
     }
 }
 
@@ -1153,6 +1437,8 @@ private struct TodayStateRibbonCard: View {
 }
 
 private struct TodayInsightsGrid: View {
+    var snapshot: TodayWindowInsightSnapshot
+
     var body: some View {
         GeometryReader { proxy in
             let spacing = DashboardLayout.cardGap
@@ -1161,13 +1447,13 @@ private struct TodayInsightsGrid: View {
             let leftWidth = max(0, availableWidth - rightWidth)
 
             HStack(alignment: .top, spacing: spacing) {
-                TodayAppUsageBarChartPanel()
+                TodayAppUsageBarChartPanel(snapshot: snapshot)
                     .layoutPriority(1)
                     .frame(width: leftWidth)
                     .frame(height: proxy.size.height)
 
                 VStack(alignment: .leading, spacing: spacing) {
-                    TodayRhythmSummaryPanel()
+                    TodayRhythmSummaryPanel(snapshot: snapshot)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(width: rightWidth)
@@ -1183,82 +1469,39 @@ private struct TodayInsightsGrid: View {
 }
 
 private struct TodayRhythmSummaryPanel: View {
-    @EnvironmentObject private var model: FocusPetModel
-
     private var items: [StateDurationItem] {
-        [
-            StateDurationItem(state: .focus, seconds: model.summary.focusSeconds),
-            StateDurationItem(state: .distracted, seconds: model.summary.distractedSeconds),
-            StateDurationItem(state: .breakTime, seconds: model.summary.breakSeconds)
-        ]
+        snapshot.rhythmItems
     }
 
     private var totalSeconds: Int {
-        max(0, items.reduce(0) { $0 + $1.seconds })
+        snapshot.rhythmTotalSeconds
     }
 
     private var displayedCurrentState: FocusPetCore.FocusState {
-        model.currentDecision.state == .away ? .focus : model.currentDecision.state
+        snapshot.dominantRhythmState
     }
 
+    var snapshot: TodayWindowInsightSnapshot
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 8) {
-                Text("状态与节奏")
+                Text("窗口节奏")
                     .font(.headline.weight(.semibold))
                 Spacer(minLength: 8)
-                StatusPill(FocusPetFormatters.clock(model.currentSnapshot.timestamp), symbol: "clock")
+                StatusPill(snapshot.window.heading, symbol: "clock")
             }
 
-            HStack(spacing: 6) {
-                Image(systemName: displayedCurrentState.symbolName)
-                    .font(.system(size: 10, weight: .semibold))
-                Text(displayedCurrentState.title)
-                    .font(.caption.weight(.bold))
-                Text(model.currentSnapshot.appName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(DashboardPalette.secondaryText)
-                    .lineLimit(1)
+            HStack {
                 Spacer(minLength: 0)
-            }
-            .foregroundStyle(displayedCurrentState.timelineColor)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(displayedCurrentState.timelineColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            HStack(alignment: .center, spacing: 13) {
                 StateDonutChart(items: items, total: totalSeconds)
                     .frame(width: 96, height: 96)
-
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(items) { item in
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(item.state.timelineColor)
-                                .frame(width: 8, height: 8)
-                            Text(item.state.title)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(DashboardPalette.secondaryText)
-                                .frame(width: 34, alignment: .leading)
-                            Spacer(minLength: 4)
-                            Text(FocusPetFormatters.percentage(ratio(for: item)))
-                                .font(.caption.monospacedDigit().weight(.semibold))
-                                .foregroundStyle(DashboardPalette.primaryText)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 0)
             }
 
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    RhythmDurationTile(state: .distracted, seconds: model.summary.distractedSeconds, prominent: true)
-                    RhythmDurationTile(state: .breakTime, seconds: model.summary.breakSeconds, prominent: true)
-                }
-
-                VStack(spacing: 7) {
-                    RhythmDurationTile(state: .distracted, seconds: model.summary.distractedSeconds, prominent: true)
-                    RhythmDurationTile(state: .breakTime, seconds: model.summary.breakSeconds, prominent: true)
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(items) { item in
+                    RhythmLegendRow(item: item, totalSeconds: totalSeconds, isDominant: item.state == displayedCurrentState)
                 }
             }
 
@@ -1266,44 +1509,50 @@ private struct TodayRhythmSummaryPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .dashboardCard(12, tint: DashboardPalette.awayPurple)
+        .animation(.snappy(duration: 0.36, extraBounce: 0.04), value: snapshot.animationKey)
     }
 
-    private func ratio(for item: StateDurationItem) -> Double {
+}
+
+private struct RhythmLegendRow: View {
+    var item: StateDurationItem
+    var totalSeconds: Int
+    var isDominant: Bool
+
+    private var ratio: Double {
         guard totalSeconds > 0 else { return 0 }
         return Double(item.seconds) / Double(totalSeconds)
     }
-}
-
-private struct RhythmDurationTile: View {
-    var state: FocusPetCore.FocusState
-    var seconds: Int
-    var prominent: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: state.symbolName)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(state.timelineColor)
-                .frame(width: 24, height: 24)
-                .background(state.timelineColor.opacity(prominent ? 0.14 : 0.09), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-
-            Text("\(state.title) \(FocusPetFormatters.duration(seconds))")
+        HStack(spacing: 8) {
+            Circle()
+                .fill(item.state.timelineColor)
+                .frame(width: 8, height: 8)
+            Text(item.state.title)
+                .font(.caption.weight(isDominant ? .bold : .semibold))
+                .foregroundStyle(isDominant ? DashboardPalette.primaryText : DashboardPalette.secondaryText)
+                .frame(width: 38, alignment: .leading)
+            Text(FocusPetFormatters.duration(item.seconds))
                 .font(.caption.monospacedDigit().weight(.semibold))
-                .foregroundStyle(prominent ? DashboardPalette.primaryText : DashboardPalette.secondaryText)
+                .foregroundStyle(DashboardPalette.primaryText)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
-            Spacer(minLength: 0)
+                .minimumScaleFactor(0.74)
+            Spacer(minLength: 4)
+            Text(FocusPetFormatters.percentage(ratio))
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(DashboardPalette.secondaryText)
+                .contentTransition(.numericText())
         }
         .padding(.horizontal, 9)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+        .padding(.vertical, 5)
         .background(
-            state.timelineColor.opacity(prominent ? 0.10 : 0.055),
+            item.state.timelineColor.opacity(isDominant ? 0.10 : 0.05),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(state.timelineColor.opacity(prominent ? 0.16 : 0.10), lineWidth: 1)
+                .stroke(item.state.timelineColor.opacity(isDominant ? 0.18 : 0.08), lineWidth: 1)
         }
     }
 }
@@ -1312,7 +1561,7 @@ private struct CurrentRhythmPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 9) {
                 Image(systemName: model.currentDecision.state.symbolName)
                     .font(.system(size: 14, weight: .semibold))
@@ -1436,88 +1685,6 @@ private struct TodayDistributionPanel: View {
     }
 }
 
-private struct DashboardMoonLandscape: View {
-    var compact = false
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(0.70),
-                        DashboardPalette.focusBlue.opacity(0.22),
-                        DashboardPalette.awayPurple.opacity(0.12)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-
-                RoundedRectangle(cornerRadius: compact ? 26 : 54, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.64),
-                                DashboardPalette.gold.opacity(0.22),
-                                DashboardPalette.focusBlue.opacity(0.18)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: compact ? 130 : 280, height: compact ? 58 : 132)
-                    .rotationEffect(.degrees(-8))
-                    .position(x: proxy.size.width * (compact ? 0.78 : 0.70), y: proxy.size.height * (compact ? 0.42 : 0.50))
-                    .opacity(0.82)
-
-                CloudShape()
-                    .fill(Color.white.opacity(0.36))
-                    .frame(width: compact ? 84 : 132, height: compact ? 34 : 50)
-                    .position(x: proxy.size.width * 0.86, y: proxy.size.height * 0.40)
-
-                Path { path in
-                    let width = proxy.size.width
-                    let height = proxy.size.height
-                    path.move(to: CGPoint(x: 0, y: height * 0.82))
-                    path.addCurve(
-                        to: CGPoint(x: width, y: height * 0.68),
-                        control1: CGPoint(x: width * 0.22, y: height * 0.62),
-                        control2: CGPoint(x: width * 0.58, y: height * 0.88)
-                    )
-                    path.addLine(to: CGPoint(x: width, y: height))
-                    path.addLine(to: CGPoint(x: 0, y: height))
-                    path.closeSubpath()
-                }
-                .fill(DashboardPalette.focusBlue.opacity(0.18))
-
-                Path { path in
-                    let width = proxy.size.width
-                    let height = proxy.size.height
-                    path.move(to: CGPoint(x: 0, y: height * 0.90))
-                    path.addCurve(
-                        to: CGPoint(x: width, y: height * 0.82),
-                        control1: CGPoint(x: width * 0.35, y: height * 0.76),
-                        control2: CGPoint(x: width * 0.66, y: height * 0.95)
-                    )
-                    path.addLine(to: CGPoint(x: width, y: height))
-                    path.addLine(to: CGPoint(x: 0, y: height))
-                    path.closeSubpath()
-                }
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.46),
-                            DashboardPalette.restGreen.opacity(0.18),
-                            DashboardPalette.focusBlue.opacity(0.16)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-            }
-        }
-    }
-}
-
 private struct BreakDurationControl: View {
     @EnvironmentObject private var model: FocusPetModel
 
@@ -1534,50 +1701,92 @@ private struct BreakDurationControl: View {
     }
 
     private func content(at date: Date) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(model.activeBreakSession == nil ? "休息计时" : "正在休息")
-                    .font(.headline.weight(.semibold))
-                Spacer(minLength: 8)
-                Image(systemName: model.activeBreakSession == nil ? "timer" : "pause.circle.fill")
-                    .font(.system(size: 16, weight: .semibold))
+        let isActive = model.activeBreakSession != nil
+        let progress = activeBreakProgress(at: date)
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: isActive ? "leaf.circle.fill" : "cup.and.saucer.fill")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(DashboardPalette.restGreen)
-            }
+                    .frame(width: 26, height: 26)
+                    .background(DashboardPalette.restGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(DashboardPalette.restGreen.opacity(0.16), lineWidth: 1)
+                    }
 
-            Text(primaryTimeText(at: date))
-                .font(.system(size: 29, weight: .semibold, design: .rounded).monospacedDigit())
-                .foregroundStyle(DashboardPalette.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-
-            if let progress = activeBreakProgress(at: date) {
-                CompactMeter(ratio: progress, tint: DashboardPalette.restGreen, height: 8)
-                if let subtitle = statusSubtitle(at: date) {
-                    Text(subtitle)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isActive ? "正在恢复" : "休息恢复")
+                        .font(.subheadline.weight(.semibold))
+                    Text(isActive ? "让眼睛和手先停一下" : "休息会单独记录，不计入走神")
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(DashboardPalette.secondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                }
+
+                Spacer(minLength: 6)
+            }
+
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isActive ? "剩余时间" : "建议休息")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                    Text(primaryTimeText(at: date))
+                        .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(DashboardPalette.primaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.68)
+                }
+
+                Spacer(minLength: 8)
+
+                BreakRecoveryRing(progress: progress, isActive: isActive)
+                    .frame(width: 44, height: 44)
+            }
+
+            if let progress {
+                VStack(alignment: .leading, spacing: 5) {
+                    CompactMeter(ratio: progress, tint: DashboardPalette.restGreen, height: 6)
+                        .frame(maxWidth: .infinity)
+                    if let subtitle = statusSubtitle(at: date) {
+                        Text(subtitle)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(DashboardPalette.secondaryText)
+                            .lineLimit(1)
+                    }
                 }
             } else {
-                BreakMinuteKeySelector(value: breakMinutesKeyBinding)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text("快速时长")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(DashboardPalette.secondaryText)
+                        Spacer(minLength: 0)
+                    }
+                    BreakMinuteKeySelector(value: breakMinutesKeyBinding)
+                }
             }
 
             Spacer(minLength: 0)
 
-            BreakRestActionButton(isActive: model.activeBreakSession != nil) {
+            BreakRestActionButton(isActive: isActive) {
                 model.toggleBreakFromPet()
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(
                     LinearGradient(
                         colors: [
-                            DashboardPalette.restGreen.opacity(0.30),
-                            DashboardPalette.restGreen.opacity(0.10),
-                            DashboardPalette.elevatedCardFill,
+                            Color.white.opacity(0.82),
+                            DashboardPalette.restGreen.opacity(0.12),
+                            DashboardPalette.elevatedCardFill
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -1585,14 +1794,14 @@ private struct BreakDurationControl: View {
                 )
                 .overlay(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(DashboardPalette.restGreen.opacity(0.88))
+                        .fill(DashboardPalette.restGreen.opacity(0.82))
                         .frame(width: 5)
                         .padding(.vertical, 14)
                         .padding(.leading, 2)
                 }
                 .overlay {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(DashboardPalette.restGreen.opacity(0.38), lineWidth: 1)
+                        .stroke(DashboardPalette.restGreen.opacity(0.24), lineWidth: 1)
                 }
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -1624,13 +1833,46 @@ private struct BreakDurationControl: View {
             return nil
         }
         let elapsed = max(0, Int(date.timeIntervalSince(rest.start)))
-        return "已休息 \(FocusPetFormatters.duration(elapsed))"
+        return "已恢复 \(FocusPetFormatters.duration(elapsed))"
     }
 
     private func activeBreakProgress(at date: Date) -> Double? {
         guard let rest = model.activeBreakSession else { return nil }
         let elapsed = max(0, date.timeIntervalSince(rest.start))
         return min(1, elapsed / Double(max(1, rest.targetDurationSeconds)))
+    }
+}
+
+private struct BreakRecoveryRing: View {
+    var progress: Double?
+    var isActive: Bool
+
+    private var ringProgress: Double {
+        min(1, max(0, progress ?? 0.72))
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(DashboardPalette.trackFill.opacity(0.65), lineWidth: 6)
+            Circle()
+                .trim(from: 0, to: ringProgress)
+                .stroke(
+                    DashboardPalette.restGreen.gradient,
+                    style: StrokeStyle(lineWidth: 6, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .opacity(isActive ? 1 : 0.42)
+
+            Image(systemName: isActive ? "leaf.fill" : "cup.and.saucer.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(DashboardPalette.restGreen)
+                .frame(width: 30, height: 30)
+                .background(Color.white.opacity(0.70), in: Circle())
+                .overlay {
+                    Circle().stroke(Color.white.opacity(0.48), lineWidth: 1)
+                }
+        }
     }
 }
 
@@ -1645,83 +1887,81 @@ private struct BreakRestActionButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: isActive ? "stop.fill" : "cup.and.saucer.fill")
-                    .font(.system(size: 12, weight: .bold))
+                Image(systemName: isActive ? "stop.fill" : "leaf.fill")
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(tint)
                     .frame(width: 24, height: 24)
-                    .background(Color.white.opacity(0.78), in: Circle())
+                    .background(Color.white.opacity(0.70), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .overlay {
-                        Circle().stroke(Color.white.opacity(0.40), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(Color.white.opacity(0.40), lineWidth: 1)
                     }
 
-                Text(isActive ? "结束休息" : "开始休息")
+                Text(isActive ? "结束休息" : "开始恢复")
                     .font(.subheadline.weight(.semibold))
 
                 Spacer(minLength: 0)
 
                 Image(systemName: isActive ? "checkmark" : "arrow.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .opacity(0.82)
+                    .font(.system(size: 10, weight: .bold))
+                    .opacity(0.70)
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 11)
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10)
             .frame(maxWidth: .infinity)
-            .frame(height: 38)
-            .background(
-                LinearGradient(
-                    colors: [
-                        tint.opacity(0.92),
-                        tint.opacity(0.78)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                in: Capsule()
-            )
+            .frame(height: 34)
+            .background(tint.opacity(isActive ? 0.13 : 0.15), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
-                Capsule().stroke(Color.white.opacity(0.26), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(tint.opacity(0.22), lineWidth: 1)
             }
-            .shadow(color: tint.opacity(0.18), radius: 4, x: 0, y: 2)
+            .shadow(color: tint.opacity(0.08), radius: 2, x: 0, y: 1)
         }
         .buttonStyle(.plain)
-        .help(isActive ? "结束休息" : "开始休息")
+        .help(isActive ? "结束休息" : "开始恢复")
     }
 }
 
 private struct BreakMinuteKeySelector: View {
     @Binding var value: Int
 
-    private let options = [1, 5, 10, 30, 60]
+    private var options: [Int] {
+        var values = [5, 10, 30]
+        if !values.contains(value) {
+            values.insert(value, at: 0)
+        }
+        return values
+    }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             ForEach(options, id: \.self) { minute in
                 let selected = minute == value
                 Button {
                     value = minute
                 } label: {
-                    Text("\(minute)")
+                    Text("\(minute)m")
                         .font(.caption2.monospacedDigit().weight(.bold))
                         .foregroundStyle(selected ? Color.white : DashboardPalette.secondaryText)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 25)
+                        .frame(height: 24)
                         .background(
-                            selected ? DashboardPalette.restGreen : Color.white.opacity(0.62),
-                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            selected ? DashboardPalette.restGreen.opacity(0.86) : Color.white.opacity(0.36),
+                            in: Capsule()
                         )
                         .overlay {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .stroke(selected ? Color.white.opacity(0.30) : DashboardPalette.innerStroke, lineWidth: 1)
+                            Capsule()
+                                .stroke(selected ? Color.white.opacity(0.24) : DashboardPalette.innerStroke, lineWidth: 1)
                         }
                 }
                 .buttonStyle(.plain)
                 .help("\(minute) 分钟")
             }
         }
-        .padding(4)
-        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .padding(3)
+        .background(Color.white.opacity(0.36), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(DashboardPalette.innerStroke, lineWidth: 1)
         }
     }
@@ -1831,6 +2071,12 @@ private struct StateDonutChart: View {
         return Int((Double(focus) / Double(total) * 100).rounded())
     }
 
+    private var animationKey: String {
+        slices
+            .map { "\($0.id):\(String(format: "%.3f", $0.start))-\(String(format: "%.3f", $0.end))" }
+            .joined(separator: "|")
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
@@ -1850,6 +2096,7 @@ private struct StateDonutChart: View {
                     Text("\(focusPercent)%")
                         .font(.system(size: max(22, side * 0.18), weight: .semibold, design: .rounded))
                         .monospacedDigit()
+                        .contentTransition(.numericText())
                     Text("专注占比")
                         .font(.system(size: max(9, side * 0.065), weight: .medium))
                         .foregroundStyle(DashboardPalette.secondaryText)
@@ -1857,6 +2104,7 @@ private struct StateDonutChart: View {
             }
             .frame(width: side, height: side)
             .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+            .animation(.snappy(duration: 0.38, extraBounce: 0.04), value: animationKey)
         }
     }
 }
@@ -2043,11 +2291,114 @@ private enum ActivityTimelineWindow: Int, CaseIterable, Hashable, Identifiable {
         case .twelveHours: "最近 12 小时"
         }
     }
+
+}
+
+private struct TodayWindowInsightSnapshot {
+    var window: ActivityTimelineWindow
+    var start: Date
+    var end: Date
+    var rangeLabel: String
+    var focusSeconds: Int
+    var distractedSeconds: Int
+    var breakSeconds: Int
+    var awaySeconds: Int
+    var stateItems: [StateDurationItem]
+    var appItems: [AppUsageDisplayItem]
+
+    var rhythmItems: [StateDurationItem] {
+        stateItems.filter { $0.state != .away }
+    }
+
+    var rhythmTotalSeconds: Int {
+        max(0, rhythmItems.reduce(0) { $0 + $1.seconds })
+    }
+
+    var dominantRhythmState: FocusPetCore.FocusState {
+        rhythmItems
+            .filter { $0.seconds > 0 }
+            .max { lhs, rhs in lhs.seconds < rhs.seconds }?
+            .state ?? .focus
+    }
+
+    var animationKey: String {
+        let appFingerprint = appItems
+            .map { "\($0.id):\($0.seconds)" }
+            .joined(separator: "|")
+        return "\(window.id)-\(focusSeconds)-\(distractedSeconds)-\(breakSeconds)-\(awaySeconds)-\(appFingerprint)"
+    }
+
+    init(
+        window: ActivityTimelineWindow,
+        stateSegments: [StateSegment],
+        appUsage: [AppUsageSegment],
+        now: Date = Date()
+    ) {
+        let windowEnd = now
+        let windowStart = now.addingTimeInterval(-window.seconds)
+        let bounds = (start: windowStart, end: windowEnd)
+        var durations = Dictionary(uniqueKeysWithValues: FocusPetCore.FocusState.allCases.map { ($0, 0) })
+
+        for segment in orderedStateSegments(stateSegments).reversed() {
+            if segment.end <= windowStart { break }
+            guard todayWindowOverlaps(segment.start, segment.end, bounds: bounds) else { continue }
+            durations[segment.state, default: 0] += todayWindowClippedSeconds(start: segment.start, end: segment.end, bounds: bounds)
+        }
+
+        self.window = window
+        self.start = windowStart
+        self.end = windowEnd
+        self.rangeLabel = "\(FocusPetFormatters.clock(windowStart)) - \(FocusPetFormatters.clock(windowEnd))"
+        self.focusSeconds = durations[.focus, default: 0]
+        self.distractedSeconds = durations[.distracted, default: 0]
+        self.breakSeconds = durations[.breakTime, default: 0]
+        self.awaySeconds = durations[.away, default: 0]
+        self.stateItems = [
+            StateDurationItem(state: .focus, seconds: durations[.focus, default: 0]),
+            StateDurationItem(state: .distracted, seconds: durations[.distracted, default: 0]),
+            StateDurationItem(state: .breakTime, seconds: durations[.breakTime, default: 0]),
+            StateDurationItem(state: .away, seconds: durations[.away, default: 0])
+        ]
+        self.appItems = AppUsageDisplayItem.windowed(
+            from: stateSegments,
+            appUsage: appUsage,
+            bounds: bounds
+        )
+    }
+}
+
+private func todayWindowOverlaps(_ start: Date, _ end: Date, bounds: (start: Date, end: Date)) -> Bool {
+    end > bounds.start && start < bounds.end
+}
+
+private func todayWindowClippedSeconds(start: Date, end: Date, bounds: (start: Date, end: Date)) -> Int {
+    max(0, Int(min(end, bounds.end).timeIntervalSince(max(start, bounds.start)).rounded()))
+}
+
+private func todayWindowNormalizedCategory(_ category: ActivityCategory) -> ActivityCategory {
+    category == .neutral ? .ignore : category
+}
+
+private func todayWindowAppKey(appName: String, bundleID: String?) -> String {
+    let rawKey = (bundleID?.isEmpty == false ? bundleID : nil) ?? appName
+    return rawKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+}
+
+private func todayWindowIsHiddenSystemUsage(appName: String, bundleID: String?) -> Bool {
+    let normalizedName = appName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let normalizedBundleID = bundleID?.lowercased() ?? ""
+    return normalizedName == "sleep"
+        || normalizedName == "loginwindow"
+        || normalizedName == "locked screen"
+        || normalizedName == "break"
+        || normalizedName == "away"
+        || normalizedBundleID.contains("loginwindow")
 }
 
 private struct InputActivityTimelinePanel: View {
     @EnvironmentObject private var model: FocusPetModel
-    @State private var selectedWindow: ActivityTimelineWindow = .fourHours
+    @Binding var selectedWindow: ActivityTimelineWindow
+    var now: Date
 
     var body: some View {
         let snapshot = InputTimelineSnapshot(
@@ -2055,6 +2406,7 @@ private struct InputActivityTimelinePanel: View {
             stateSegments: model.stateSegments,
             appUsage: model.appUsage,
             inputActivity: model.inputActivity,
+            now: now,
             includeAwayState: false,
             includeAppSegments: false
         )
@@ -2062,11 +2414,10 @@ private struct InputActivityTimelinePanel: View {
         VStack(alignment: .leading, spacing: 8) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .center, spacing: 10) {
-                    Text(selectedWindow.heading)
+                    Text("活动时间窗")
                         .font(.headline.weight(.semibold))
-                        .contentTransition(.numericText())
 
-                    Text("输入 × 状态")
+                    Text("自动记录")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(DashboardPalette.secondaryText)
                         .padding(.horizontal, 10)
@@ -2076,6 +2427,7 @@ private struct InputActivityTimelinePanel: View {
                             Capsule().stroke(DashboardPalette.border, lineWidth: 1)
                         }
 
+                    StatusPill(selectedWindow.heading, symbol: "clock.arrow.circlepath")
                     timelineMetrics(snapshot)
 
                     Spacer(minLength: 10)
@@ -2086,11 +2438,10 @@ private struct InputActivityTimelinePanel: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .center, spacing: 10) {
-                        Text(selectedWindow.heading)
+                        Text("活动时间窗")
                             .font(.headline.weight(.semibold))
-                            .contentTransition(.numericText())
 
-                        Text("输入 × 状态")
+                        Text("自动记录")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(DashboardPalette.secondaryText)
                             .padding(.horizontal, 10)
@@ -2107,6 +2458,7 @@ private struct InputActivityTimelinePanel: View {
                     }
 
                     HStack(spacing: 8) {
+                        StatusPill(selectedWindow.heading, symbol: "clock.arrow.circlepath")
                         timelineMetrics(snapshot)
                         Spacer(minLength: 0)
                     }
@@ -3846,6 +4198,8 @@ private struct MiniMeter: View {
             }
         }
         .frame(height: 12)
+        .animation(.snappy(duration: 0.36, extraBounce: 0.05), value: ratio)
+        .animation(.snappy(duration: 0.36, extraBounce: 0.05), value: total)
     }
 }
 
@@ -3906,11 +4260,11 @@ private struct AppUsageCard: View {
     }
 }
 
-struct TodayAppUsageBarChartPanel: View {
-    @EnvironmentObject private var model: FocusPetModel
+private struct TodayAppUsageBarChartPanel: View {
+    var snapshot: TodayWindowInsightSnapshot
 
     private var items: [AppUsageDisplayItem] {
-        Array(AppUsageDisplayItem.merged(from: model.summary.appUsage).prefix(5))
+        Array(snapshot.appItems.prefix(6))
     }
 
     private var maxSeconds: Int {
@@ -3919,22 +4273,23 @@ struct TodayAppUsageBarChartPanel: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let nameColumnWidth = clamped(proxy.size.width * 0.24, min: 150, max: 240)
-            let durationColumnWidth = clamped(proxy.size.width * 0.11, min: 72, max: 92)
+            let nameColumnWidth = clamped(proxy.size.width * 0.22, min: 132, max: 218)
+            let durationColumnWidth = clamped(proxy.size.width * 0.10, min: 70, max: 90)
 
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("应用使用排行（今日）")
+                    Text("时间去哪了")
                         .font(.headline.weight(.semibold))
                     Spacer()
+                    StatusPill(snapshot.rangeLabel, symbol: "clock")
                     StatusPill("\(items.count) 个应用", symbol: "number")
                 }
 
                 if items.isEmpty {
-                    Text("暂无 App 使用统计。")
+                    Text("暂无应用记录。")
                         .foregroundStyle(DashboardPalette.secondaryText)
                 } else {
-                    VStack(spacing: 4) {
+                    VStack(spacing: 3) {
                         HStack(spacing: 10) {
                             Text("")
                                 .frame(width: 26)
@@ -3958,6 +4313,7 @@ struct TodayAppUsageBarChartPanel: View {
                                 nameColumnWidth: nameColumnWidth,
                                 durationColumnWidth: durationColumnWidth
                             )
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
                     }
                 }
@@ -3966,6 +4322,7 @@ struct TodayAppUsageBarChartPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .dashboardCard(12)
+        .animation(.snappy(duration: 0.36, extraBounce: 0.04), value: snapshot.animationKey)
     }
 
     private func clamped(_ value: CGFloat, min minimum: CGFloat, max maximum: CGFloat) -> CGFloat {
@@ -3980,6 +4337,71 @@ private struct AppUsageDisplayItem: Identifiable {
     var category: ActivityCategory
     var seconds: Int
     var stateBreakdown: [FocusPetCore.FocusState: Int]
+
+    static func windowed(
+        from stateSegments: [StateSegment],
+        appUsage: [AppUsageSegment],
+        bounds: (start: Date, end: Date)
+    ) -> [AppUsageDisplayItem] {
+        struct Accumulator {
+            var appName: String
+            var bundleID: String?
+            var seconds: Int = 0
+            var hasUsageSeconds = false
+            var stateBreakdown: [FocusPetCore.FocusState: Int] = [:]
+            var categorySeconds: [ActivityCategory: Int] = [:]
+        }
+
+        var grouped: [String: Accumulator] = [:]
+        for usage in appUsage where todayWindowOverlaps(usage.start, usage.end, bounds: bounds) {
+            let category = todayWindowNormalizedCategory(usage.category)
+            let seconds = todayWindowClippedSeconds(start: usage.start, end: usage.end, bounds: bounds)
+            guard seconds > 0,
+                  !todayWindowIsHiddenSystemUsage(appName: usage.appName, bundleID: usage.bundleID) else { continue }
+            let key = todayWindowAppKey(appName: usage.appName, bundleID: usage.bundleID)
+            var accumulator = grouped[key] ?? Accumulator(appName: usage.appName, bundleID: usage.bundleID)
+            accumulator.seconds += seconds
+            accumulator.hasUsageSeconds = true
+            accumulator.bundleID = accumulator.bundleID ?? usage.bundleID
+            accumulator.categorySeconds[category, default: 0] += seconds
+            grouped[key] = accumulator
+        }
+
+        for segment in orderedStateSegments(stateSegments) where todayWindowOverlaps(segment.start, segment.end, bounds: bounds) {
+            let category = todayWindowNormalizedCategory(segment.category)
+            let seconds = todayWindowClippedSeconds(start: segment.start, end: segment.end, bounds: bounds)
+            guard seconds > 0,
+                  !todayWindowIsHiddenSystemUsage(appName: segment.appName, bundleID: segment.bundleID) else { continue }
+            let key = todayWindowAppKey(appName: segment.appName, bundleID: segment.bundleID)
+            var accumulator = grouped[key] ?? Accumulator(appName: segment.appName, bundleID: segment.bundleID)
+            accumulator.bundleID = accumulator.bundleID ?? segment.bundleID
+            accumulator.stateBreakdown[segment.state, default: 0] += seconds
+            if !accumulator.hasUsageSeconds {
+                accumulator.seconds += seconds
+                accumulator.categorySeconds[category, default: 0] += seconds
+            }
+            grouped[key] = accumulator
+        }
+
+        return grouped.compactMap { key, accumulator in
+            guard accumulator.seconds > 0 else { return nil }
+            let category = accumulator.categorySeconds.max { lhs, rhs in lhs.value < rhs.value }?.key ?? .ignore
+            return AppUsageDisplayItem(
+                id: key,
+                appName: accumulator.appName,
+                bundleID: accumulator.bundleID,
+                category: category,
+                seconds: accumulator.seconds,
+                stateBreakdown: accumulator.stateBreakdown
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.seconds == rhs.seconds {
+                return lhs.appName.localizedCaseInsensitiveCompare(rhs.appName) == .orderedAscending
+            }
+            return lhs.seconds > rhs.seconds
+        }
+    }
 
     static func merged(from summaries: [AppUsageSummary]) -> [AppUsageDisplayItem] {
         struct Accumulator {
@@ -4028,6 +4450,9 @@ private struct AppUsageDisplayItem: Identifiable {
         let bundleID = item.bundleID?.lowercased() ?? ""
         return appName == "sleep"
             || appName == "loginwindow"
+            || appName == "locked screen"
+            || appName == "break"
+            || appName == "away"
             || bundleID.contains("loginwindow")
     }
 }
@@ -4069,15 +4494,17 @@ private struct TodayAppUsageBarRow: View {
             Text(FocusPetFormatters.duration(item.seconds))
                 .font(.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(DashboardPalette.primaryText)
+                .contentTransition(.numericText())
                 .frame(width: durationColumnWidth, alignment: .trailing)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
         .background(rank <= 3 ? DashboardPalette.controlFill : DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(rank <= 3 ? DashboardPalette.border : DashboardPalette.innerStroke, lineWidth: 1)
         }
+        .animation(.snappy(duration: 0.36, extraBounce: 0.05), value: item.seconds)
     }
 }
 struct AppUsageChartPanel: View {
@@ -5516,6 +5943,7 @@ struct SettingsView: View {
 
 private enum SettingsModule: String, CaseIterable, Identifiable, Hashable {
     case recognition
+    case permissions
     case reminders
     case data
     case about
@@ -5525,6 +5953,7 @@ private enum SettingsModule: String, CaseIterable, Identifiable, Hashable {
     var title: String {
         switch self {
         case .recognition: "识别"
+        case .permissions: "权限"
         case .reminders: "提醒"
         case .data: "数据"
         case .about: "关于"
@@ -5534,6 +5963,7 @@ private enum SettingsModule: String, CaseIterable, Identifiable, Hashable {
     var subtitle: String {
         switch self {
         case .recognition: "状态判断"
+        case .permissions: "系统设置入口"
         case .reminders: "气泡与系统通知"
         case .data: "本地记录"
         case .about: "应用信息"
@@ -5543,6 +5973,7 @@ private enum SettingsModule: String, CaseIterable, Identifiable, Hashable {
     var symbolName: String {
         switch self {
         case .recognition: "slider.horizontal.3"
+        case .permissions: "lock.shield.fill"
         case .reminders: "bell.badge.fill"
         case .data: "internaldrive.fill"
         case .about: "info.circle.fill"
@@ -5552,6 +5983,7 @@ private enum SettingsModule: String, CaseIterable, Identifiable, Hashable {
     var tint: Color {
         switch self {
         case .recognition: DashboardPalette.distractedPeach
+        case .permissions: .teal
         case .reminders: DashboardPalette.focusBlue
         case .data: DashboardPalette.awayPurple
         case .about: DashboardPalette.gold
@@ -5611,6 +6043,8 @@ private struct SettingsModuleContent: View {
         switch module {
         case .recognition:
             RecognitionSettingsPanel()
+        case .permissions:
+            PermissionSettingsPanel()
         case .reminders:
             ReminderSettingsPanel()
         case .data:
@@ -5707,6 +6141,7 @@ private struct RecognitionSettingsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            RecognitionDiagnosticsPanel()
             SlidingSegmentedPicker(
                 options: judgmentPresetOptions(),
                 selection: Binding(
@@ -5766,6 +6201,244 @@ private struct RecognitionSettingsPanel: View {
     private func saveCustomJudgment() {
         selectedPresetOverride = .custom
         model.saveSettings()
+    }
+}
+
+private struct RecognitionDiagnosticsPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    private var diagnostic: RecognitionDiagnosticSnapshot {
+        model.recognitionDiagnostic
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .center, spacing: 8) {
+                Label("识别状态", systemImage: "waveform.path.ecg.rectangle")
+                    .font(.headline.weight(.semibold))
+                Spacer(minLength: 8)
+                Button {
+                    model.refreshRecognitionDiagnostics()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 26, height: 24)
+                }
+                .buttonStyle(.plain)
+                .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+                }
+                .help("刷新诊断")
+            }
+
+            RecognitionDiagnosticSummaryRow(diagnostic: diagnostic)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 7) {
+                    DiagnosticPermissionChip(title: "屏幕录制", status: diagnostic.screenRecordingStatus)
+                    DiagnosticPermissionChip(title: "输入监控", status: diagnostic.inputMonitoringStatus)
+                    DiagnosticPermissionChip(title: "辅助功能", status: diagnostic.accessibilityStatus)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    DiagnosticPermissionChip(title: "屏幕录制", status: diagnostic.screenRecordingStatus)
+                    DiagnosticPermissionChip(title: "输入监控", status: diagnostic.inputMonitoringStatus)
+                    DiagnosticPermissionChip(title: "辅助功能", status: diagnostic.accessibilityStatus)
+                }
+            }
+
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                RecognitionDiagnosticTile(title: "Bundle ID", value: diagnostic.bundleID ?? "未读取到", symbol: "shippingbox.fill", tint: DashboardPalette.appIndigo)
+                RecognitionDiagnosticTile(title: "窗口标题", value: diagnostic.windowTitleStatus, symbol: "text.viewfinder", tint: diagnostic.windowTitle == nil ? DashboardPalette.distractedRed : DashboardPalette.restGreen)
+                RecognitionDiagnosticTile(title: "规则库", value: "\(diagnostic.catalogEntryCount) 项 / \(diagnostic.defaultRuleCount) 条", symbol: "list.bullet.rectangle", tint: diagnostic.catalogEntryCount >= 20 ? DashboardPalette.restGreen : DashboardPalette.gold)
+                RecognitionDiagnosticTile(title: "用户例外", value: "\(diagnostic.userRuleCount) 条", symbol: "slider.horizontal.3", tint: diagnostic.userRuleCount == 0 ? DashboardPalette.restGreen : DashboardPalette.distractedPeach)
+            }
+
+            if let windowTitle = diagnostic.windowTitle, !windowTitle.isEmpty {
+                Text(windowTitle)
+                    .font(.caption2)
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .lineLimit(2)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
+            if diagnostic.recordingPaused {
+                Label("本地记录已暂停", systemImage: "pause.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DashboardPalette.distractedRed)
+            }
+
+            HStack {
+                Spacer(minLength: 0)
+                Button {
+                    model.resetRecognitionRules()
+                } label: {
+                    Label("清空例外", systemImage: "eraser.fill")
+                }
+                .liquidGlassButtonStyle()
+                .disabled(diagnostic.userRuleCount == 0)
+            }
+        }
+        .padding(10)
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
+        .onAppear {
+            model.refreshRecognitionDiagnostics()
+        }
+    }
+}
+
+private struct RecognitionDiagnosticSummaryRow: View {
+    var diagnostic: RecognitionDiagnosticSnapshot
+
+    private var statusTitle: String {
+        if diagnostic.recordingPaused {
+            return "已暂停"
+        }
+        if diagnostic.catalogEntryCount < 20 {
+            return "规则待检查"
+        }
+        if !allPermissionsAllowed {
+            return "权限待补"
+        }
+        return "运行中"
+    }
+
+    private var statusTint: Color {
+        if diagnostic.recordingPaused {
+            return DashboardPalette.distractedRed
+        }
+        if diagnostic.catalogEntryCount < 20 || !allPermissionsAllowed {
+            return DashboardPalette.gold
+        }
+        return DashboardPalette.restGreen
+    }
+
+    private var statusSymbol: String {
+        if diagnostic.recordingPaused {
+            return "pause.circle.fill"
+        }
+        if diagnostic.catalogEntryCount < 20 || !allPermissionsAllowed {
+            return "exclamationmark.triangle.fill"
+        }
+        return "checkmark.circle.fill"
+    }
+
+    private var allPermissionsAllowed: Bool {
+        diagnostic.screenRecordingStatus == "已允许"
+            && diagnostic.inputMonitoringStatus == "已允许"
+            && diagnostic.accessibilityStatus == "已允许"
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: diagnostic.category.symbolName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(diagnostic.category.tint)
+                .frame(width: 30, height: 30)
+                .background(diagnostic.category.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(diagnostic.appName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DashboardPalette.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+                HStack(spacing: 6) {
+                    Text(diagnostic.category.title)
+                    Text(diagnostic.catalogStatus)
+                }
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(DashboardPalette.secondaryText)
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 5) {
+                Image(systemName: statusSymbol)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(statusTitle)
+                    .lineLimit(1)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(statusTint)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(statusTint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(statusTint.opacity(0.18), lineWidth: 1)
+            }
+        }
+        .padding(9)
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
+    }
+}
+
+private struct RecognitionDiagnosticTile: View {
+    var title: String
+    var value: String
+    var symbol: String
+    var tint: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 24, height: 24)
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                Text(value)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DashboardPalette.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct DiagnosticPermissionChip: View {
+    var title: String
+    var status: String
+
+    private var isAllowed: Bool {
+        status == "已允许"
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(isAllowed ? DashboardPalette.restGreen : DashboardPalette.distractedRed)
+                .frame(width: 6, height: 6)
+            Text(title)
+            Text(status)
+                .foregroundStyle(isAllowed ? DashboardPalette.restGreen : DashboardPalette.distractedRed)
+        }
+        .font(.caption2.weight(.semibold))
+        .lineLimit(1)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(DashboardPalette.controlFill, in: Capsule())
     }
 }
 
@@ -6087,12 +6760,161 @@ private struct SourceActionStageCard: View {
     }
 }
 
+private struct PermissionSettingsPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    private let items: [PermissionSettingsItem] = [
+        PermissionSettingsItem(
+            destination: .inputMonitoring,
+            subtitle: "键盘与鼠标事件计数",
+            tint: .teal,
+            canRequest: true
+        ),
+        PermissionSettingsItem(
+            destination: .screenRecording,
+            subtitle: "前台窗口标题识别",
+            tint: DashboardPalette.focusBlue,
+            canRequest: true
+        ),
+        PermissionSettingsItem(
+            destination: .accessibility,
+            subtitle: "前台窗口与交互状态",
+            tint: DashboardPalette.distractedPeach,
+            canRequest: false
+        ),
+        PermissionSettingsItem(
+            destination: .notifications,
+            subtitle: "系统提醒横幅",
+            tint: DashboardPalette.gold,
+            canRequest: true
+        ),
+        PermissionSettingsItem(
+            destination: .privacySecurity,
+            subtitle: "macOS 隐私面板",
+            tint: DashboardPalette.awayPurple,
+            canRequest: false
+        )
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(items) { item in
+                PermissionSettingsRow(item: item)
+                    .environmentObject(model)
+            }
+        }
+        .onAppear {
+            model.refreshNotificationPermissionStatus()
+        }
+    }
+}
+
+private struct PermissionSettingsItem: Identifiable {
+    var destination: SystemSettingsDestination
+    var subtitle: String
+    var tint: Color
+    var canRequest: Bool
+
+    var id: SystemSettingsDestination { destination }
+}
+
+private struct PermissionSettingsRow: View {
+    @EnvironmentObject private var model: FocusPetModel
+    var item: PermissionSettingsItem
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbolName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(item.tint)
+                .frame(width: 28, height: 28)
+                .background(item.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.destination.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DashboardPalette.primaryText)
+                Text(item.subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if let statusTitle {
+                Text(statusTitle)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(statusIsAllowed ? DashboardPalette.restGreen : DashboardPalette.distractedRed)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(DashboardPalette.rowFill, in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+                    }
+            }
+            if item.canRequest {
+                Button {
+                    model.requestSystemPermission(item.destination)
+                } label: {
+                    Label("请求", systemImage: "checkmark.shield.fill")
+                        .labelStyle(.iconOnly)
+                }
+                .liquidGlassButtonStyle()
+                .help("请求\(item.destination.title)权限")
+            }
+            Button {
+                model.openSystemSettings(item.destination)
+            } label: {
+                Label("打开", systemImage: "arrow.up.forward.app")
+                    .labelStyle(.iconOnly)
+            }
+            .liquidGlassButtonStyle()
+            .help("打开\(item.destination.title)设置")
+        }
+        .padding(10)
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
+        }
+    }
+
+    private var symbolName: String {
+        switch item.destination {
+        case .inputMonitoring:
+            return "keyboard"
+        case .screenRecording:
+            return "rectangle.on.rectangle"
+        case .notifications:
+            return "bell.badge.fill"
+        case .accessibility:
+            return "figure.wave"
+        case .privacySecurity:
+            return "lock.shield.fill"
+        }
+    }
+
+    private var statusTitle: String? {
+        if item.destination == .notifications {
+            return model.notificationPermissionTitle
+        }
+        return item.destination.statusTitle
+    }
+
+    private var statusIsAllowed: Bool {
+        if item.destination == .notifications {
+            return model.notificationPermissionIsAllowed
+        }
+        return statusTitle == "已允许"
+    }
+}
+
 private struct ReminderSettingsPanel: View {
     @EnvironmentObject private var model: FocusPetModel
+    private let settingColumns = [GridItem(.adaptive(minimum: 168), spacing: 8)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: settingColumns, spacing: 8) {
                 TogglePillButton(title: "气泡提醒", symbol: "bubble.left.and.bubble.right.fill", isOn: $model.settings.reminder.enablePetBubbles, tint: .blue)
                     .onChange(of: model.settings.reminder.enablePetBubbles) { _, _ in model.saveSettings() }
                 TogglePillButton(title: "系统通知", symbol: "bell.fill", isOn: $model.settings.reminder.enableSystemNotifications, tint: DashboardPalette.focusBlue)
@@ -6104,7 +6926,7 @@ private struct ReminderSettingsPanel: View {
                 TogglePillButton(title: "欢迎回来", symbol: "hand.wave.fill", isOn: $model.settings.reminder.enableWelcomeBackNudges, tint: .cyan)
                     .onChange(of: model.settings.reminder.enableWelcomeBackNudges) { _, _ in model.saveSettings() }
             }
-            VStack(alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: settingColumns, spacing: 8) {
                 NumberStepperControl(title: "暂停时长", value: $model.settings.reminder.pauseMinutes, range: 5...240, suffix: "分钟", tint: .orange)
                     .onChange(of: model.settings.reminder.pauseMinutes) { _, _ in model.saveSettings() }
                 NumberStepperControl(title: "温和走神", value: $model.settings.reminder.lightDistractedMinutes, range: 1...60, suffix: "分钟", tint: DashboardPalette.distractedPeach)

@@ -42,6 +42,8 @@ Options:
   --bundle-identifier ID          Forward to package-macos-app.sh
   --version VERSION               Forward to package-macos-app.sh
   --build BUILD                   Forward to package-macos-app.sh
+  --universal                     Forward to package-macos-app.sh. Default
+  --native                        Forward to package-macos-app.sh
   --entitlements PATH             Forward to package-macos-app.sh
   --include-local-test-pets       Forward to package-macos-app.sh
   --exclude-local-test-pets       Forward to package-macos-app.sh
@@ -220,7 +222,7 @@ while [[ $# -gt 0 ]]; do
             APP_ARGS+=("$1" "${2:-}")
             shift 2
             ;;
-        --include-local-test-pets|--exclude-local-test-pets)
+        --universal|--native|--include-local-test-pets|--exclude-local-test-pets)
             APP_ARGS+=("$1")
             shift
             ;;
@@ -391,21 +393,45 @@ tell application "Finder"
     delay 1
     set dmgWindow to container window of dmgFolder
     set current view of dmgWindow to icon view
-    set toolbar visible of dmgWindow to false
-    set statusbar visible of dmgWindow to false
-    set bounds of dmgWindow to {160, 120, 160 + $WINDOW_WIDTH, 120 + $WINDOW_HEIGHT}
+    try
+        set toolbar visible of dmgWindow to false
+    end try
+    try
+        set statusbar visible of dmgWindow to false
+    end try
+    try
+        set bounds of dmgWindow to {160, 120, 160 + $WINDOW_WIDTH, 120 + $WINDOW_HEIGHT}
+    end try
     set viewOptions to icon view options of dmgWindow
-    set arrangement of viewOptions to not arranged
-    set icon size of viewOptions to 96
-    set text size of viewOptions to 14
-    set background picture of viewOptions to (POSIX file "$MOUNT_POINT/.background/background.png")
-    set position of item "$APP_BUNDLE_NAME" of dmgFolder to {210, 230}
-    set position of item "Applications" of dmgFolder to {510, 230}
+    try
+        set arrangement of viewOptions to not arranged
+    end try
+    try
+        set icon size of viewOptions to 96
+    end try
+    try
+        set text size of viewOptions to 14
+    end try
+    try
+        set background picture of viewOptions to (POSIX file "$MOUNT_POINT/.background/background.png")
+    end try
+    try
+        set position of item "$APP_BUNDLE_NAME" of dmgFolder to {210, 230}
+    end try
+    try
+        set position of item "Applications" of dmgFolder to {510, 230}
+    end try
     update dmgFolder without registering applications
-    set toolbar visible of dmgWindow to false
-    set statusbar visible of dmgWindow to false
+    try
+        set toolbar visible of dmgWindow to false
+    end try
+    try
+        set statusbar visible of dmgWindow to false
+    end try
     delay 1
-    close dmgWindow
+    try
+        close dmgWindow
+    end try
 end tell
 OSA
 

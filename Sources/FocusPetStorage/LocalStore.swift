@@ -59,6 +59,7 @@ public struct LocalStoreSnapshot: Codable, Hashable, Sendable {
 
 public struct LocalStore: Sendable {
     private let schemaVersion = "focuspet-mvp-1"
+    private let migratableSchemaVersions: Set<String> = []
     public let rootURL: URL
 
     public init(rootURL: URL = FocusPetDataPaths.rootURL()) {
@@ -66,19 +67,7 @@ public struct LocalStore: Sendable {
     }
 
     public func bootstrapCleanSchemaIfNeeded() {
-        migrateLegacyRootIfNeeded()
-        removeLegacyRoots()
-        let metadataURL = rootURL.appendingPathComponent("schema.json")
-        guard let data = try? Data(contentsOf: metadataURL),
-              let metadata = try? JSONDecoder.focusPet.decode(StoreMetadata.self, from: data),
-              metadata.schemaVersion == schemaVersion else {
-            try? FileManager.default.removeItem(at: rootURL)
-            ensureRoot()
-            saveMetadata()
-            return
-        }
-
-        ensureRoot()
+        _ = prepareStoreForAccess(writeIntent: false)
     }
 
     public func loadSnapshot() -> LocalStoreSnapshot {
@@ -98,7 +87,7 @@ public struct LocalStore: Sendable {
     }
 
     public func saveSnapshot(_ snapshot: LocalStoreSnapshot, changedFrom previous: LocalStoreSnapshot? = nil) {
-        bootstrapCleanSchemaIfNeeded()
+        guard prepareStoreForAccess(writeIntent: true) else { return }
         if previous?.settings != snapshot.settings {
             save(snapshot.settings, to: "settings.json")
         }
@@ -126,7 +115,7 @@ public struct LocalStore: Sendable {
     }
 
     public func exportSnapshot(_ snapshot: LocalStoreSnapshot, redacted: Bool = false) -> URL? {
-        bootstrapCleanSchemaIfNeeded()
+        guard prepareStoreForAccess(writeIntent: true) else { return nil }
         let prefix = redacted ? "focus-pet-redacted-export" : "focus-pet-export"
         let url = rootURL.appendingPathComponent("\(prefix)-\(Int(Date().timeIntervalSince1970)).json")
         let exportSnapshot = redacted ? snapshot.redactedForExport() : snapshot
@@ -152,6 +141,43 @@ public struct LocalStore: Sendable {
         }.reduce(0, +)
     }
 
+    @discardableResult
+    private func prepareStoreForAccess(writeIntent: Bool) -> Bool {
+        migrateLegacyRootIfNeeded()
+        ensureRoot()
+        let metadataURL = rootURL.appendingPathComponent("schema.json")
+
+        switch metadataState(at: metadataURL) {
+        case .current:
+            removeLegacyRoots()
+            return true
+        case .missing:
+            if rootContainsData() {
+                backupRootIfNeeded(reason: "missing-schema")
+            }
+            saveMetadata()
+            removeLegacyRoots()
+            return true
+        case .invalid:
+            if rootContainsData() {
+                backupRootIfNeeded(reason: "invalid-schema")
+            }
+            return !writeIntent
+        case .unsupported(let existingSchemaVersion):
+            if migratableSchemaVersions.contains(existingSchemaVersion) {
+                backupRootIfNeeded(reason: "migrate-\(existingSchemaVersion)")
+                saveMetadata()
+                removeLegacyRoots()
+                return true
+            }
+
+            if rootContainsData() {
+                backupRootIfNeeded(reason: "unsupported-schema-\(existingSchemaVersion)")
+            }
+            return !writeIntent
+        }
+    }
+
     private func load<T: Decodable>(_ fileName: String, defaultValue: T) -> T {
         let url = rootURL.appendingPathComponent(fileName)
         guard let data = try? Data(contentsOf: url),
@@ -174,6 +200,80 @@ public struct LocalStore: Sendable {
 
     private func saveMetadata() {
         save(StoreMetadata(schemaVersion: schemaVersion), to: "schema.json")
+    }
+
+    private func metadataState(at metadataURL: URL) -> MetadataState {
+        guard FileManager.default.fileExists(atPath: metadataURL.path) else {
+            return .missing
+        }
+
+        guard let data = try? Data(contentsOf: metadataURL),
+              let metadata = try? JSONDecoder.focusPet.decode(StoreMetadata.self, from: data) else {
+            return .invalid
+        }
+
+        if metadata.schemaVersion == schemaVersion {
+            return .current
+        }
+
+        return .unsupported(metadata.schemaVersion)
+    }
+
+    private func rootContainsData() -> Bool {
+        guard FileManager.default.fileExists(atPath: rootURL.path),
+              let contents = try? FileManager.default.contentsOfDirectory(
+                at: rootURL,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+              ) else {
+            return false
+        }
+
+        return !contents.isEmpty
+    }
+
+    private func backupRootIfNeeded(reason: String) {
+        guard rootContainsData() else { return }
+
+        let fileManager = FileManager.default
+        let parentURL = rootURL.deletingLastPathComponent()
+        let safeReason = sanitizedBackupReason(reason)
+        let backupPrefix = "\(rootURL.lastPathComponent) Backup "
+
+        if let existingBackups = try? fileManager.contentsOfDirectory(atPath: parentURL.path),
+           existingBackups.contains(where: { name in
+               name.hasPrefix(backupPrefix) && name.hasSuffix(" \(safeReason)")
+           }) {
+            return
+        }
+
+        let timestamp = ISO8601DateFormatter()
+            .string(from: Date())
+            .replacingOccurrences(of: ":", with: "")
+        let baseName = "\(backupPrefix)\(timestamp) \(safeReason)"
+        var backupURL = parentURL.appendingPathComponent(baseName, isDirectory: true)
+        var suffix = 2
+
+        while fileManager.fileExists(atPath: backupURL.path) {
+            backupURL = parentURL.appendingPathComponent("\(baseName)-\(suffix)", isDirectory: true)
+            suffix += 1
+        }
+
+        try? fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+        try? fileManager.copyItem(at: rootURL, to: backupURL)
+    }
+
+    private func sanitizedBackupReason(_ reason: String) -> String {
+        let cleaned = reason.map { character in
+            if character.isLetter || character.isNumber || character == "-" || character == "_" {
+                return character
+            }
+            return "-"
+        }
+        let compacted = String(cleaned)
+            .replacingOccurrences(of: "-+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return compacted.isEmpty ? "schema" : compacted
     }
 
     private func migrateLegacyRootIfNeeded() {
@@ -237,6 +337,13 @@ public extension LocalStoreSnapshot {
 
 private struct StoreMetadata: Codable {
     var schemaVersion: String
+}
+
+private enum MetadataState {
+    case current
+    case missing
+    case invalid
+    case unsupported(String)
 }
 
 private extension JSONEncoder {

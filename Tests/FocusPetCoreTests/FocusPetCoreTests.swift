@@ -333,6 +333,61 @@ struct FocusPetMVPProbe {
         return event?.reason == .longFocusRest && event?.petIntent == .focusRestHint
     }
 
+    func welcomeBackRequiresLongAwayTransition() -> Bool {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let focusState = FocusStateSnapshot(
+            timestamp: now,
+            state: .focus,
+            category: .work,
+            stableDuration: 5,
+            appName: "Cursor",
+            bundleID: "cursor"
+        )
+        let distractedState = FocusStateSnapshot(
+            timestamp: now,
+            state: .distracted,
+            category: .entertainment,
+            stableDuration: 5,
+            appName: "Browser",
+            bundleID: "browser"
+        )
+        let policy = NudgePolicy()
+
+        let shortAway = policy.nudge(
+            for: focusState,
+            previousState: .away,
+            previousStateDuration: 60,
+            now: now,
+            lastTriggeredAt: [:]
+        )
+        let longAway = policy.nudge(
+            for: focusState,
+            previousState: .away,
+            previousStateDuration: 15 * 60,
+            now: now,
+            lastTriggeredAt: [:]
+        )
+        let noTransition = policy.nudge(
+            for: focusState,
+            previousState: nil,
+            previousStateDuration: 20 * 60,
+            now: now,
+            lastTriggeredAt: [:]
+        )
+        let distractedReturn = policy.nudge(
+            for: distractedState,
+            previousState: .away,
+            previousStateDuration: 20 * 60,
+            now: now,
+            lastTriggeredAt: [:]
+        )
+
+        return shortAway == nil
+            && longAway?.reason == .welcomeBack
+            && noTransition == nil
+            && distractedReturn == nil
+    }
+
     func legacyReminderSettingsDefaultToCustomizableNudgeParameters() -> Bool {
         let legacyJSON = """
         {
@@ -448,17 +503,20 @@ struct FocusPetMVPProbe {
             && summary.categorySeconds(.ignore) == 900
     }
 
-    func ignoredAppsAreExcludedFromAppUsageRanking() -> Bool {
+    func appUsageRankingHidesSystemPseudoAppsButKeepsUnclassifiedApps() -> Bool {
         let start = Date(timeIntervalSince1970: 0)
         let appUsage = [
             AppUsageSegment(start: start, end: start.addingTimeInterval(3_600), appName: "Locked Screen", bundleID: nil, category: .ignore),
+            AppUsageSegment(start: start.addingTimeInterval(3_600), end: start.addingTimeInterval(4_200), appName: "Google Chrome", bundleID: "com.google.Chrome", category: .ignore),
             AppUsageSegment(start: start, end: start.addingTimeInterval(900), appName: "Cursor", bundleID: "cursor", category: .work)
         ]
 
         let summary = DailySummaryBuilder().summary(for: start, segments: [], appUsage: appUsage, focusSessions: [], breakSessions: [], nudges: [])
-        return summary.appUsage.count == 1
+        return summary.appUsage.count == 2
             && summary.appUsage.first?.appName == "Cursor"
-            && summary.categorySeconds(.ignore) == 3_600
+            && summary.appUsage.contains { $0.appName == "Google Chrome" && $0.category == .ignore && $0.seconds == 600 }
+            && !summary.appUsage.contains { $0.appName == "Locked Screen" }
+            && summary.categorySeconds(.ignore) == 4_200
             && summary.categorySeconds(.work) == 900
     }
 
@@ -573,11 +631,11 @@ struct FocusPetMVPProbe {
 
     func catalogIsLoadedAndBroadEnough() -> Bool {
         let categoryCounts = Dictionary(grouping: ActivityClassifier.defaultRules, by: { $0.category }).mapValues(\.count)
-        return ActivityClassifier.catalogEntries.count >= 35
-            && ActivityClassifier.defaultRules.count >= 1_200
-            && (categoryCounts[.work] ?? 0) >= 650
-            && (categoryCounts[.entertainment] ?? 0) >= 400
-            && (categoryCounts[.ignore] ?? 0) >= 150
+        return ActivityClassifier.catalogEntries.count >= 45
+            && ActivityClassifier.defaultRules.count >= 1_700
+            && (categoryCounts[.work] ?? 0) >= 900
+            && (categoryCounts[.entertainment] ?? 0) >= 600
+            && (categoryCounts[.ignore] ?? 0) >= 200
             && ActivityClassifier.defaultRules.allSatisfy { $0.category != .neutral }
     }
 
@@ -615,6 +673,56 @@ struct FocusPetMVPProbe {
             ) == .entertainment
             && classifier.classify(
                 appName: "CleanShot X",
+                bundleID: nil,
+                windowTitle: nil
+            ) == .ignore
+            && classifier.classify(
+                appName: "DBeaver",
+                bundleID: nil,
+                windowTitle: nil
+            ) == .work
+            && classifier.classify(
+                appName: "Codex",
+                bundleID: "com.openai.codex",
+                windowTitle: nil
+            ) == .work
+            && classifier.classify(
+                appName: "ChatGPT Atlas",
+                bundleID: "com.openai.atlas",
+                windowTitle: "GPT-5 - ChatGPT"
+            ) == .work
+            && classifier.classify(
+                appName: "Google Chrome",
+                bundleID: "com.google.Chrome",
+                windowTitle: "Codex - OpenAI"
+            ) == .work
+            && classifier.classify(
+                appName: "Google Chrome",
+                bundleID: "com.google.Chrome",
+                windowTitle: "Amazon Seller Central - Orders"
+            ) == .work
+            && classifier.classify(
+                appName: "Google Chrome",
+                bundleID: "com.google.Chrome",
+                windowTitle: "Okta Admin Dashboard"
+            ) == .work
+            && classifier.classify(
+                appName: "Google Chrome",
+                bundleID: "com.google.Chrome",
+                windowTitle: "DraftKings Sportsbook Odds"
+            ) == .entertainment
+            && classifier.classify(
+                appName: "Google Chrome",
+                bundleID: "com.google.Chrome",
+                windowTitle: "Tinder - Matches"
+            ) == .entertainment
+            && classifier.classify(
+                appName: "Google Chrome",
+                bundleID: "com.google.Chrome",
+                windowTitle: "MangaDex - Updates"
+            ) == .entertainment
+            && classifier.classify(
+                appName: "Stats",
                 bundleID: nil,
                 windowTitle: nil
             ) == .ignore
@@ -781,6 +889,81 @@ struct FocusPetMVPProbe {
 
         return loaded.inputActivity == snapshot.inputActivity
             && decodedLegacy.inputActivity.isEmpty
+    }
+
+    func localStoreProtectsUnknownSchemaFromDestructiveWrites() -> Bool {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-future-schema-store-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        defer {
+            let parentURL = root.deletingLastPathComponent()
+            if let contents = try? fileManager.contentsOfDirectory(at: parentURL, includingPropertiesForKeys: nil) {
+                for url in contents where url.lastPathComponent.hasPrefix("\(root.lastPathComponent) Backup ") {
+                    try? fileManager.removeItem(at: url)
+                }
+            }
+        }
+
+        let settings = AppSettings(hasCompletedOnboarding: true, focusTargetMinutes: 42, breakMinutes: 9, autoStartBreak: false)
+        let schemaURL = root.appendingPathComponent("schema.json")
+        guard (try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)) != nil,
+              let settingsData = try? JSONEncoder().encode(settings),
+              (try? settingsData.write(to: root.appendingPathComponent("settings.json"), options: [.atomic])) != nil,
+              (try? Data(#"{"schemaVersion":"future-schema"}"#.utf8).write(to: schemaURL, options: [.atomic])) != nil else {
+            return false
+        }
+
+        let store = LocalStore(rootURL: root)
+        let loaded = store.loadSnapshot()
+        store.saveSnapshot(LocalStoreSnapshot(settings: AppSettings(hasCompletedOnboarding: false, focusTargetMinutes: 12)))
+        let reloaded = store.loadSnapshot()
+        let metadata = (try? String(contentsOf: schemaURL, encoding: .utf8)) ?? ""
+        let backupExists = (try? fileManager.contentsOfDirectory(atPath: root.deletingLastPathComponent().path))?
+            .contains(where: { name in
+                name.hasPrefix("\(root.lastPathComponent) Backup ")
+                    && name.hasSuffix(" unsupported-schema-future-schema")
+            }) ?? false
+
+        return loaded.settings == settings
+            && reloaded.settings == settings
+            && metadata.contains("future-schema")
+            && backupExists
+    }
+
+    func localStoreAdoptsMissingSchemaWithoutDeletingData() -> Bool {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-missing-schema-store-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        defer {
+            let parentURL = root.deletingLastPathComponent()
+            if let contents = try? fileManager.contentsOfDirectory(at: parentURL, includingPropertiesForKeys: nil) {
+                for url in contents where url.lastPathComponent.hasPrefix("\(root.lastPathComponent) Backup ") {
+                    try? fileManager.removeItem(at: url)
+                }
+            }
+        }
+
+        let settings = AppSettings(hasCompletedOnboarding: true, focusTargetMinutes: 33, breakMinutes: 7, autoStartBreak: false)
+        let schemaURL = root.appendingPathComponent("schema.json")
+        guard (try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)) != nil,
+              let settingsData = try? JSONEncoder().encode(settings),
+              (try? settingsData.write(to: root.appendingPathComponent("settings.json"), options: [.atomic])) != nil else {
+            return false
+        }
+
+        let loaded = LocalStore(rootURL: root).loadSnapshot()
+        let metadata = (try? String(contentsOf: schemaURL, encoding: .utf8)) ?? ""
+        let backupExists = (try? fileManager.contentsOfDirectory(atPath: root.deletingLastPathComponent().path))?
+            .contains(where: { name in
+                name.hasPrefix("\(root.lastPathComponent) Backup ")
+                    && name.hasSuffix(" missing-schema")
+            }) ?? false
+
+        return loaded.settings == settings
+            && metadata.contains("focuspet-mvp-1")
+            && backupExists
     }
 
     func retentionPrunesInputActivityBuckets() -> Bool {
@@ -1016,12 +1199,13 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.incrementalAwayRecordingMergesWithoutDuplication(), "incremental away recording should not duplicate screen lock time")
     precondition(probe.frequentSwitchingDoesNotBecomeDistracted(), "app switching alone should not be distracted")
     precondition(probe.focusTwentyFiveMinutesTriggersRestNudge(), "25 minutes focus should trigger rest nudge")
+    precondition(probe.welcomeBackRequiresLongAwayTransition(), "welcome back should require a real long-away transition")
     precondition(probe.legacyReminderSettingsDefaultToCustomizableNudgeParameters(), "legacy reminder settings should decode new nudge defaults")
     precondition(probe.reminderSettingsCustomizeNudgePolicyAndClampValues(), "reminder settings should customize nudge thresholds and clamp values")
     precondition(probe.windowTitlePrivacyDoesNotStoreRawTitleByDefault(), "default privacy should not store raw titles")
     precondition(probe.onlyCategoryPrivacyStoresNoTitleMetadata(), "category-only privacy should remove title metadata")
     precondition(probe.timelineTracksFourStateTotals(), "daily summary should aggregate all four states")
-    precondition(probe.ignoredAppsAreExcludedFromAppUsageRanking(), "ignored apps should be excluded from app usage ranking")
+    precondition(probe.appUsageRankingHidesSystemPseudoAppsButKeepsUnclassifiedApps(), "app usage should hide pseudo system activity but keep unclassified real apps")
     precondition(probe.legacyPetSettingsDefaultToInteractivePlacement(), "legacy pet settings should decode with interaction defaults")
     precondition(probe.legacyAppSettingsDefaultJudgmentParameters(), "legacy app settings should decode judgment defaults")
     precondition(probe.focusSessionReportsCompletionAndDecodesLegacyJSON(), "focus sessions should expose completion and decode legacy JSON")
@@ -1035,6 +1219,8 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.redactedExportRemovesTitleMetadata(), "redacted export should remove title metadata")
     precondition(probe.inputActivityRecorderMergesBucketsAndClampsCounts(), "input activity should merge buckets and clamp counts")
     precondition(probe.localStorePersistsInputActivityAndDecodesLegacySnapshots(), "input activity should persist and legacy snapshots should decode")
+    precondition(probe.localStoreProtectsUnknownSchemaFromDestructiveWrites(), "unknown local store schemas should stay readable and protected from writes")
+    precondition(probe.localStoreAdoptsMissingSchemaWithoutDeletingData(), "missing local store schema should be adopted without deleting data")
     precondition(probe.retentionPrunesInputActivityBuckets(), "retention should prune input activity buckets")
     precondition(probe.inputTimelineSnapshotAggregatesInputAndSmoothsApps(), "input timeline snapshot should aggregate input and smooth short app switches")
     precondition(probe.inputTimelineSnapshotSmoothsTinyStateFragments(), "input timeline snapshot should smooth tiny state fragments for display")

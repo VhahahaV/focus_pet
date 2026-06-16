@@ -30,6 +30,7 @@ enum FocusPetCoreChecks {
         checkInputTimelineStateSmoothing()
         checkInputWorkloadSummary()
         checkInputActivityStorage()
+        checkLocalStoreSchemaCompatibility()
         checkFocusSessionReporting()
         checkGroupedRules()
         checkNeutralIsLegacyOnly()
@@ -365,6 +366,52 @@ enum FocusPetCoreChecks {
         )
         let event = NudgePolicy().nudge(for: state, previousState: .focus, now: state.timestamp, lastTriggeredAt: [:])
         expect(event?.reason == .longFocusRest && event?.petIntent == .focusRestHint, "25 minute focus should trigger rest nudge intent")
+
+        let recentFocusState = FocusStateSnapshot(
+            timestamp: Date(timeIntervalSince1970: 1_505),
+            state: .focus,
+            category: .work,
+            stableDuration: 5,
+            appName: "Cursor",
+            bundleID: "cursor"
+        )
+
+        let shortWelcomeBack = NudgePolicy().nudge(
+            for: recentFocusState,
+            previousState: .away,
+            previousStateDuration: 60,
+            now: recentFocusState.timestamp,
+            lastTriggeredAt: [:]
+        )
+        let longWelcomeBack = NudgePolicy().nudge(
+            for: recentFocusState,
+            previousState: .away,
+            previousStateDuration: 15 * 60,
+            now: recentFocusState.timestamp,
+            lastTriggeredAt: [:]
+        )
+        let repeatedWelcomeBack = NudgePolicy().nudge(
+            for: recentFocusState,
+            previousState: nil,
+            previousStateDuration: 20 * 60,
+            now: recentFocusState.timestamp,
+            lastTriggeredAt: [:]
+        )
+        expect(shortWelcomeBack == nil, "short away transitions should not trigger welcome-back nudges")
+        expect(longWelcomeBack?.reason == .welcomeBack, "long away transitions should trigger welcome-back nudges")
+        expect(repeatedWelcomeBack == nil, "welcome-back nudges should require an actual state transition")
+
+        let idleDistractedState = FocusStateSnapshot(
+            timestamp: Date(timeIntervalSince1970: 480),
+            state: .distracted,
+            category: .work,
+            stableDuration: 480,
+            appName: "Cursor",
+            bundleID: "cursor",
+            reason: [.inputIdleDistracted]
+        )
+        let idleEvent = NudgePolicy().nudge(for: idleDistractedState, previousState: .focus, now: idleDistractedState.timestamp, lastTriggeredAt: [:])
+        expect(idleEvent?.reason == .distractedOverThreshold && idleEvent?.petIntent == .nudgeGentle, "input-idle distracted state should be eligible for distracted nudges")
     }
 
     private static func checkReminderSettingsNudgeConfiguration() {
@@ -431,8 +478,10 @@ enum FocusPetCoreChecks {
         expect(clamped.longFocusMinutes == 5 && clamped.veryLongFocusMinutes == 5, "focus rest thresholds should clamp and remain ordered")
         expect(clamped.cooldownMinutes == 1, "reminder cooldown should clamp to minimum")
         expect(!clamped.allows(.distractedStrong), "distracted reminder toggle should gate distracted nudges")
+        expect(!clamped.allows(.focusSessionCompleted), "focus rest reminder toggle should gate task completion nudges")
         expect(!clamped.allows(.longFocusRest), "focus rest reminder toggle should gate rest nudges")
         expect(!clamped.allows(.welcomeBack), "welcome back reminder toggle should gate welcome nudges")
+        expect(NudgeReason.focusSessionCompleted.defaultPetIntent == .focusRestHint, "task completion should use the focus-rest pet intent")
     }
 
     private static func checkOldNudgeDoesNotOverridePetState() {
@@ -482,7 +531,15 @@ enum FocusPetCoreChecks {
         let summary = DailySummaryBuilder().summary(for: start, segments: segments, appUsage: [], focusSessions: [], breakSessions: [], nudges: [])
         expect(summary.focusSeconds == 60 && summary.breakSeconds == 60, "summary should aggregate focus and break")
         expect(summary.categorySeconds(.work) == 60 && summary.categorySeconds(.ignore) == 60, "summary should aggregate category usage")
-        expect(summary.appUsage.map(\.appName) == ["Cursor"], "ignored apps should be excluded from app usage ranking")
+
+        let appUsage = [
+            AppUsageSegment(start: start, end: start.addingTimeInterval(3_600), appName: "Locked Screen", bundleID: nil, category: .ignore),
+            AppUsageSegment(start: start.addingTimeInterval(3_600), end: start.addingTimeInterval(4_200), appName: "Google Chrome", bundleID: "com.google.Chrome", category: .ignore),
+            AppUsageSegment(start: start, end: start.addingTimeInterval(900), appName: "Cursor", bundleID: "cursor", category: .work)
+        ]
+        let appSummary = DailySummaryBuilder().summary(for: start, segments: [], appUsage: appUsage, focusSessions: [], breakSessions: [], nudges: [])
+        expect(appSummary.appUsage.map(\.appName) == ["Cursor", "Google Chrome"], "app usage should hide pseudo system activity but keep unclassified real apps")
+        expect(appSummary.categorySeconds(.ignore) == 4_200, "ignored category totals should still include hidden system time")
     }
 
     private static func checkFocusSessionReporting() {
@@ -568,6 +625,18 @@ enum FocusPetCoreChecks {
         expect(
             classifier.classify(appName: "CleanShot X", bundleID: nil, windowTitle: nil) == .ignore,
             "utility apps should be ignored"
+        )
+        expect(
+            classifier.classify(appName: "Codex", bundleID: "com.openai.codex", windowTitle: nil) == .work,
+            "Codex desktop app should be classified as work"
+        )
+        expect(
+            classifier.classify(appName: "ChatGPT Atlas", bundleID: "com.openai.atlas", windowTitle: "GPT-5 - ChatGPT") == .work,
+            "ChatGPT Atlas should be classified as work"
+        )
+        expect(
+            classifier.classify(appName: "Google Chrome", bundleID: "com.google.Chrome", windowTitle: "Codex - OpenAI") == .work,
+            "Codex web titles should be classified as work"
         )
     }
 
@@ -926,6 +995,84 @@ enum FocusPetCoreChecks {
             return
         }
         expect(decoded.inputActivity.isEmpty, "legacy snapshots should default input activity to empty")
+    }
+
+    private static func checkLocalStoreSchemaCompatibility() {
+        let fileManager = FileManager.default
+        let parentURL = fileManager.temporaryDirectory
+        let unknownSchemaRoot = parentURL
+            .appendingPathComponent("focus-pet-future-schema-check-\(UUID().uuidString)", isDirectory: true)
+        let missingSchemaRoot = parentURL
+            .appendingPathComponent("focus-pet-missing-schema-check-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: unknownSchemaRoot) }
+        defer { try? fileManager.removeItem(at: missingSchemaRoot) }
+        defer {
+            if let contents = try? fileManager.contentsOfDirectory(at: parentURL, includingPropertiesForKeys: nil) {
+                for url in contents
+                    where url.lastPathComponent.hasPrefix("\(unknownSchemaRoot.lastPathComponent) Backup ")
+                        || url.lastPathComponent.hasPrefix("\(missingSchemaRoot.lastPathComponent) Backup ") {
+                    try? fileManager.removeItem(at: url)
+                }
+            }
+        }
+
+        let preservedSettings = AppSettings(hasCompletedOnboarding: true, focusTargetMinutes: 42, breakMinutes: 9, autoStartBreak: false)
+        guard (try? fileManager.createDirectory(at: unknownSchemaRoot, withIntermediateDirectories: true)) != nil,
+              let preservedSettingsData = try? JSONEncoder().encode(preservedSettings),
+              (try? preservedSettingsData.write(
+                to: unknownSchemaRoot.appendingPathComponent("settings.json"),
+                options: [.atomic]
+              )) != nil,
+              (try? Data(#"{"schemaVersion":"future-schema"}"#.utf8).write(
+                to: unknownSchemaRoot.appendingPathComponent("schema.json"),
+                options: [.atomic]
+              )) != nil else {
+            expect(false, "unknown schema fixture should be writable")
+            return
+        }
+
+        let unknownSchemaStore = LocalStore(rootURL: unknownSchemaRoot)
+        let loadedUnknownSchema = unknownSchemaStore.loadSnapshot()
+        unknownSchemaStore.saveSnapshot(LocalStoreSnapshot(settings: AppSettings(hasCompletedOnboarding: false, focusTargetMinutes: 12)))
+        let reloadedUnknownSchema = unknownSchemaStore.loadSnapshot()
+        let unknownMetadata = (try? String(
+            contentsOf: unknownSchemaRoot.appendingPathComponent("schema.json"),
+            encoding: .utf8
+        )) ?? ""
+        let unknownBackupExists = (try? fileManager.contentsOfDirectory(atPath: parentURL.path))?
+            .contains(where: { name in
+                name.hasPrefix("\(unknownSchemaRoot.lastPathComponent) Backup ")
+                    && name.hasSuffix(" unsupported-schema-future-schema")
+            }) ?? false
+        expect(loadedUnknownSchema.settings == preservedSettings, "unknown schema should still be readable")
+        expect(reloadedUnknownSchema.settings == preservedSettings, "unknown schema should block destructive writes")
+        expect(unknownMetadata.contains("future-schema"), "unknown schema metadata should be preserved")
+        expect(unknownBackupExists, "unknown schema should be backed up before compatibility reads")
+
+        let adoptedSettings = AppSettings(hasCompletedOnboarding: true, focusTargetMinutes: 33, breakMinutes: 7, autoStartBreak: false)
+        guard (try? fileManager.createDirectory(at: missingSchemaRoot, withIntermediateDirectories: true)) != nil,
+              let adoptedSettingsData = try? JSONEncoder().encode(adoptedSettings),
+              (try? adoptedSettingsData.write(
+                to: missingSchemaRoot.appendingPathComponent("settings.json"),
+                options: [.atomic]
+              )) != nil else {
+            expect(false, "missing schema fixture should be writable")
+            return
+        }
+
+        let loadedMissingSchema = LocalStore(rootURL: missingSchemaRoot).loadSnapshot()
+        let missingMetadata = (try? String(
+            contentsOf: missingSchemaRoot.appendingPathComponent("schema.json"),
+            encoding: .utf8
+        )) ?? ""
+        let missingBackupExists = (try? fileManager.contentsOfDirectory(atPath: parentURL.path))?
+            .contains(where: { name in
+                name.hasPrefix("\(missingSchemaRoot.lastPathComponent) Backup ")
+                    && name.hasSuffix(" missing-schema")
+            }) ?? false
+        expect(loadedMissingSchema.settings == adoptedSettings, "missing schema should keep existing data")
+        expect(missingMetadata.contains("focuspet-mvp-1"), "missing schema should adopt current metadata")
+        expect(missingBackupExists, "missing schema data should be backed up before adoption")
     }
 
     private static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
