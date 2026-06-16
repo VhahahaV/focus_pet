@@ -328,6 +328,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [[ -d "/Volumes/$VOLUME_NAME" ]]; then
+    hdiutil detach "/Volumes/$VOLUME_NAME" >/dev/null 2>&1 \
+        || hdiutil detach -force "/Volumes/$VOLUME_NAME" >/dev/null 2>&1 \
+        || true
+fi
+
 rm -rf "$STAGING_DIR" "$MOUNT_POINT" "$VERIFY_MOUNT_POINT" "$APP_ZIP" "$RW_DMG" "$FINAL_DMG" "$LATEST_DMG"
 mkdir -p "$STAGING_DIR/.background" "$MOUNT_POINT" "$VERIFY_MOUNT_POINT"
 
@@ -437,10 +443,12 @@ hdiutil attach "$RW_DMG" -readwrite -noverify -noautoopen -mountpoint "$MOUNT_PO
 
 osascript <<OSA
 tell application "Finder"
+    activate
     set dmgFolder to (POSIX file "$MOUNT_POINT") as alias
-    open dmgFolder
-    delay 1
-    set dmgWindow to container window of dmgFolder
+    set dmgPath to POSIX path of dmgFolder
+    set dmgWindow to make new Finder window to dmgFolder
+    delay 0.5
+    if POSIX path of ((target of dmgWindow) as alias) is not dmgPath then error "DMG Finder window opened the wrong target"
     set dmgWindowID to id of dmgWindow
     set current view of dmgWindow to icon view
     try
