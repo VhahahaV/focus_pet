@@ -5,155 +5,150 @@
 </p>
 
 <p align="center">
-  <strong>一只住在 macOS 桌面的专注伙伴。</strong><br />
-  本地识别工作节奏，用桌宠、菜单栏、提醒和小组件把「专注 / 走神 / 休息 / 暂离」变成可感知的状态。
+  <strong>让你的专注节奏长出一只会回应你的桌宠。</strong><br />
+  Focus Pet 是一个本地优先的 macOS 专注伙伴：它把应用切换、输入节奏、休息和暂离整理成实时状态，再用桌宠、菜单栏和小组件温柔地提醒你。
 </p>
 
 <p align="center">
   <img alt="Swift 6.2" src="https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white" />
   <img alt="macOS 14+" src="https://img.shields.io/badge/macOS-14%2B-111111?logo=apple&logoColor=white" />
-  <img alt="SwiftPM" src="https://img.shields.io/badge/build-SwiftPM-blue" />
+  <img alt="Native macOS" src="https://img.shields.io/badge/native-macOS-111111?logo=apple&logoColor=white" />
   <img alt="Local first" src="https://img.shields.io/badge/privacy-local--first-2f855a" />
 </p>
 
 <p align="center">
-  <a href="#功能亮点">功能亮点</a> ·
-  <a href="#快速开始">快速开始</a> ·
-  <a href="#桌宠资源">桌宠资源</a> ·
-  <a href="#开发状态">开发状态</a>
+  <a href="#为什么会让人动心">为什么会让人动心</a> ·
+  <a href="#核心逻辑">核心逻辑</a> ·
+  <a href="#界面预览">界面预览</a> ·
+  <a href="#桌宠资源">桌宠资源</a>
 </p>
 
-![Focus Pet dashboard and desktop pet](docs/readme-assets/focus-pet-dashboard.png)
+![Focus Pet today dashboard](docs/readme-assets/focus-pet-today.png)
 
-## 这是什么
+## 为什么会让人动心
 
-Focus Pet 是一个本地优先的 macOS productivity desktop pet。它不会把窗口标题、应用使用或输入活动上传到云端，而是在本机把这些信号整理成实时状态，再用一个轻量桌宠提醒你：继续保持、该休息了，或者该把注意力拉回来。
+很多专注工具要求你不断填写任务、开始计时、复盘失败原因。Focus Pet 的出发点不同：它先观察你真实的工作节奏，再把这些原本看不见的状态变成一个可爱的、会回应你的桌面伙伴。
 
-它不是一个单纯的 GIF 播放器。桌宠动作由 `PetIntent` 驱动：工作、走神、休息、回归、拖拽、召回、跨屏移动都可以映射到不同资源包自己的动作。
+它不是又一个番茄钟，也不是一个冷冰冰的监控面板。
 
-## 功能亮点
+- 当你稳定工作时，它安静陪伴。
+- 当你开始频繁切换或掉进娱乐内容时，它用气泡和动作轻轻拉你回来。
+- 当你连续专注太久时，它建议休息，而不是继续压榨注意力。
+- 当你离开又回来时，它把节奏接上，像桌面上有人记得你刚才在做什么。
 
-- 本地状态判断：结合前台 App、bundle id、窗口标题分类、空闲时间、应用切换频率和手动专注/休息会话。
-- 四状态模型：`专注`、`走神`、`休息`、`暂离`，适合做日内复盘和轻量提醒。
-- 桌宠提醒：通过气泡、动作和可配置提醒阈值表达状态，不把高级规则暴露给普通用户。
-- macOS 原生体验：菜单栏入口、悬浮 `NSPanel` 桌宠、SwiftUI dashboard、系统通知和桌面小组件。
-- 本地数据：JSON 存储、可导出、可清空，支持保留周期和脱敏导出。
-- 资源包系统：`pet.json` 描述动作、帧、音效、预览图和语义映射，支持导入第三方桌宠资源。
+Focus Pet 最有意思的地方，是把「状态识别」和「桌宠表达」分开：内部先判断你处在 `专注 / 走神 / 休息 / 暂离` 哪一种状态，再把状态转成 `PetIntent`，最后由每个桌宠资源包自己决定要播放哪个动作。于是不同宠物可以有完全不同的性格，但仍然理解同一套专注语义。
 
-## 界面预览
-
-| Dashboard 与桌宠设置 | 桌面小组件 |
-| --- | --- |
-| ![Focus Pet dashboard](docs/readme-assets/focus-pet-dashboard.png) | ![Focus Pet widgets](docs/readme-assets/focus-pet-widgets.png) |
-
-## 快速开始
-
-### 运行开发版
-
-```bash
-swift build
-swift run FocusPet
-```
-
-### 验证核心逻辑
-
-```bash
-swift test
-swift run FocusPetCoreChecks
-```
-
-### 打包本地 App
-
-```bash
-./scripts/package-macos-app.sh
-```
-
-打包后的 app 会写入 `.build/FocusPet.app`。
-
-本地 smoke DMG 可使用：
-
-```bash
-./scripts/package-dmg.sh --local
-```
-
-更完整的本地验证可使用 `scripts/build-verified-local-dmg.sh`。它会检查脚本语法、release build、DMG 布局、本地资源包和安装后启动路径。
-
-## 下载与发布
-
-Focus Pet 的发布包分两类：
-
-- 本地 smoke 包：由 `--local` 生成，适合开发机验证安装、资源包和启动链路；通常是 ad-hoc 签名，不代表下载到其他 Mac 后一定能通过 Gatekeeper。
-- 分发包：用于 GitHub Release 或公开下载，需要 Developer ID 签名、notarization 和 stapling，详见 [release packaging notes](docs/release-packaging.md)。
-
-如果要上传稳定版 DMG，请优先使用分发包。没有 Developer ID 或 notary 凭据时，可以发布源码和说明，但不应把本地 smoke 包误标为已公证的正式安装包。
-
-## 桌宠资源
-
-Focus Pet 的资源包会把每个桌宠自己的动作命名保留下来，再映射到运行时的语义意图。当前本地测试资源包括：
-
-| 资源包 | 预览 | 来源与状态 |
-| --- | --- | --- |
-| 罗小黑 | <img src="docs/readme-assets/pet-luo-xiaohei.png" alt="Luo Xiaohei preview" width="96" /> | 来自 [jiang-taibai/IXiaoHei](https://github.com/jiang-taibai/IXiaoHei) 的本地转换资源。该上游未见明确 license，当前仅用于本地测试，不应随 release 再分发。 |
-| 小呆 | <img src="docs/readme-assets/pet-xiaodai.png" alt="XiaoDai preview" width="96" /> | 来源于 [ChaozhongLiu/DyberPet](https://github.com/ChaozhongLiu/DyberPet) 生态资源，原作者标注为 `栎曦_Nuo`；当前按本地资源包导入与验证。 |
-| 像素猫 meme | <img src="docs/readme-assets/pet-pixel-cat.png" alt="Pixel Cat Meme preview" width="96" /> | 来源于 [ChaozhongLiu/DyberPet](https://github.com/ChaozhongLiu/DyberPet) 生态资源，原作者标注为 `代号皮克嗖儿`；当前按本地资源包导入与验证。 |
-
-第三方素材默认放在 `external_generated_packs/`，distribution 打包流程默认不会把这些本地测试资源带入正式 release。导入、转换与映射规则见 [Luo Xiaohei notes](docs/luoxiaohei-local-pack.md) 和 `scripts/build-local-pet-packs.py`。
-
-## Dashboard
-
-当前 dashboard 有四个主入口：
-
-- `今日`：当前状态、专注节奏、休息控制和输入活动概览。
-- `历史`：专注会话、状态时间线和当天复盘。
-- `桌宠`：资源包、动作映射、预览、位置、动画和音效。
-- `设置`：隐私、提醒、判定参数、权限和本地数据。
-
-## 架构
+## 核心逻辑
 
 ```mermaid
 flowchart LR
-  A["macOS signals"] --> B["FocusPetCore"]
-  B --> C["State engine"]
-  C --> D["Nudge policy"]
-  D --> E["PetIntent"]
-  E --> F["FocusPetRenderer"]
-  C --> G["Dashboard"]
-  C --> H["Widgets"]
-  G --> I["LocalStore"]
-  H --> I
+  A["本地 macOS 信号"] --> B["节奏判断"]
+  B --> C["专注 / 走神 / 休息 / 暂离"]
+  C --> D["PetIntent"]
+  D --> E["桌宠动作与气泡"]
+  C --> F["今日面板"]
+  C --> G["桌面小组件"]
+  F --> H["本地存储"]
+  G --> H
 ```
 
-SwiftPM targets:
+Focus Pet 用的是一条很短、很克制的产品链路：
 
-- `FocusPetCore`：状态引擎、分类、提醒策略、设置、统计和格式化。
-- `FocusPetStorage`：本地 JSON 存储、导出、清空和保留策略。
-- `FocusPetResources`：资源包 manifest、校验、fallback 和目录加载。
-- `FocusPetRenderer`：桌宠 `NSPanel`、气泡、动作展示和交互。
-- `FocusPetWidgets`：桌面小组件 snapshot 与 SwiftUI 视图。
-- `FocusPetMac`：macOS app 入口、菜单栏、系统监控、dashboard 和权限入口。
+1. 读取本地信号：前台 App、bundle id、窗口标题分类、输入空闲、键盘鼠标活跃度、应用切换频率和手动专注/休息会话。
+2. 稳定状态判断：用恢复阈值和冷却策略减少误判，不因为一次切换就立刻说你走神。
+3. 生成桌宠意图：把工作、休息、走神、欢迎回来、拖拽、召回等语义交给 `PetIntent`。
+4. 轻量表达：桌宠动作、气泡、菜单栏、今日面板和小组件都复用同一份状态，而不是各自解释一遍数据。
 
-## 隐私
+## 产品差异
+
+| Focus Pet 做什么 | 为什么重要 |
+| --- | --- |
+| 本地优先 | 窗口标题、应用使用和输入节奏默认留在本机，不上传云端。 |
+| 状态先于报表 | 用户先知道「我现在是什么节奏」，再决定要不要看复盘。 |
+| 温柔提醒 | 走神、长专注、休息结束、欢迎回来都有独立冷却，避免通知轰炸。 |
+| 桌宠语义层 | `PetIntent -> sourceAction` 映射让每个桌宠都有自己的动作性格。 |
+| 隐藏复杂度 | 普通用户不需要管理规则；高级分类、阈值和权限检查收在设置里。 |
+| macOS 原生 | 菜单栏、悬浮桌宠、SwiftUI dashboard、系统通知和桌面状态卡是一套连贯体验。 |
+
+## 界面预览
+
+### 今日面板
+
+今日面板是 Focus Pet 的核心：当前状态、稳定时长、休息恢复、最近输入节奏和状态时间线都在第一屏里。它不是为了堆指标，而是让你一眼知道「我现在稳不稳」。
+
+![Focus Pet today dashboard](docs/readme-assets/focus-pet-today.png)
+
+### 桌宠与动作映射
+
+桌宠不是普通 GIF 播放器。Focus Pet 先产生语义意图，再由资源包映射到自己的动作。你可以让同一个「走神观察」在不同宠物身上表现成探头、发呆、拍桌或任何资源包支持的动作。
+
+![Focus Pet pet settings](docs/readme-assets/focus-pet-dashboard.png)
+
+### 桌面小组件
+
+小组件是扫读入口：不用打开 dashboard，也能看到当前状态和最近几小时的节奏分布。
+
+![Focus Pet widgets](docs/readme-assets/focus-pet-widgets.png)
+
+## 一天里的 Focus Pet
+
+- 上午进入稳定工作：桌宠安静待在角落，菜单栏显示当前状态。
+- 中途频繁切换：状态进入走神观察，桌宠用短气泡提醒你回到任务。
+- 连续专注太久：休息提醒出现，你可以从今日面板或桌宠旁边直接开始恢复。
+- 午后回来：欢迎回来提醒接上节奏，今日面板继续累积输入与状态时间线。
+- 晚上复盘：历史页把工作段、休息段、状态分布和应用使用压成可读记录。
+
+## 功能亮点
+
+- 四状态模型：`专注`、`走神`、`休息`、`暂离`。
+- 本地状态识别：结合 App、窗口标题分类、输入空闲、活动量和应用切换。
+- 专注与休息会话：支持手动专注任务、休息倒计时和自动休息提示。
+- 桌宠表达：气泡、动作、拖拽、召回、跨屏移动和可调位置。
+- 资源包系统：`pet.json` 描述动作、帧、音效、预览图和语义映射。
+- 今日复盘：状态时间线、输入活动、窗口节奏、应用/类别分布。
+- 桌面状态卡：当前状态卡和最近节奏卡，适合作为轻量常驻视图。
+- 隐私设置：可暂停记录、隐藏原始标题、导出脱敏数据、清空本地数据。
+
+## 桌宠资源
+
+Focus Pet 保留每个资源包自己的动作命名，再把运行时语义映射过去。当前本地测试资源包括：
+
+| 资源包 | 预览 | 说明 |
+| --- | --- | --- |
+| 罗小黑 | <img src="docs/readme-assets/pet-luo-xiaohei.png" alt="Luo Xiaohei preview" width="96" /> | 来自 [jiang-taibai/IXiaoHei](https://github.com/jiang-taibai/IXiaoHei) 的本地转换资源。该上游未见明确 license，当前仅用于本地测试。 |
+| 小呆 | <img src="docs/readme-assets/pet-xiaodai.png" alt="XiaoDai preview" width="96" /> | 来源于 [ChaozhongLiu/DyberPet](https://github.com/ChaozhongLiu/DyberPet) 生态资源，原作者标注为 `栎曦_Nuo`。 |
+| 像素猫 meme | <img src="docs/readme-assets/pet-pixel-cat.png" alt="Pixel Cat Meme preview" width="96" /> | 来源于 [ChaozhongLiu/DyberPet](https://github.com/ChaozhongLiu/DyberPet) 生态资源，原作者标注为 `代号皮克嗖儿`。 |
+
+第三方素材的版权、角色 IP、音效和图片遵循各自上游项目与原作者授权。未确认再分发权的素材只作为本地测试资源使用。
+
+## 隐私承诺
 
 Focus Pet 的默认设计是本地优先：
 
 - 默认不保存原始窗口标题。
-- 可只保存分类结果，或暂停所有本地记录。
-- 可导出脱敏统计。
-- 所有数据保存在用户本机的 Application Support 路径下。
+- 可以只保存分类结果，也可以暂停所有本地记录。
+- 统计、时间线和桌宠状态都来自本机数据。
+- 支持导出脱敏统计和清空本地数据。
 
-## 开发状态
+## 开发入口
 
-项目仍处于快速迭代阶段，当前重点是：
+```bash
+swift build
+swift run FocusPet
+swift test
+swift run FocusPetCoreChecks
+```
 
-- 更稳定的 macOS 分发和跨机器安装验证。
-- 更清爽的 dashboard 信息层级。
-- 更可控的状态提醒和桌宠气泡体验。
-- 更完善的资源包导入、预览和动作映射。
-- 小组件与桌面状态的持续验证。
+主要模块：
+
+- `FocusPetCore`：状态引擎、分类、提醒策略、设置和统计。
+- `FocusPetRenderer`：桌宠窗口、气泡、动作展示和交互。
+- `FocusPetWidgets`：桌面状态卡与 WidgetKit 快照视图。
+- `FocusPetMac`：macOS app、菜单栏、系统监控和 dashboard。
 
 ## 许可证与致谢
 
-项目代码许可证待补充。第三方桌宠素材、角色 IP、音效与图片遵循各自上游项目和原作者的授权要求；未确认再分发权的素材仅用于本地测试。
+项目代码许可证待补充。
 
 感谢：
 
