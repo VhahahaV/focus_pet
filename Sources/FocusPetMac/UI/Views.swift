@@ -181,6 +181,8 @@ private final class DashboardWindowLifecycleReportingView: NSView {
             NSWindow.willCloseNotification,
             NSWindow.willMiniaturizeNotification,
             NSWindow.didMiniaturizeNotification,
+            NSWindow.didResignKeyNotification,
+            NSWindow.didResignMainNotification,
             NSWindow.didDeminiaturizeNotification,
             NSWindow.didBecomeKeyNotification,
             NSWindow.didBecomeMainNotification,
@@ -200,6 +202,17 @@ private final class DashboardWindowLifecycleReportingView: NSView {
         }
         observerTokens.append(
             NotificationCenter.default.addObserver(
+                forName: NSApplication.didResignActiveNotification,
+                object: NSApp,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.dismiss()
+                }
+            }
+        )
+        observerTokens.append(
+            NotificationCenter.default.addObserver(
                 forName: NSApplication.didBecomeActiveNotification,
                 object: NSApp,
                 queue: .main
@@ -216,10 +229,16 @@ private final class DashboardWindowLifecycleReportingView: NSView {
         switch name {
         case NSWindow.willCloseNotification,
             NSWindow.willMiniaturizeNotification,
-            NSWindow.didMiniaturizeNotification:
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.didResignKeyNotification,
+            NSWindow.didResignMainNotification:
             dismiss()
         case NSWindow.didChangeOcclusionStateNotification:
-            if window.isVisible, !window.isMiniaturized, window.occlusionState.contains(.visible) {
+            if NSApp.isActive,
+               window.isVisible,
+               !window.isMiniaturized,
+               window.occlusionState.contains(.visible),
+               window.isKeyWindow || window.isMainWindow || NSApp.keyWindow === window || NSApp.mainWindow === window {
                 activate()
             } else {
                 dismiss()
@@ -980,10 +999,14 @@ private struct TodayDashboardCanvas: View {
         let spacing = DashboardLayout.cardGap
         let contentHeight = max(size.height, DashboardLayout.todayCanvasMinHeight)
         let rowSpace = max(0, contentHeight - spacing * 2)
-        let topHeight = clamped(rowSpace * 0.24, min: 170, max: 192)
+        let topHeight = FPLayout.todayTopCardHeight
         let timelineHeight = clamped(rowSpace * 0.36, min: DashboardLayout.todayTimelineMinHeight, max: 340)
         let insightsHeight = max(DashboardLayout.todayInsightsMinHeight, rowSpace - topHeight - timelineHeight)
-        let breakWidth = clamped(size.width * 0.30, min: 288, max: 360)
+        let breakWidth = clamped(
+            size.width * 0.32,
+            min: FPLayout.todayBreakMinWidth,
+            max: FPLayout.todayBreakMaxWidth
+        )
         let insightSnapshot = TodayWindowInsightSnapshot(
             window: selectedInsightWindow,
             stateSegments: model.stateSegments,
@@ -997,7 +1020,13 @@ private struct TodayDashboardCanvas: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .frame(height: topHeight)
                 BreakDurationControl()
-                    .frame(width: min(breakWidth, max(260, size.width * 0.42)), height: topHeight)
+                    .frame(
+                        width: min(
+                            breakWidth,
+                            max(FPLayout.todayBreakMinWidth, size.width * FPLayout.todayBreakResponsiveWidthRatio)
+                        ),
+                        height: topHeight
+                    )
                     .dashboardPetAnchor(.todayBreakControl)
             }
             .frame(maxWidth: .infinity, minHeight: topHeight, maxHeight: topHeight)
@@ -1556,12 +1585,12 @@ private struct BreakDurationControl: View {
         let isActive = model.activeBreakSession != nil
         let progress = activeBreakProgress(at: date)
 
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
+        return VStack(alignment: .leading, spacing: FPSpacing.md) {
+            HStack(alignment: .top, spacing: FPSpacing.md) {
                 Image(systemName: isActive ? "leaf.circle.fill" : "cup.and.saucer.fill")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(DashboardPalette.restGreen)
-                    .frame(width: 26, height: 26)
+                    .frame(width: FPControlMetrics.restIconBox, height: FPControlMetrics.restIconBox)
                     .background(DashboardPalette.restGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -1571,21 +1600,13 @@ private struct BreakDurationControl: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(isActive ? "正在恢复" : "休息恢复")
                         .font(.subheadline.weight(.semibold))
-                    Text(isActive ? "让眼睛和手先停一下" : "休息会单独记录，不计入走神")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(DashboardPalette.secondaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
                 }
 
-                Spacer(minLength: 6)
+                Spacer(minLength: FPSpacing.sm)
             }
 
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(isActive ? "剩余时间" : "建议休息")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(DashboardPalette.secondaryText)
+            HStack(alignment: .center, spacing: FPSpacing.md) {
+                VStack(alignment: .leading, spacing: FPSpacing.xs) {
                     Text(primaryTimeText(at: date))
                         .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
                         .foregroundStyle(DashboardPalette.primaryText)
@@ -1593,32 +1614,22 @@ private struct BreakDurationControl: View {
                         .minimumScaleFactor(0.68)
                 }
 
-                Spacer(minLength: 8)
+                Spacer(minLength: FPSpacing.md)
 
                 BreakRecoveryRing(progress: progress, isActive: isActive)
-                    .frame(width: 44, height: 44)
+                    .frame(width: FPControlMetrics.restRingSize, height: FPControlMetrics.restRingSize)
             }
 
             if let progress {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: FPSpacing.sm) {
                     CompactMeter(ratio: progress, tint: DashboardPalette.restGreen, height: 6)
                         .frame(maxWidth: .infinity)
-                    if let subtitle = statusSubtitle(at: date) {
-                        Text(subtitle)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(DashboardPalette.secondaryText)
-                            .lineLimit(1)
-                    }
                 }
+                .frame(height: FPControlMetrics.restMinuteSelectorHeight)
             } else {
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack {
-                        Text("快速时长")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(DashboardPalette.secondaryText)
-                        Spacer(minLength: 0)
-                    }
+                VStack(alignment: .leading, spacing: FPSpacing.sm) {
                     BreakMinuteKeySelector(value: breakMinutesKeyBinding)
+                        .frame(height: FPControlMetrics.restMinuteSelectorHeight)
                 }
             }
 
@@ -1628,8 +1639,8 @@ private struct BreakDurationControl: View {
                 model.toggleBreakFromPet()
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.horizontal, FPCardMetrics.compactPadding)
+        .padding(.vertical, FPCardMetrics.compactPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .fpSemanticCard(status: .rest, padding: 0, radius: FPRadius.large)
     }
@@ -1652,14 +1663,6 @@ private struct BreakDurationControl: View {
         }
         let remaining = max(0, rest.targetDurationSeconds - max(0, Int(date.timeIntervalSince(rest.start))))
         return FocusPetFormatters.duration(remaining)
-    }
-
-    private func statusSubtitle(at date: Date) -> String? {
-        guard let rest = model.activeBreakSession else {
-            return nil
-        }
-        let elapsed = max(0, Int(date.timeIntervalSince(rest.start)))
-        return "已恢复 \(FocusPetFormatters.duration(elapsed))"
     }
 
     private func activeBreakProgress(at date: Date) -> Double? {
@@ -1716,7 +1719,7 @@ private struct BreakRestActionButton: View {
                 Image(systemName: isActive ? "stop.fill" : "leaf.fill")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(tint)
-                    .frame(width: 24, height: 24)
+                    .frame(width: FPControlMetrics.restActionIconBox, height: FPControlMetrics.restActionIconBox)
                     .background(Color.white.opacity(0.70), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -1733,9 +1736,9 @@ private struct BreakRestActionButton: View {
                     .opacity(0.70)
             }
             .foregroundStyle(tint)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, FPSpacing.md)
             .frame(maxWidth: .infinity)
-            .frame(height: 34)
+            .frame(height: FPControlMetrics.restActionHeight)
             .background(tint.opacity(isActive ? 0.13 : 0.15), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -1752,15 +1755,11 @@ private struct BreakMinuteKeySelector: View {
     @Binding var value: Int
 
     private var options: [Int] {
-        var values = [5, 10, 30]
-        if !values.contains(value) {
-            values.insert(value, at: 0)
-        }
-        return values
+        Array(Set([1, 5, 10, 30, value])).sorted()
     }
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: FPSpacing.sm) {
             ForEach(options, id: \.self) { minute in
                 let selected = minute == value
                 Button {
@@ -1770,7 +1769,7 @@ private struct BreakMinuteKeySelector: View {
                         .font(.caption2.monospacedDigit().weight(.bold))
                         .foregroundStyle(selected ? Color.white : DashboardPalette.secondaryText)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 24)
+                        .frame(height: FPControlMetrics.restMinuteButtonHeight)
                         .background(
                             selected ? DashboardPalette.restGreen.opacity(0.86) : Color.white.opacity(0.36),
                             in: Capsule()
@@ -1784,7 +1783,7 @@ private struct BreakMinuteKeySelector: View {
                 .help("\(minute) 分钟")
             }
         }
-        .padding(3)
+        .padding(FPSpacing.xs)
         .background(Color.white.opacity(0.36), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -2308,10 +2307,51 @@ private struct InputActivityTimelinePanel: View {
     @ViewBuilder
     private func timelineMetrics(_ snapshot: InputTimelineSnapshot) -> some View {
         HStack(spacing: 8) {
-            StatusPill("键盘 \(FocusPetFormatters.compactCount(snapshot.estimatedTypedCharacters)) 次", symbol: "keyboard")
-            StatusPill("鼠标 \(FocusPetFormatters.compactCount(snapshot.pointerActionCount)) 次", symbol: "cursorarrow.click")
-            StatusPill("切换 \(FocusPetFormatters.compactCount(snapshot.contextSwitchCount)) 次", symbol: "arrow.triangle.2.circlepath")
+            TimelineMetricPill(
+                "键盘 \(FocusPetFormatters.compactCount(snapshot.estimatedTypedCharacters)) 次",
+                symbol: "keyboard",
+                tint: FPChartPalette.inputKeyboardStrong
+            )
+            TimelineMetricPill(
+                "鼠标 \(FocusPetFormatters.compactCount(snapshot.pointerActionCount)) 次",
+                symbol: "cursorarrow.click",
+                tint: FPChartPalette.inputPointerStrong
+            )
+            TimelineMetricPill(
+                "切换 \(FocusPetFormatters.compactCount(snapshot.contextSwitchCount)) 次",
+                symbol: "arrow.triangle.2.circlepath",
+                tint: FPChartPalette.inputSwitch
+            )
             StatusPill(snapshot.rangeLabel, symbol: "calendar")
+        }
+    }
+}
+
+private struct TimelineMetricPill: View {
+    var title: String
+    var symbol: String
+    var tint: Color
+
+    init(_ title: String, symbol: String, tint: Color) {
+        self.title = title
+        self.symbol = symbol
+        self.tint = tint
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol)
+                .font(.caption2.weight(.bold))
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(tint.opacity(0.11), in: Capsule())
+        .overlay {
+            Capsule().stroke(tint.opacity(0.20), lineWidth: 1)
         }
     }
 }
@@ -2442,7 +2482,7 @@ private struct InputTimelineChart: View {
                         let x = chartWidth * CGFloat(marker.progress)
                         let lineWidth = max(1, min(4, CGFloat(marker.count)))
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(FPChartPalette.distracted.opacity(0.22))
+                            .fill(FPChartPalette.inputSwitch.opacity(0.22))
                             .frame(width: lineWidth, height: inputHeight)
                             .offset(x: x, y: inputY)
                     }
@@ -2606,18 +2646,18 @@ private struct InputTimelineChart: View {
 
         return ZStack(alignment: .bottom) {
             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(FPChartPalette.distractedTrack.opacity(0.75))
+                .fill(FPChartPalette.inputTrack.opacity(0.82))
                 .frame(width: max(barWidth, 8), height: totalHeight)
 
             VStack(spacing: 1.5) {
                 if bar.keyboardCount > 0 {
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(FPChartPalette.focus.opacity(0.82))
+                        .fill(FPChartPalette.inputKeyboard.opacity(0.86))
                         .frame(height: max(3, keyboardHeight))
                 }
                 if bar.pointerCount > 0 {
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(FPChartPalette.distracted.opacity(0.88))
+                        .fill(FPChartPalette.inputPointer.opacity(0.88))
                         .frame(height: max(3, pointerHeight))
                 }
             }
@@ -2660,10 +2700,14 @@ private struct InputTimelineChart: View {
                 "切换 \(FocusPetFormatters.compactCount(bar.contextSwitchCount)) 次",
                 "本地估算，不记录输入内容"
             ],
-            tint: FPChartPalette.distracted,
+            tint: inputDominantTint(for: bar),
             x: x,
             y: y
         )
+    }
+
+    private func inputDominantTint(for bar: InputTimelineInputBar) -> Color {
+        bar.pointerCount > bar.keyboardCount ? FPChartPalette.inputPointerStrong : FPChartPalette.inputKeyboardStrong
     }
 
     private func switchDetail(for marker: InputTimelineSwitchMarker, x: CGFloat, y: CGFloat) -> TimelineHoverDetail {
@@ -2675,7 +2719,7 @@ private struct InputTimelineChart: View {
                 "约 \(FocusPetFormatters.clock(date))",
                 "App 或窗口焦点变化"
             ],
-            tint: FPChartPalette.distracted,
+            tint: FPChartPalette.inputSwitch,
             x: x,
             y: y
         )
@@ -3426,6 +3470,14 @@ private extension ActivityCategory {
         }
     }
 
+    var fpStatus: FPStatus {
+        switch self {
+        case .work: .focus
+        case .entertainment: .distracted
+        case .ignore, .neutral: .neutral
+        }
+    }
+
     var tint: Color {
         switch self {
         case .work: FPColor.focus600
@@ -4070,9 +4122,11 @@ private struct AppUsageCard: View {
                     Text(item.appName)
                         .font(.headline)
                         .lineLimit(1)
-                    Text(item.category.title)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    AppCategoryCorrectionMenu(
+                        appName: item.appName,
+                        bundleID: item.bundleID,
+                        category: item.category
+                    )
                 }
                 Spacer(minLength: 0)
                 Text(FocusPetFormatters.duration(item.seconds))
@@ -4332,9 +4386,12 @@ private struct TodayAppUsageBarRow: View {
                 Text(item.appName)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
-                Text(item.category.title)
-                    .font(.caption2)
-                    .foregroundStyle(item.category.tint)
+                AppCategoryCorrectionMenu(
+                    appName: item.appName,
+                    bundleID: item.bundleID,
+                    category: item.category,
+                    compact: true
+                )
             }
             .frame(width: nameColumnWidth, alignment: .leading)
 
@@ -4358,6 +4415,71 @@ private struct TodayAppUsageBarRow: View {
         .animation(.snappy(duration: 0.36, extraBounce: 0.05), value: item.seconds)
     }
 }
+
+private struct AppCategoryCorrectionMenu: View {
+    @EnvironmentObject private var model: FocusPetModel
+
+    var appName: String
+    var bundleID: String?
+    var category: ActivityCategory
+    var compact = false
+
+    private var target: ClassificationTarget {
+        ClassificationTarget(appName: appName, bundleID: bundleID)
+    }
+
+    private var selectedCategory: ActivityCategory {
+        let resolvedCategory = model.categoryForRule(pattern: target.pattern, matchKind: target.matchKind) ?? category
+        return resolvedCategory == .neutral ? .ignore : resolvedCategory
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(ActivityCategory.userFacingClassificationCases) { category in
+                Button {
+                    model.setRule(pattern: target.pattern, matchKind: target.matchKind, category: category)
+                } label: {
+                    Label(category.correctionTitle, systemImage: category.symbolName)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                FPBadge(
+                    title: selectedCategory.title,
+                    systemImage: selectedCategory.symbolName,
+                    status: selectedCategory.fpStatus,
+                    compact: compact
+                )
+                Image(systemName: "chevron.down")
+                    .font(.system(size: compact ? 8 : 9, weight: .bold))
+                    .foregroundStyle(selectedCategory.fpStatus.strongText.opacity(0.72))
+                    .padding(.trailing, compact ? 2 : 0)
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("修改 \(appName) 的分类")
+    }
+}
+
+private struct ClassificationTarget {
+    var pattern: String
+    var matchKind: RuleMatchKind
+
+    init(appName: String, bundleID: String?) {
+        if let bundleID,
+           !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            self.pattern = bundleID
+            self.matchKind = .bundleID
+        } else {
+            self.pattern = appName
+            self.matchKind = .appName
+        }
+    }
+}
+
 struct AppUsageChartPanel: View {
     @EnvironmentObject private var model: FocusPetModel
 
@@ -5784,12 +5906,22 @@ struct SettingsView: View {
     }
 
     private func toggle(_ module: SettingsModule) {
-        if expandedModules.contains(module) {
-            expandedModules.remove(module)
-        } else {
-            expandedModules.insert(module)
+        withAnimation(SettingsAccordionMotion.expandCollapse) {
+            if expandedModules.contains(module) {
+                expandedModules.remove(module)
+            } else {
+                expandedModules.insert(module)
+            }
         }
     }
+}
+
+private enum SettingsAccordionMotion {
+    static let expandCollapse = Animation.interactiveSpring(
+        response: 0.34,
+        dampingFraction: 0.86,
+        blendDuration: 0.08
+    )
 }
 
 private enum SettingsModule: String, CaseIterable, Identifiable, Hashable {
@@ -5880,20 +6012,34 @@ private struct SettingsAccordionCard<Content: View>: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(DashboardPalette.secondaryText)
                         .rotationEffect(.degrees(isExpanded ? 0 : -90))
-                        .animation(.easeInOut(duration: 0.16), value: isExpanded)
+                        .animation(SettingsAccordionMotion.expandCollapse, value: isExpanded)
                 }
             }
             .buttonStyle(.plain)
             .help(module.title)
 
             if isExpanded {
-                Divider()
-                    .padding(.vertical, 10)
-                content()
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                VStack(alignment: .leading, spacing: 0) {
+                    Divider()
+                        .padding(.vertical, 10)
+                    content()
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .clipped()
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity
+                            .combined(with: .move(edge: .top))
+                            .combined(with: .scale(scale: 0.985, anchor: .top)),
+                        removal: .opacity
+                            .combined(with: .move(edge: .top))
+                            .combined(with: .scale(scale: 0.985, anchor: .top))
+                    )
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(SettingsAccordionMotion.expandCollapse, value: isExpanded)
         .fpSemanticCard(status: module.status, padding: 12, radius: FPRadius.large)
     }
 }
@@ -6669,7 +6815,7 @@ private struct PermissionSettingsRow: View {
                 Text(item.destination.title)
                     .font(FPTypography.bodyMedium)
                     .foregroundStyle(FPColor.textPrimary)
-                Text(item.subtitle)
+                Text(statusDetail ?? item.subtitle)
                     .font(FPTypography.caption)
                     .foregroundStyle(FPColor.textSecondary)
                     .lineLimit(1)
@@ -6678,8 +6824,9 @@ private struct PermissionSettingsRow: View {
             HStack(spacing: 8) {
                 if let statusTitle {
                     FPBadge(title: statusTitle, systemImage: statusSymbol, status: permissionStatus)
+                        .help(statusDetail ?? statusTitle)
                 }
-                if item.canRequest {
+                if item.canRequest && !statusIsAllowed {
                     Button {
                         model.requestSystemPermission(item.destination)
                     } label: {
@@ -6718,6 +6865,10 @@ private struct PermissionSettingsRow: View {
 
     private var statusTitle: String? {
         model.systemPermissionSnapshot.status(for: item.destination)?.title
+    }
+
+    private var statusDetail: String? {
+        model.systemPermissionSnapshot.status(for: item.destination)?.detail
     }
 
     private var statusIsAllowed: Bool {

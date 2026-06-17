@@ -5,21 +5,22 @@ struct FPBadge: View {
     var systemImage: String?
     var status: FPStatus = .neutral
     var filled: Bool = true
+    var compact: Bool = false
 
     var body: some View {
         HStack(spacing: 6) {
             if let systemImage {
                 Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: compact ? 9 : 11, weight: .semibold))
             }
 
             Text(title)
-                .font(FPTypography.badge)
+                .font(compact ? .caption2.weight(.semibold) : FPTypography.badge)
                 .lineLimit(1)
         }
         .foregroundStyle(status.strongText)
-        .padding(.horizontal, 12)
-        .frame(height: FPSize.badgeHeight)
+        .padding(.horizontal, compact ? 8 : 12)
+        .frame(height: compact ? 22 : FPSize.badgeHeight)
         .background(
             Capsule()
                 .fill(filled ? status.softBackground : Color.clear)

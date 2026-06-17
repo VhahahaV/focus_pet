@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct FPCardModifier: ViewModifier {
-    var padding: CGFloat = FPSpacing.xl
+    var padding: CGFloat = FPCardMetrics.defaultPadding
     var radius: CGFloat = FPRadius.card
     var background: Color = FPColor.card
     var border: Color = FPColor.borderDefault
@@ -24,11 +24,12 @@ struct FPCardModifier: ViewModifier {
 
 struct FPSemanticCardModifier: ViewModifier {
     let status: FPStatus
-    var padding: CGFloat = FPSpacing.xl
+    var padding: CGFloat = FPCardMetrics.heroPadding
     var radius: CGFloat = FPRadius.hero
 
     func body(content: Content) -> some View {
         content
+            .padding(.leading, FPCardMetrics.semanticContentLeadingReserve)
             .padding(padding)
             .background(
                 ZStack(alignment: .leading) {
@@ -49,9 +50,9 @@ struct FPSemanticCardModifier: ViewModifier {
 
                     Capsule()
                         .fill(status.primary)
-                        .frame(width: 4)
-                        .padding(.vertical, FPSpacing.lg)
-                        .padding(.leading, FPSpacing.sm)
+                        .frame(width: FPCardMetrics.semanticStripWidth)
+                        .padding(.vertical, FPCardMetrics.semanticStripVerticalInset)
+                        .padding(.leading, FPCardMetrics.semanticStripLeadingInset)
                 }
             )
             .overlay(
@@ -83,7 +84,7 @@ struct FPInsetCardModifier: ViewModifier {
 
 extension View {
     func fpCard(
-        padding: CGFloat = FPSpacing.xl,
+        padding: CGFloat = FPCardMetrics.defaultPadding,
         radius: CGFloat = FPRadius.card,
         background: Color = FPColor.card,
         border: Color = FPColor.borderDefault
@@ -93,7 +94,7 @@ extension View {
 
     func fpSemanticCard(
         status: FPStatus,
-        padding: CGFloat = FPSpacing.xl,
+        padding: CGFloat = FPCardMetrics.heroPadding,
         radius: CGFloat = FPRadius.hero
     ) -> some View {
         modifier(FPSemanticCardModifier(status: status, padding: padding, radius: radius))

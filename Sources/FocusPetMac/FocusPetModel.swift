@@ -280,7 +280,7 @@ final class FocusPetModel: ObservableObject {
 
     private var dashboardPetIsAttached: Bool {
         guard dashboardPetAttachment != nil,
-              visibleDashboardWindow() != nil else { return false }
+              activeDashboardWindow() != nil else { return false }
         return true
     }
 
@@ -707,7 +707,7 @@ final class FocusPetModel: ObservableObject {
             }
 
             guard !Task.isCancelled,
-                  self.visibleDashboardWindow() != nil else { return }
+                  self.activeDashboardWindow() != nil else { return }
             self.presentPetForDashboard(tab: tab)
 
             try? await Task.sleep(nanoseconds: 220_000_000)
@@ -762,7 +762,7 @@ final class FocusPetModel: ObservableObject {
 
     private func refreshDashboardPetAttachmentIfNeeded(changedAnchor: DashboardPetAnchor) {
         guard let attachment = dashboardPetAttachment else { return }
-        guard visibleDashboardWindow() != nil else {
+        guard activeDashboardWindow() != nil else {
             detachDashboardPet(reposition: true)
             return
         }
@@ -774,7 +774,7 @@ final class FocusPetModel: ObservableObject {
 
     private func positionDashboardAttachedPet(requiringFreshAnchor: Bool, refreshVisibilityWatch: Bool = true) {
         guard let attachment = dashboardPetAttachment else { return }
-        guard visibleDashboardWindow() != nil else {
+        guard activeDashboardWindow() != nil else {
             detachDashboardPet(reposition: true)
             return
         }
@@ -849,6 +849,15 @@ final class FocusPetModel: ObservableObject {
         return window
     }
 
+    private func activeDashboardWindow() -> NSWindow? {
+        guard let window = visibleDashboardWindow(),
+              NSApp.isActive,
+              window.isKeyWindow || window.isMainWindow || NSApp.keyWindow === window || NSApp.mainWindow === window else {
+            return nil
+        }
+        return window
+    }
+
     private static func dashboardWindowIsOnScreen(_ window: NSWindow) -> Bool {
         guard window.windowNumber > 0,
               let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
@@ -880,6 +889,8 @@ final class FocusPetModel: ObservableObject {
             NSWindow.willCloseNotification,
             NSWindow.willMiniaturizeNotification,
             NSWindow.didMiniaturizeNotification,
+            NSWindow.didResignKeyNotification,
+            NSWindow.didResignMainNotification,
             NSWindow.didDeminiaturizeNotification,
             NSWindow.didBecomeKeyNotification,
             NSWindow.didBecomeMainNotification,
@@ -897,10 +908,12 @@ final class FocusPetModel: ObservableObject {
                     switch name {
                     case NSWindow.willCloseNotification,
                         NSWindow.willMiniaturizeNotification,
-                        NSWindow.didMiniaturizeNotification:
+                        NSWindow.didMiniaturizeNotification,
+                        NSWindow.didResignKeyNotification,
+                        NSWindow.didResignMainNotification:
                         self.dashboardWindowDidDismiss()
                     case NSWindow.didChangeOcclusionStateNotification:
-                        if self.visibleDashboardWindow() == nil {
+                        if self.activeDashboardWindow() == nil {
                             self.dashboardWindowDidDismiss()
                         } else {
                             self.dashboardWindowDidActivate()
@@ -922,6 +935,17 @@ final class FocusPetModel: ObservableObject {
                 }
             }
         )
+        dashboardWindowObserverTokens.append(
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didResignActiveNotification,
+                object: NSApp,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.dashboardWindowDidDismiss()
+                }
+            }
+        )
     }
 
     private func clearDashboardWindowObservers() {
@@ -938,7 +962,7 @@ final class FocusPetModel: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 guard self.dashboardPetAttachment != nil || self.dashboardPetPinIsActive else { return }
-                if self.visibleDashboardWindow() == nil {
+                if self.activeDashboardWindow() == nil {
                     self.detachDashboardPet(reposition: true)
                     self.updatePet()
                     return
@@ -1854,7 +1878,7 @@ final class FocusPetModel: ObservableObject {
     }
 
     private func refreshLivePetPresentationIfNeeded() {
-        if (dashboardPetAttachment != nil || dashboardPetPinIsActive), visibleDashboardWindow() == nil {
+        if (dashboardPetAttachment != nil || dashboardPetPinIsActive), activeDashboardWindow() == nil {
             detachDashboardPet(reposition: true)
             updatePet()
             return

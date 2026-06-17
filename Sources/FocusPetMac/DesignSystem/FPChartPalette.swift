@@ -17,6 +17,12 @@ enum FPChartPalette {
     static let restTrack = FPColor.rest100
 
     static let away = FPColor.away300
+    static let inputKeyboard = Color(hex: "#9B7CF6")
+    static let inputKeyboardStrong = Color(hex: "#7756D9")
+    static let inputPointer = Color(hex: "#45B7A8")
+    static let inputPointerStrong = Color(hex: "#268E82")
+    static let inputTrack = Color(hex: "#F0ECFF")
+    static let inputSwitch = Color(hex: "#B8A7FF")
     static let neutralTrack = Color(hex: "#EAF1F7")
     static let gridLine = Color(hex: "#ECF2F8")
     static let axisText = FPColor.textTertiary
