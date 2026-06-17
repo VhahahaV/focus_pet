@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_SCRIPT="$ROOT_DIR/scripts/package-macos-app.sh"
+WIDGET_VERIFY_SCRIPT="$ROOT_DIR/scripts/verify-widget-extension.sh"
 DIST_DIR="$ROOT_DIR/dist"
 LOCAL_DIST_DIR="$DIST_DIR/local"
 WORK_DIR="$ROOT_DIR/.build/dmg"
@@ -16,6 +17,11 @@ VERIFY=1
 MODE="distribution"
 PET_PACK_MODE_SET=0
 INCLUDE_LOCAL_TEST_PETS_EFFECTIVE=0
+EXPECTED_LOCAL_PET_PACK_DIRS=(
+    "LuoXiaoHeiLocal"
+    "PixelCatMemeLocal"
+    "XiaoDaiLocal"
+)
 
 SIGN_IDENTITY="${FOCUSPET_CODESIGN_IDENTITY:-${CODESIGN_IDENTITY:-}}"
 NOTARY_PROFILE="${FOCUSPET_NOTARY_PROFILE:-${NOTARY_KEYCHAIN_PROFILE:-}}"
@@ -44,11 +50,13 @@ Options:
   --team-id TEAMID                Apple Developer Team ID for notarytool
   --password PASSWORD             App-specific password for notarytool
   --bundle-identifier ID          Forward to package-macos-app.sh
+  --widget-bundle-identifier ID   Forward to package-macos-app.sh
   --version VERSION               Forward to package-macos-app.sh
   --build BUILD                   Forward to package-macos-app.sh
   --universal                     Forward to package-macos-app.sh. Default
   --native                        Forward to package-macos-app.sh
   --entitlements PATH             Forward to package-macos-app.sh
+  --widget-entitlements PATH      Forward to package-macos-app.sh
   --include-local-test-pets       Forward to package-macos-app.sh
   --exclude-local-test-pets       Forward to package-macos-app.sh
   --help                          Show this help
@@ -192,11 +200,30 @@ verify_local_test_pets() {
     local app_path="$1"
     local packs_dir="$app_path/Contents/Resources/LocalPetPacks"
     local pack_count
+    local pack_dir
+    local unexpected_pack
 
     test -d "$packs_dir" || die "LocalPetPacks directory is missing: $packs_dir"
     pack_count="$(find "$packs_dir" -mindepth 2 -maxdepth 2 -name pet.json -print | wc -l | tr -d '[:space:]')"
-    [[ "$pack_count" -gt 0 ]] || die "LocalPetPacks does not contain any pet.json manifests: $packs_dir"
-    echo "Included $pack_count local pet pack(s)."
+    [[ "$pack_count" -eq "${#EXPECTED_LOCAL_PET_PACK_DIRS[@]}" ]] || die "LocalPetPacks contains $pack_count pet pack(s), expected ${#EXPECTED_LOCAL_PET_PACK_DIRS[@]}: $packs_dir"
+
+    for pack_dir in "${EXPECTED_LOCAL_PET_PACK_DIRS[@]}"; do
+        test -f "$packs_dir/$pack_dir/pet.json" || die "Expected local pet pack is missing: $packs_dir/$pack_dir"
+    done
+
+    unexpected_pack="$(
+        find "$packs_dir" -mindepth 1 -maxdepth 1 -type d -print | while IFS= read -r candidate; do
+            local name
+            name="$(basename "$candidate")"
+            local expected=0
+            for pack_dir in "${EXPECTED_LOCAL_PET_PACK_DIRS[@]}"; do
+                [[ "$name" == "$pack_dir" ]] && expected=1
+            done
+            [[ "$expected" -eq 1 ]] || printf '%s\n' "$name"
+        done | head -n 1
+    )"
+    [[ -z "$unexpected_pack" ]] || die "Unexpected local pet pack is bundled: $unexpected_pack"
+    echo "Included expected local pet packs: ${EXPECTED_LOCAL_PET_PACK_DIRS[*]}."
 }
 
 verify_no_local_test_pets() {
@@ -206,6 +233,17 @@ verify_no_local_test_pets() {
     if [[ -e "$packs_dir" ]]; then
         die "LocalPetPacks is present in a build that should exclude local-only pet assets: $packs_dir"
     fi
+}
+
+verify_widget_extension() {
+    local app_path="$1"
+    local verify_args=(--no-register)
+
+    if [[ "$MODE" == "distribution" ]]; then
+        verify_args+=(--require-gallery-ready)
+    fi
+
+    "$WIDGET_VERIFY_SCRIPT" "${verify_args[@]}" "$app_path"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -242,7 +280,7 @@ while [[ $# -gt 0 ]]; do
             NOTARY_PASSWORD="${2:-}"
             shift 2
             ;;
-        --bundle-identifier|--version|--build|--entitlements)
+        --bundle-identifier|--widget-bundle-identifier|--version|--build|--entitlements|--widget-entitlements)
             APP_ARGS+=("$1" "${2:-}")
             shift 2
             ;;
@@ -338,6 +376,7 @@ rm -rf "$STAGING_DIR" "$MOUNT_POINT" "$VERIFY_MOUNT_POINT" "$APP_ZIP" "$RW_DMG" 
 mkdir -p "$STAGING_DIR/.background" "$MOUNT_POINT" "$VERIFY_MOUNT_POINT"
 
 verify_app_signature "$APP_PATH"
+verify_widget_extension "$APP_PATH"
 if [[ "$INCLUDE_LOCAL_TEST_PETS_EFFECTIVE" -eq 1 ]]; then
     verify_local_test_pets "$APP_PATH"
 else
@@ -502,6 +541,7 @@ if [[ "$VERIFY" -eq 1 ]]; then
     test -L "$VERIFY_MOUNT_POINT/Applications"
     /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$VERIFY_MOUNT_POINT/$APP_BUNDLE_NAME/Contents/Info.plist" >/dev/null
     verify_app_signature "$VERIFY_MOUNT_POINT/$APP_BUNDLE_NAME"
+    verify_widget_extension "$VERIFY_MOUNT_POINT/$APP_BUNDLE_NAME"
     if [[ "$INCLUDE_LOCAL_TEST_PETS_EFFECTIVE" -eq 1 ]]; then
         verify_local_test_pets "$VERIFY_MOUNT_POINT/$APP_BUNDLE_NAME"
     else

@@ -12,6 +12,11 @@ QUARANTINE=1
 EXPECT_LOCAL_TEST_PETS=0
 LAUNCHED_EXECUTABLE=""
 REPORT_PATH=""
+EXPECTED_LOCAL_PET_PACK_DIRS=(
+    "LuoXiaoHeiLocal"
+    "PixelCatMemeLocal"
+    "XiaoDaiLocal"
+)
 
 usage() {
     cat <<'USAGE'
@@ -73,11 +78,30 @@ verify_local_test_pets() {
     local app_path="$1"
     local packs_dir="$app_path/Contents/Resources/LocalPetPacks"
     local pack_count
+    local pack_dir
+    local unexpected_pack
 
     test -d "$packs_dir" || die "LocalPetPacks directory is missing: $packs_dir"
     pack_count="$(find "$packs_dir" -mindepth 2 -maxdepth 2 -name pet.json -print | wc -l | tr -d '[:space:]')"
-    [[ "$pack_count" -gt 0 ]] || die "LocalPetPacks does not contain any pet.json manifests: $packs_dir"
-    echo "Found $pack_count packaged local pet pack(s)."
+    [[ "$pack_count" -eq "${#EXPECTED_LOCAL_PET_PACK_DIRS[@]}" ]] || die "LocalPetPacks contains $pack_count pet pack(s), expected ${#EXPECTED_LOCAL_PET_PACK_DIRS[@]}: $packs_dir"
+
+    for pack_dir in "${EXPECTED_LOCAL_PET_PACK_DIRS[@]}"; do
+        test -f "$packs_dir/$pack_dir/pet.json" || die "Expected local pet pack is missing: $packs_dir/$pack_dir"
+    done
+
+    unexpected_pack="$(
+        find "$packs_dir" -mindepth 1 -maxdepth 1 -type d -print | while IFS= read -r candidate; do
+            local name
+            name="$(basename "$candidate")"
+            local expected=0
+            for pack_dir in "${EXPECTED_LOCAL_PET_PACK_DIRS[@]}"; do
+                [[ "$name" == "$pack_dir" ]] && expected=1
+            done
+            [[ "$expected" -eq 1 ]] || printf '%s\n' "$name"
+        done | head -n 1
+    )"
+    [[ -z "$unexpected_pack" ]] || die "Unexpected local pet pack is bundled: $unexpected_pack"
+    echo "Found expected packaged local pet packs: ${EXPECTED_LOCAL_PET_PACK_DIRS[*]}."
 }
 
 verify_install_link() {
@@ -94,17 +118,25 @@ open_smoke() {
     local app_path="$1"
     local executable="$app_path/Contents/MacOS/FocusPet"
     local canonical_executable
+    local launch_pid
+    local killer_pid
 
     test -x "$executable" || die "app executable is missing: $executable"
     canonical_executable="$(realpath "$executable")"
     LAUNCHED_EXECUTABLE="$canonical_executable"
 
     echo "Launching smoke test..."
-    open -n -a "$app_path"
+    "$canonical_executable" >/dev/null 2>&1 &
+    launch_pid=$!
 
     for _ in {1..10}; do
-        if pgrep -f "$canonical_executable" >/dev/null || pgrep -f "$executable" >/dev/null; then
-            pkill -f "$canonical_executable" >/dev/null 2>&1 || pkill -f "$executable" >/dev/null 2>&1 || true
+        if kill -0 "$launch_pid" >/dev/null 2>&1; then
+            kill "$launch_pid" >/dev/null 2>&1 || true
+            ( sleep 2; kill -KILL "$launch_pid" >/dev/null 2>&1 || true ) &
+            killer_pid=$!
+            wait "$launch_pid" >/dev/null 2>&1 || true
+            kill "$killer_pid" >/dev/null 2>&1 || true
+            wait "$killer_pid" >/dev/null 2>&1 || true
             LAUNCHED_EXECUTABLE=""
             echo "Launch smoke test passed."
             return

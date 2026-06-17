@@ -57,6 +57,8 @@ The script performs the release gates in order:
 - excludes `external_generated_packs` by default in distribution mode so
   local-only or third-party test pet assets are not redistributed accidentally;
 - signs the app with hardened runtime;
+- verifies the embedded WidgetKit extension as gallery-ready, which requires
+  trusted app and extension signing rather than ad-hoc signing;
 - notarizes and staples the app;
 - creates the DMG with the Applications symlink and Finder layout;
 - signs, notarizes, and staples the DMG;
@@ -79,15 +81,32 @@ scripts/verify-dmg-release.sh --install-to /Applications --replace --open-smoke 
 
 ## Local Smoke Build
 
+Recommended repeatable local packaging command:
+
+```bash
+scripts/build-verified-local-dmg.sh
+```
+
+This script builds a timestamped local DMG, checks the release build, verifies
+the mounted app, confirms the Finder installer window metadata, requires exactly
+the three bundled local pet packs, and runs an installed-copy launch smoke test.
+
 Build a local-only DMG:
 
 ```bash
 scripts/package-dmg.sh --local
 ```
 
-Local mode includes `external_generated_packs` by default so pet-resource smoke
-testing catches missing packaged assets. Pass `--exclude-local-test-pets` only
-when you need a local DMG that mirrors the distribution asset policy exactly.
+Local mode includes exactly these three bundled local pet packs by default:
+
+- `LuoXiaoHeiLocal`
+- `PixelCatMemeLocal`
+- `XiaoDaiLocal`
+
+Both packaging and verification fail if any of these packs is missing from the
+bundle or if an unexpected extra pack is bundled. Pass
+`--exclude-local-test-pets` only when you need a local DMG that mirrors the
+distribution asset policy exactly.
 
 Pass `--native` only for fast local iteration. Uploadable builds should keep the
 default universal executable so Apple Silicon and Intel Macs are both covered.
@@ -101,11 +120,15 @@ Successful output:
 
 Local images are ad-hoc signed. They are expected to fail Gatekeeper assessment
 after being downloaded on another Mac, so they must not be uploaded as releases.
+They can also be hidden by the native macOS widget gallery even when PlugInKit
+registration succeeds. If `chronod` logs `Ignoring restricted or unknown
+extension com.focuspet.FocusPet`, rebuild with an Apple Development or Developer
+ID signing identity before treating the WidgetKit gallery path as verified.
 
 Local checks:
 
 ```bash
-scripts/verify-dmg-release.sh --local dist/local/FocusPet-local.dmg
+scripts/verify-dmg-release.sh --local --expect-local-test-pets dist/local/FocusPet-local.dmg
 scripts/verify-dmg-release.sh --local --no-quarantine --open-smoke --expect-local-test-pets dist/local/FocusPet-local.dmg
 ```
 
@@ -113,6 +136,22 @@ The verifier writes `.verification.txt` evidence files next to the checked DMG.
 The second command intentionally skips the downloaded-file quarantine simulation.
 It only proves that the app resources and launch path work before Developer ID
 signing is available.
+
+Widget checks:
+
+```bash
+scripts/verify-widget-extension.sh /Applications/Focus\ Pet.app
+scripts/verify-widget-extension.sh --require-gallery-ready /Applications/Focus\ Pet.app
+```
+
+The first command verifies the bundle shape, codesign seal, and PlugInKit
+registration. The second command is the stricter acceptance gate for native
+WidgetKit gallery visibility.
+
+If the native gallery path is blocked on a test machine, Focus Pet also ships a
+fallback desktop status card. Open the menu bar icon and choose `桌面状态卡` to
+show the same current-status and recent-rhythm cards without using macOS widget
+editing.
 
 ## Install Layout
 
