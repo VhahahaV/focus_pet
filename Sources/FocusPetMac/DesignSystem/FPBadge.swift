@@ -21,13 +21,17 @@ struct FPBadge: View {
         .foregroundStyle(status.strongText)
         .padding(.horizontal, compact ? 8 : 12)
         .frame(height: compact ? 22 : FPSize.badgeHeight)
-        .background(
+        .background {
             Capsule()
-                .fill(filled ? status.softBackground : Color.clear)
-        )
-        .overlay(
-            Capsule()
-                .stroke(status.border, lineWidth: 1)
-        )
+                .fill(filled ? status.softBackground.opacity(0.36) : Color.white.opacity(0.08))
+            FPGlassLayer(
+                role: .badge,
+                cornerRadius: FPRadius.pill,
+                tint: status.primary,
+                isSelected: filled,
+                intensity: compact ? 0.82 : 1
+            )
+        }
+        .clipShape(Capsule())
     }
 }

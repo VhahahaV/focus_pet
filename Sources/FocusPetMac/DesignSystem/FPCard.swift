@@ -10,15 +10,17 @@ struct FPCardModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(padding)
-            .background(
+            .background {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(background)
-            )
+                    .fill(background.opacity(0.52))
+                FPGlassLayer(role: .data, cornerRadius: radius, tint: FPColor.focus500, intensity: 0.92)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .stroke(border, lineWidth: 1)
             )
-            .shadow(color: Color.black.opacity(shadowOpacity), radius: 18, x: 0, y: 8)
+            .shadow(color: Color.black.opacity(shadowOpacity * 0.62), radius: 18, x: 0, y: 8)
     }
 }
 
@@ -33,15 +35,20 @@ struct FPSemanticCardModifier: ViewModifier {
             .padding(padding)
             .background(
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .fill(FPColor.card)
+                    FPGlassLayer(
+                        role: .data,
+                        cornerRadius: radius,
+                        tint: status.primary,
+                        isSelected: true,
+                        intensity: 1.02
+                    )
 
                     RoundedRectangle(cornerRadius: radius, style: .continuous)
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    status.softBackground.opacity(0.78),
-                                    FPColor.card.opacity(0.2)
+                                    status.softBackground.opacity(0.46),
+                                    FPColor.card.opacity(0.08)
                                 ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
@@ -55,11 +62,12 @@ struct FPSemanticCardModifier: ViewModifier {
                         .padding(.leading, FPCardMetrics.semanticStripLeadingInset)
                 }
             )
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .stroke(status.border, lineWidth: 1)
             )
-            .shadow(color: status.primary.opacity(0.08), radius: 20, x: 0, y: 10)
+            .shadow(color: status.primary.opacity(0.06), radius: 22, x: 0, y: 12)
     }
 }
 
@@ -71,10 +79,18 @@ struct FPInsetCardModifier: ViewModifier {
         content
             .padding(.horizontal, FPSpacing.lg)
             .padding(.vertical, FPSpacing.md)
-            .background(
+            .background {
                 RoundedRectangle(cornerRadius: FPRadius.large, style: .continuous)
-                    .fill(isSelected ? status.softBackground : FPColor.cardSoft)
-            )
+                    .fill(isSelected ? status.softBackground.opacity(0.32) : FPColor.cardSoft.opacity(0.30))
+                FPGlassLayer(
+                    role: .control,
+                    cornerRadius: FPRadius.large,
+                    tint: status.primary,
+                    isSelected: isSelected,
+                    intensity: 0.78
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: FPRadius.large, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: FPRadius.large, style: .continuous)
                     .stroke(isSelected ? status.border : FPColor.borderSoft, lineWidth: 1)

@@ -311,7 +311,6 @@ public struct InputTimelineSnapshot: Hashable, Sendable {
         self.end = windowEnd
 
         let span = max(1, windowEnd.timeIntervalSince(windowStart))
-        let displayStateMinVisibleSeconds = min(300, max(180, windowSeconds / 60))
         var durations: [FocusState: Int] = [:]
         let rawStateRanges: [InputTimelineStateRange] = Self.overlappingStateSegments(stateSegments, start: windowStart, end: windowEnd).compactMap { segment in
             guard includeAwayState || segment.state != .away else { return nil }
@@ -325,9 +324,8 @@ public struct InputTimelineSnapshot: Hashable, Sendable {
                 state: segment.state
             )
         }
-        self.stateRanges = Self.smoothedStateRanges(
+        self.stateRanges = Self.displayStateRanges(
             rawStateRanges,
-            minVisibleSeconds: displayStateMinVisibleSeconds,
             windowSeconds: windowSeconds
         )
         self.stateDurations = durations
@@ -403,9 +401,9 @@ public struct InputTimelineSnapshot: Hashable, Sendable {
         aggregateSeconds: TimeInterval
     ) -> [InputActivityBucket] {
         var grouped: [Date: InputActivityBucket] = [:]
-        for bucket in orderedInputActivityBuckets(inputActivity) {
-            if bucket.end <= start { continue }
-            if bucket.start >= end { break }
+        for bucket in orderedInputActivityBuckets(inputActivity).reversed() {
+            if bucket.start >= end { continue }
+            if bucket.end <= start { break }
             let key = InputActivityRecorder.bucketStart(for: bucket.start, bucketSeconds: aggregateSeconds)
             let bucketEnd = key.addingTimeInterval(aggregateSeconds)
             var aggregate = grouped[key] ?? InputActivityBucket(start: key, end: bucketEnd)
@@ -431,22 +429,22 @@ public struct InputTimelineSnapshot: Hashable, Sendable {
 
     private static func overlappingStateSegments(_ segments: [StateSegment], start: Date, end: Date) -> [StateSegment] {
         var result: [StateSegment] = []
-        for segment in orderedStateSegments(segments) {
-            if segment.end <= start { continue }
-            if segment.start >= end { break }
+        for segment in orderedStateSegments(segments).reversed() {
+            if segment.start >= end { continue }
+            if segment.end <= start { break }
             result.append(segment)
         }
-        return result
+        return Array(result.reversed())
     }
 
     private static func overlappingAppUsageSegments(_ segments: [AppUsageSegment], start: Date, end: Date) -> [AppUsageSegment] {
         var result: [AppUsageSegment] = []
-        for segment in orderedAppUsageSegments(segments) {
-            if segment.end <= start { continue }
-            if segment.start >= end { break }
+        for segment in orderedAppUsageSegments(segments).reversed() {
+            if segment.start >= end { continue }
+            if segment.end <= start { break }
             result.append(segment)
         }
-        return result
+        return Array(result.reversed())
     }
 
     private static func orderedStateSegments(_ segments: [StateSegment]) -> [StateSegment] {
@@ -469,67 +467,13 @@ public struct InputTimelineSnapshot: Hashable, Sendable {
         return segments
     }
 
-    private static func smoothedStateRanges(
+    private static func displayStateRanges(
         _ ranges: [InputTimelineStateRange],
-        minVisibleSeconds: TimeInterval,
         windowSeconds: TimeInterval
     ) -> [InputTimelineStateRange] {
         guard ranges.count > 1 else { return ranges }
-        let minimumWidth = min(0.03, max(0.002, minVisibleSeconds / max(1, windowSeconds)))
-        let mergeGap = min(0.01, max(0.001, minimumWidth * 0.6))
-        var result = mergeAdjacentStateRanges(ranges, maxGap: mergeGap)
-        var changed = true
-
-        while changed {
-            changed = false
-            guard result.count > 1 else { break }
-
-            var index = result.startIndex
-            while index < result.endIndex {
-                let range = result[index]
-                let width = range.endProgress - range.startProgress
-                guard width < minimumWidth else {
-                    index = result.index(after: index)
-                    continue
-                }
-
-                let previousIndex = index > result.startIndex ? result.index(before: index) : nil
-                let nextIndex = result.index(after: index) < result.endIndex ? result.index(after: index) : nil
-                let canUsePrevious = previousIndex.map { isAdjacent(result[$0], range, maxGap: mergeGap) } ?? false
-                let canUseNext = nextIndex.map { isAdjacent(range, result[$0], maxGap: mergeGap) } ?? false
-
-                if let previousIndex,
-                   let nextIndex,
-                   canUsePrevious,
-                   canUseNext,
-                   result[previousIndex].state == result[nextIndex].state {
-                    result[previousIndex].endProgress = result[nextIndex].endProgress
-                    result.remove(at: nextIndex)
-                    result.remove(at: index)
-                    changed = true
-                    break
-                }
-
-                if let previousIndex, canUsePrevious, (!canUseNext || result[previousIndex].width >= result[nextIndex!].width) {
-                    result[previousIndex].endProgress = max(result[previousIndex].endProgress, range.endProgress)
-                    result.remove(at: index)
-                    changed = true
-                    break
-                }
-
-                if let nextIndex, canUseNext {
-                    result[nextIndex].startProgress = min(result[nextIndex].startProgress, range.startProgress)
-                    result.remove(at: index)
-                    changed = true
-                    break
-                }
-
-                index = result.index(after: index)
-            }
-            result = mergeAdjacentStateRanges(result, maxGap: mergeGap)
-        }
-
-        return result
+        let mergeGap = min(0.001, max(0.00002, 1 / max(1, windowSeconds)))
+        return mergeAdjacentStateRanges(ranges, maxGap: mergeGap)
     }
 
     private static func mergeAdjacentStateRanges(

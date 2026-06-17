@@ -334,6 +334,48 @@ public struct PetSettings: Codable, Hashable, Sendable {
     }
 }
 
+public struct DesktopWidgetPosition: Codable, Hashable, Sendable {
+    public var x: Double
+    public var y: Double
+
+    public init(x: Double, y: Double) {
+        self.x = x
+        self.y = y
+    }
+}
+
+public struct DesktopWidgetSettings: Codable, Hashable, Sendable {
+    public var currentStatusVisible: Bool
+    public var recentRhythmVisible: Bool
+    public var currentStatusOrigin: DesktopWidgetPosition?
+    public var recentRhythmOrigin: DesktopWidgetPosition?
+
+    public var hasVisibleCards: Bool {
+        currentStatusVisible || recentRhythmVisible
+    }
+
+    public init(
+        currentStatusVisible: Bool = false,
+        recentRhythmVisible: Bool = false,
+        currentStatusOrigin: DesktopWidgetPosition? = nil,
+        recentRhythmOrigin: DesktopWidgetPosition? = nil
+    ) {
+        self.currentStatusVisible = currentStatusVisible
+        self.recentRhythmVisible = recentRhythmVisible
+        self.currentStatusOrigin = currentStatusOrigin
+        self.recentRhythmOrigin = recentRhythmOrigin
+    }
+
+    public init(allVisible: Bool) {
+        self.init(currentStatusVisible: allVisible, recentRhythmVisible: allVisible)
+    }
+
+    public mutating func setAllVisible(_ visible: Bool) {
+        currentStatusVisible = visible
+        recentRhythmVisible = visible
+    }
+}
+
 public struct AppSettings: Codable, Hashable, Sendable {
     public var hasCompletedOnboarding: Bool
     public var privacy: WindowTitlePrivacy
@@ -341,9 +383,15 @@ public struct AppSettings: Codable, Hashable, Sendable {
     public var retention: DataRetentionSettings
     public var judgment: JudgmentSettings
     public var pet: PetSettings
+    public var desktopWidget: DesktopWidgetSettings
     public var focusTargetMinutes: Int
     public var breakMinutes: Int
     public var autoStartBreak: Bool
+
+    public var desktopWidgetVisible: Bool {
+        get { desktopWidget.hasVisibleCards }
+        set { desktopWidget.setAllVisible(newValue) }
+    }
 
     public init(
         hasCompletedOnboarding: Bool = false,
@@ -352,6 +400,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         retention: DataRetentionSettings = DataRetentionSettings(),
         judgment: JudgmentSettings = JudgmentSettings(),
         pet: PetSettings = PetSettings(),
+        desktopWidget: DesktopWidgetSettings = DesktopWidgetSettings(),
+        desktopWidgetVisible: Bool? = nil,
         focusTargetMinutes: Int = 25,
         breakMinutes: Int = 5,
         autoStartBreak: Bool = true
@@ -362,6 +412,10 @@ public struct AppSettings: Codable, Hashable, Sendable {
         self.retention = retention
         self.judgment = judgment
         self.pet = pet
+        self.desktopWidget = desktopWidget
+        if let desktopWidgetVisible {
+            self.desktopWidget.setAllVisible(desktopWidgetVisible)
+        }
         self.focusTargetMinutes = max(1, focusTargetMinutes)
         self.breakMinutes = max(1, breakMinutes)
         self.autoStartBreak = autoStartBreak
@@ -374,6 +428,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
         case retention
         case judgment
         case pet
+        case desktopWidget
+        case desktopWidgetVisible
         case focusTargetMinutes
         case breakMinutes
         case autoStartBreak
@@ -381,6 +437,8 @@ public struct AppSettings: Codable, Hashable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedDesktopWidget = try container.decodeIfPresent(DesktopWidgetSettings.self, forKey: .desktopWidget)
+        let legacyDesktopWidgetVisible = try container.decodeIfPresent(Bool.self, forKey: .desktopWidgetVisible)
         self.init(
             hasCompletedOnboarding: try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false,
             privacy: try container.decodeIfPresent(WindowTitlePrivacy.self, forKey: .privacy) ?? .default,
@@ -388,10 +446,27 @@ public struct AppSettings: Codable, Hashable, Sendable {
             retention: try container.decodeIfPresent(DataRetentionSettings.self, forKey: .retention) ?? DataRetentionSettings(),
             judgment: try container.decodeIfPresent(JudgmentSettings.self, forKey: .judgment) ?? JudgmentSettings(),
             pet: try container.decodeIfPresent(PetSettings.self, forKey: .pet) ?? PetSettings(),
+            desktopWidget: decodedDesktopWidget ?? DesktopWidgetSettings(),
+            desktopWidgetVisible: decodedDesktopWidget == nil ? legacyDesktopWidgetVisible : nil,
             focusTargetMinutes: try container.decodeIfPresent(Int.self, forKey: .focusTargetMinutes) ?? 25,
             breakMinutes: try container.decodeIfPresent(Int.self, forKey: .breakMinutes) ?? 5,
             autoStartBreak: try container.decodeIfPresent(Bool.self, forKey: .autoStartBreak) ?? true
         )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
+        try container.encode(privacy, forKey: .privacy)
+        try container.encode(reminder, forKey: .reminder)
+        try container.encode(retention, forKey: .retention)
+        try container.encode(judgment, forKey: .judgment)
+        try container.encode(pet, forKey: .pet)
+        try container.encode(desktopWidget, forKey: .desktopWidget)
+        try container.encode(desktopWidgetVisible, forKey: .desktopWidgetVisible)
+        try container.encode(focusTargetMinutes, forKey: .focusTargetMinutes)
+        try container.encode(breakMinutes, forKey: .breakMinutes)
+        try container.encode(autoStartBreak, forKey: .autoStartBreak)
     }
 }
 

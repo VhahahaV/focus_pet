@@ -55,7 +55,7 @@ public enum FocusPetFormatters {
     }
 
     public static func contextSwitches(_ value: Int) -> String {
-        "上下文切换 \(compactCount(value)) 次"
+        "切换 \(compactCount(value)) 次"
     }
 
     private static func cachedClockFormatter() -> DateFormatter {

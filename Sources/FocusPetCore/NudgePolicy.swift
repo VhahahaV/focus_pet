@@ -237,9 +237,11 @@ public struct NudgePolicy: Sendable {
         message: String,
         lastTriggeredAt: [NudgeReason: Date]
     ) -> NudgeEvent? {
-        if let last = lastTriggeredAt[reason],
-           now.timeIntervalSince(last) < thresholds.cooldownSeconds {
-            return nil
+        for cooldownReason in cooldownReasons(for: reason) {
+            if let last = lastTriggeredAt[cooldownReason],
+               now.timeIntervalSince(last) < thresholds.cooldownSeconds {
+                return nil
+            }
         }
 
         return NudgeEvent(
@@ -252,6 +254,21 @@ public struct NudgePolicy: Sendable {
             cooldownSeconds: thresholds.cooldownSeconds,
             message: message
         )
+    }
+
+    private func cooldownReasons(for reason: NudgeReason) -> [NudgeReason] {
+        switch reason {
+        case .distractedOverThreshold, .distractedStrong, .frequentSwitching:
+            return [.distractedOverThreshold, .distractedStrong, .frequentSwitching]
+        case .longFocusRest, .veryLongFocusRest:
+            return [.longFocusRest, .veryLongFocusRest]
+        case .focusSessionCompleted:
+            return [.focusSessionCompleted]
+        case .breakEnding:
+            return [.breakEnding]
+        case .welcomeBack:
+            return [.welcomeBack]
+        }
     }
 }
 

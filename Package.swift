@@ -9,7 +9,10 @@ let package = Package(
     ],
     products: [
         .executable(name: "FocusPet", targets: ["FocusPetMac"]),
-        .executable(name: "FocusPetCoreChecks", targets: ["FocusPetCoreChecks"])
+        .executable(name: "FocusPetCoreChecks", targets: ["FocusPetCoreChecks"]),
+        .executable(name: "FocusPetWidgetExtension", targets: ["FocusPetWidgetExtension"]),
+        .executable(name: "FocusPetWidgetPreview", targets: ["FocusPetWidgetPreview"]),
+        .library(name: "FocusPetWidgets", targets: ["FocusPetWidgets"])
     ],
     targets: [
         .target(
@@ -33,19 +36,32 @@ let package = Package(
             name: "FocusPetRenderer",
             dependencies: ["FocusPetCore", "FocusPetResources"]
         ),
+        .target(
+            name: "FocusPetWidgets",
+            dependencies: ["FocusPetCore"]
+        ),
         .executableTarget(
             name: "FocusPetMac",
             dependencies: [
                 "FocusPetCore",
                 "FocusPetStorage",
                 "FocusPetResources",
-                "FocusPetRenderer"
+                "FocusPetRenderer",
+                "FocusPetWidgets"
             ],
             resources: [
                 .copy("Resources/AppIcon.png"),
                 .copy("Resources/AppIcon.icns"),
                 .copy("Resources/StatusIcon.png")
             ]
+        ),
+        .executableTarget(
+            name: "FocusPetWidgetExtension",
+            dependencies: ["FocusPetWidgets"]
+        ),
+        .executableTarget(
+            name: "FocusPetWidgetPreview",
+            dependencies: ["FocusPetWidgets"]
         ),
         .executableTarget(
             name: "FocusPetCoreChecks",

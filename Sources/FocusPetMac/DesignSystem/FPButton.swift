@@ -7,20 +7,24 @@ struct FPPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(FPTypography.bodyMedium)
-            .foregroundStyle(.white)
+            .foregroundStyle(status.strongText)
             .frame(height: FPSize.buttonHeight)
             .frame(maxWidth: fullWidth ? .infinity : nil)
             .padding(.horizontal, fullWidth ? 0 : FPSpacing.lg)
             .background(
                 RoundedRectangle(cornerRadius: FPRadius.medium, style: .continuous)
-                    .fill(status.primary.opacity(configuration.isPressed ? 0.82 : 1))
+                    .fill(status.softBackground.opacity(configuration.isPressed ? 0.24 : 0.36))
             )
-            .shadow(
-                color: status.primary.opacity(configuration.isPressed ? 0.04 : 0.12),
-                radius: configuration.isPressed ? 4 : 10,
-                x: 0,
-                y: configuration.isPressed ? 2 : 5
+            .fpGlassBackground(
+                role: .button,
+                cornerRadius: FPRadius.medium,
+                tint: status.primary,
+                isPressed: configuration.isPressed,
+                isSelected: true,
+                intensity: 1.08
             )
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.linear(duration: 0.05), value: configuration.isPressed)
     }
 }
 
@@ -35,11 +39,17 @@ struct FPSoftButtonStyle: ButtonStyle {
             .padding(.horizontal, 14)
             .background(
                 RoundedRectangle(cornerRadius: FPRadius.medium, style: .continuous)
-                    .fill(configuration.isPressed ? status.softBackground.opacity(0.7) : status.softBackground)
+                    .fill(configuration.isPressed ? status.softBackground.opacity(0.26) : status.softBackground.opacity(0.18))
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: FPRadius.medium, style: .continuous)
-                    .stroke(status.border, lineWidth: 1)
+            .fpGlassBackground(
+                role: .button,
+                cornerRadius: FPRadius.medium,
+                tint: status.primary,
+                isPressed: configuration.isPressed,
+                isSelected: false,
+                intensity: 0.92
             )
+            .scaleEffect(configuration.isPressed ? 0.986 : 1)
+            .animation(.linear(duration: 0.05), value: configuration.isPressed)
     }
 }

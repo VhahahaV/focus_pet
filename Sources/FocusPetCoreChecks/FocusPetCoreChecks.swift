@@ -27,7 +27,7 @@ enum FocusPetCoreChecks {
         checkSummary()
         checkInputActivityBuckets()
         checkInputTimelineSnapshot()
-        checkInputTimelineStateSmoothing()
+        checkInputTimelineStateDisplay()
         checkInputWorkloadSummary()
         checkInputActivityStorage()
         checkLocalStoreSchemaCompatibility()
@@ -828,6 +828,41 @@ enum FocusPetCoreChecks {
         expect(settings.judgment.focusRecoverySeconds == 10, "legacy app settings should default focus recovery threshold")
         expect(settings.judgment.idleAwaySeconds == 600, "legacy app settings should default idle away threshold")
         expect(settings.retention.inputActivityRetentionDays == 30, "legacy app settings should default input activity retention")
+        expect(!settings.desktopWidgetVisible, "legacy app settings should default desktop widget card to hidden")
+        expect(!settings.desktopWidget.currentStatusVisible, "legacy app settings should default current status card to hidden")
+        expect(!settings.desktopWidget.recentRhythmVisible, "legacy app settings should default recent rhythm card to hidden")
+
+        let legacyVisibleJSON = """
+        {
+          "hasCompletedOnboarding": true,
+          "focusTargetMinutes": 25,
+          "breakMinutes": 5,
+          "autoStartBreak": true,
+          "desktopWidgetVisible": true
+        }
+        """
+        guard let visibleData = legacyVisibleJSON.data(using: .utf8),
+              let visibleSettings = try? JSONDecoder().decode(AppSettings.self, from: visibleData) else {
+            expect(false, "app settings should decode legacy visible desktop widget JSON")
+            return
+        }
+        expect(visibleSettings.desktopWidget.currentStatusVisible, "legacy visible desktop widget should show current status card")
+        expect(visibleSettings.desktopWidget.recentRhythmVisible, "legacy visible desktop widget should show recent rhythm card")
+
+        var positionedSettings = AppSettings(
+            desktopWidget: DesktopWidgetSettings(
+                currentStatusVisible: true,
+                recentRhythmVisible: true,
+                currentStatusOrigin: DesktopWidgetPosition(x: 120, y: 760),
+                recentRhythmOrigin: DesktopWidgetPosition(x: 320, y: 760)
+            )
+        )
+        positionedSettings.desktopWidgetVisible = false
+        expect(positionedSettings.desktopWidget.currentStatusOrigin == DesktopWidgetPosition(x: 120, y: 760), "hiding desktop widget should keep current status origin")
+        expect(positionedSettings.desktopWidget.recentRhythmOrigin == DesktopWidgetPosition(x: 320, y: 760), "hiding desktop widget should keep recent rhythm origin")
+        positionedSettings.desktopWidgetVisible = true
+        expect(positionedSettings.desktopWidget.currentStatusOrigin == DesktopWidgetPosition(x: 120, y: 760), "showing desktop widget should keep current status origin")
+        expect(positionedSettings.desktopWidget.recentRhythmOrigin == DesktopWidgetPosition(x: 320, y: 760), "showing desktop widget should keep recent rhythm origin")
     }
 
     private static func checkInputActivityBuckets() {
@@ -928,7 +963,7 @@ enum FocusPetCoreChecks {
         expect(snapshot.appSegments[1].appName == "Safari", "input timeline should keep the next stable app segment")
     }
 
-    private static func checkInputTimelineStateSmoothing() {
+    private static func checkInputTimelineStateDisplay() {
         let start = Date(timeIntervalSince1970: 1_000)
         let now = start.addingTimeInterval(7_200)
         let snapshot = InputTimelineSnapshot(
@@ -944,9 +979,11 @@ enum FocusPetCoreChecks {
             now: now
         )
 
-        expect(snapshot.stateDurations[.distracted] == 20, "state smoothing should preserve raw state durations")
-        expect(snapshot.stateRanges.count == 2, "state smoothing should hide tiny visual fragments")
-        expect(snapshot.stateRanges[0].state == .focus && snapshot.stateRanges[1].state == .breakTime, "state smoothing should merge tiny fragments into nearby states")
+        expect(snapshot.stateDurations[.distracted] == 20, "state display should preserve raw state durations")
+        expect(snapshot.stateRanges.count == 4, "state display should keep tiny visual fragments")
+        expect(snapshot.stateRanges[0].state == .focus, "state display should keep the first focus range")
+        expect(snapshot.stateRanges[1].state == .distracted && snapshot.stateRanges[1].endProgress > snapshot.stateRanges[1].startProgress, "state display should keep the tiny distracted range")
+        expect(snapshot.stateRanges[2].state == .focus && snapshot.stateRanges[3].state == .breakTime, "state display should keep following focus and break ranges")
     }
 
     private static func checkInputWorkloadSummary() {
@@ -969,7 +1006,7 @@ enum FocusPetCoreChecks {
         expect(summary.contextSwitchCount == 5, "workload summary should aggregate context switches")
         expect(summary.totalWorkloadEvents == 30 && summary.activeMinutes == 2, "workload summary should expose readable totals")
         expect(FocusPetFormatters.estimatedTypedCharacters(20) == "键入约 20 字", "typed character formatter should be readable")
-        expect(FocusPetFormatters.contextSwitches(5) == "上下文切换 5 次", "context switch formatter should be readable")
+        expect(FocusPetFormatters.contextSwitches(5) == "切换 5 次", "context switch formatter should be readable")
     }
 
     private static func checkInputActivityStorage() {

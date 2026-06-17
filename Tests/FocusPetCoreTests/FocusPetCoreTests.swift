@@ -388,6 +388,50 @@ struct FocusPetMVPProbe {
             && distractedReturn == nil
     }
 
+    func nudgeCooldownAppliesAcrossSimilarReasons() -> Bool {
+        let now = Date(timeIntervalSince1970: 4_000)
+        let focusState = FocusStateSnapshot(
+            timestamp: now,
+            state: .focus,
+            category: .work,
+            stableDuration: 60 * 60,
+            appName: "Cursor",
+            bundleID: "cursor"
+        )
+        let distractedState = FocusStateSnapshot(
+            timestamp: now,
+            state: .distracted,
+            category: .entertainment,
+            stableDuration: 15 * 60,
+            appName: "Browser",
+            bundleID: "browser"
+        )
+        let policy = NudgePolicy()
+
+        let recentFocusNudge = policy.nudge(
+            for: focusState,
+            previousState: .focus,
+            now: now,
+            lastTriggeredAt: [.longFocusRest: now.addingTimeInterval(-5 * 60)]
+        )
+        let recentDistractedNudge = policy.nudge(
+            for: distractedState,
+            previousState: .focus,
+            now: now,
+            lastTriggeredAt: [.distractedOverThreshold: now.addingTimeInterval(-5 * 60)]
+        )
+        let afterCooldown = policy.nudge(
+            for: focusState,
+            previousState: .focus,
+            now: now,
+            lastTriggeredAt: [.longFocusRest: now.addingTimeInterval(-11 * 60)]
+        )
+
+        return recentFocusNudge == nil
+            && recentDistractedNudge == nil
+            && afterCooldown?.reason == .veryLongFocusRest
+    }
+
     func legacyReminderSettingsDefaultToCustomizableNudgeParameters() -> Bool {
         let legacyJSON = """
         {
@@ -561,6 +605,51 @@ struct FocusPetMVPProbe {
             && settings.judgment.focusRecoverySeconds == 10
             && settings.judgment.idleAwaySeconds == 600
             && settings.retention.inputActivityRetentionDays == 30
+            && !settings.desktopWidgetVisible
+            && !settings.desktopWidget.currentStatusVisible
+            && !settings.desktopWidget.recentRhythmVisible
+    }
+
+    func legacyDesktopWidgetVisibleMigratesToBothCards() -> Bool {
+        let legacyJSON = """
+        {
+          "hasCompletedOnboarding": true,
+          "focusTargetMinutes": 25,
+          "breakMinutes": 5,
+          "autoStartBreak": true,
+          "desktopWidgetVisible": true
+        }
+        """
+        guard let data = legacyJSON.data(using: .utf8),
+              let settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {
+            return false
+        }
+
+        return settings.desktopWidgetVisible
+            && settings.desktopWidget.currentStatusVisible
+            && settings.desktopWidget.recentRhythmVisible
+    }
+
+    func desktopWidgetVisibilityChangesPreserveStoredOrigins() -> Bool {
+        var settings = AppSettings(
+            desktopWidget: DesktopWidgetSettings(
+                currentStatusVisible: true,
+                recentRhythmVisible: true,
+                currentStatusOrigin: DesktopWidgetPosition(x: 120, y: 760),
+                recentRhythmOrigin: DesktopWidgetPosition(x: 320, y: 760)
+            )
+        )
+
+        settings.desktopWidgetVisible = false
+        let hiddenKeepsOrigins = settings.desktopWidget.currentStatusOrigin == DesktopWidgetPosition(x: 120, y: 760)
+            && settings.desktopWidget.recentRhythmOrigin == DesktopWidgetPosition(x: 320, y: 760)
+
+        settings.desktopWidgetVisible = true
+        return hiddenKeepsOrigins
+            && settings.desktopWidget.currentStatusVisible
+            && settings.desktopWidget.recentRhythmVisible
+            && settings.desktopWidget.currentStatusOrigin == DesktopWidgetPosition(x: 120, y: 760)
+            && settings.desktopWidget.recentRhythmOrigin == DesktopWidgetPosition(x: 320, y: 760)
     }
 
     func focusSessionReportsCompletionAndDecodesLegacyJSON() -> Bool {
@@ -1049,7 +1138,7 @@ struct FocusPetMVPProbe {
             && snapshot.appSegments[1].appName == "Safari"
     }
 
-    func inputTimelineSnapshotSmoothsTinyStateFragments() -> Bool {
+    func inputTimelineSnapshotPreservesTinyStateFragments() -> Bool {
         let start = Date(timeIntervalSince1970: 1_000)
         let now = start.addingTimeInterval(7_200)
         let snapshot = InputTimelineSnapshot(
@@ -1066,9 +1155,12 @@ struct FocusPetMVPProbe {
         )
 
         return snapshot.stateDurations[.distracted] == 20
-            && snapshot.stateRanges.count == 2
+            && snapshot.stateRanges.count == 4
             && snapshot.stateRanges[0].state == .focus
-            && snapshot.stateRanges[1].state == .breakTime
+            && snapshot.stateRanges[1].state == .distracted
+            && snapshot.stateRanges[1].endProgress > snapshot.stateRanges[1].startProgress
+            && snapshot.stateRanges[2].state == .focus
+            && snapshot.stateRanges[3].state == .breakTime
     }
 
     func inputWorkloadSummaryAggregatesReadableMetrics() -> Bool {
@@ -1111,7 +1203,7 @@ struct FocusPetMVPProbe {
             && summary.totalWorkloadEvents == 30
             && summary.activeMinutes == 2
             && FocusPetFormatters.estimatedTypedCharacters(summary.estimatedTypedCharacters) == "键入约 20 字"
-            && FocusPetFormatters.contextSwitches(summary.contextSwitchCount) == "上下文切换 5 次"
+            && FocusPetFormatters.contextSwitches(summary.contextSwitchCount) == "切换 5 次"
     }
 
     func overnightIdleIsNotHeuristicallyConvertedToAway() -> Bool {
@@ -1200,6 +1292,7 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.frequentSwitchingDoesNotBecomeDistracted(), "app switching alone should not be distracted")
     precondition(probe.focusTwentyFiveMinutesTriggersRestNudge(), "25 minutes focus should trigger rest nudge")
     precondition(probe.welcomeBackRequiresLongAwayTransition(), "welcome back should require a real long-away transition")
+    precondition(probe.nudgeCooldownAppliesAcrossSimilarReasons(), "similar reminders should share cooldown")
     precondition(probe.legacyReminderSettingsDefaultToCustomizableNudgeParameters(), "legacy reminder settings should decode new nudge defaults")
     precondition(probe.reminderSettingsCustomizeNudgePolicyAndClampValues(), "reminder settings should customize nudge thresholds and clamp values")
     precondition(probe.windowTitlePrivacyDoesNotStoreRawTitleByDefault(), "default privacy should not store raw titles")
@@ -1208,6 +1301,8 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.appUsageRankingHidesSystemPseudoAppsButKeepsUnclassifiedApps(), "app usage should hide pseudo system activity but keep unclassified real apps")
     precondition(probe.legacyPetSettingsDefaultToInteractivePlacement(), "legacy pet settings should decode with interaction defaults")
     precondition(probe.legacyAppSettingsDefaultJudgmentParameters(), "legacy app settings should decode judgment defaults")
+    precondition(probe.legacyDesktopWidgetVisibleMigratesToBothCards(), "legacy desktop widget visibility should migrate to both cards")
+    precondition(probe.desktopWidgetVisibilityChangesPreserveStoredOrigins(), "desktop widget visibility changes should preserve stored origins")
     precondition(probe.focusSessionReportsCompletionAndDecodesLegacyJSON(), "focus sessions should expose completion and decode legacy JSON")
     precondition(probe.groupedRulesClassifyExpectedCategories(), "grouped rules should classify apps and title keywords")
     precondition(probe.neutralIsLegacyOnlyAndHiddenFromUserChoices(), "neutral should be hidden from user-facing classification choices")
@@ -1223,7 +1318,7 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.localStoreAdoptsMissingSchemaWithoutDeletingData(), "missing local store schema should be adopted without deleting data")
     precondition(probe.retentionPrunesInputActivityBuckets(), "retention should prune input activity buckets")
     precondition(probe.inputTimelineSnapshotAggregatesInputAndSmoothsApps(), "input timeline snapshot should aggregate input and smooth short app switches")
-    precondition(probe.inputTimelineSnapshotSmoothsTinyStateFragments(), "input timeline snapshot should smooth tiny state fragments for display")
+    precondition(probe.inputTimelineSnapshotPreservesTinyStateFragments(), "input timeline snapshot should preserve tiny state fragments for display")
     precondition(probe.inputWorkloadSummaryAggregatesReadableMetrics(), "input workload should expose user-readable activity metrics")
     precondition(probe.overnightIdleIsNotHeuristicallyConvertedToAway(), "stored history should not be heuristically rewritten")
     precondition(probe.dashboardPetDockFrameTracksWindowMovement(), "dashboard pet dock frame should move with the dashboard window")

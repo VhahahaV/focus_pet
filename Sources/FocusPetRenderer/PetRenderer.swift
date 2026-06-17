@@ -435,9 +435,14 @@ public final class PetPanelController {
         temporaryFrame = frame
         let expiresAt = duration.map { Date().addingTimeInterval(max(0.25, $0)) } ?? .distantFuture
         temporaryFrameExpiresAt = expiresAt
-        lastPlacedFrame = nil
-        panel.setFrame(frame, display: true, animate: false)
-        panel.orderFrontRegardless()
+        let isAlreadyPinned = framesApproximatelyEqual(temporaryFrame, frame)
+            && framesApproximatelyEqual(Optional(panel.frame), frame)
+            && panel.isVisible
+        if !isAlreadyPinned {
+            lastPlacedFrame = nil
+            panel.setFrame(frame, display: true, animate: false)
+            panel.orderFrontRegardless()
+        }
         if duration != nil {
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: UInt64(max(0.25, duration ?? 0) * 1_000_000_000))
@@ -799,6 +804,8 @@ private struct PetBubbleSurface: View {
                                     .font(.caption.weight(.bold))
                                 Text(buttonTitle(at: context.date))
                                     .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.86)
                                 Spacer(minLength: 0)
                                 Image(systemName: "chevron.right")
                                     .font(.caption2.weight(.bold))
@@ -813,16 +820,11 @@ private struct PetBubbleSurface: View {
                     }
 
                     if let mappedActionTitle {
-                        Button(action: cycleIntentAction) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 28, height: 28)
-                                .background(Color.accentColor.opacity(0.86), in: Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .contentShape(Circle())
-                        .help("切换\(activeIntentTitle ?? "当前")动作：\(mappedActionTitle)")
+                        PetActionSwitchButton(
+                            activeIntentTitle: activeIntentTitle,
+                            mappedActionTitle: mappedActionTitle,
+                            action: cycleIntentAction
+                        )
                     }
                 }
             } else {
@@ -878,6 +880,44 @@ private struct PetBubbleSurface: View {
     }
 }
 
+private struct PetActionSwitchButton: View {
+    var activeIntentTitle: String?
+    var mappedActionTitle: String
+    var action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.caption.weight(.bold))
+                Text("换动作")
+                    .font(.caption2.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+            }
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, 9)
+            .frame(height: 30)
+            .background {
+                Capsule()
+                    .fill(Color.accentColor.opacity(isHovered ? 0.18 : 0.13).gradient)
+            }
+            .overlay {
+                Capsule()
+                    .stroke(Color.accentColor.opacity(isHovered ? 0.62 : 0.42), lineWidth: 1)
+            }
+            .shadow(color: Color.accentColor.opacity(isHovered ? 0.22 : 0.14), radius: isHovered ? 7 : 4, y: 2)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Capsule())
+        .onHover { isHovered = $0 }
+        .help("换一个\(activeIntentTitle ?? "当前")动作，当前：\(mappedActionTitle)")
+        .animation(.easeOut(duration: 0.16), value: isHovered)
+    }
+}
+
 private struct BubbleTail: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
@@ -901,12 +941,13 @@ private struct PetRendererView: View {
         let displayIntent = renderState.displayIntent(isHovering: usesHoverPresentation)
         let showsHoverContext = usesHoverPresentation && renderState.hoverStatusEnabled
         let hasStatusSurface = renderState.message != nil || showsHoverContext
-        let displayFramesPerSecond = min(10, max(1, renderState.displayFramesPerSecond(isHovering: usesHoverPresentation)))
+        let maxFramesPerSecond = usesHoverPresentation ? 8.0 : 6.0
+        let displayFramesPerSecond = min(maxFramesPerSecond, max(1, renderState.displayFramesPerSecond(isHovering: usesHoverPresentation)))
         let throttledFramesPerSecond = (!usesHoverPresentation && displayIntent == .quietCompanion)
             ? min(2, displayFramesPerSecond)
             : displayFramesPerSecond
         let frameInterval = 1 / throttledFramesPerSecond
-        let bubbleWidth = max(196, min(236, renderState.size + 86))
+        let bubbleWidth = max(214, min(258, renderState.size + 108))
         let bubbleHeight: CGFloat = showsHoverContext ? 118 : 54
         let panelWidth = max(renderState.size, bubbleWidth)
         let panelHeight = renderState.size + 128

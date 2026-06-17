@@ -78,13 +78,7 @@ final class SystemNotificationSender: NSObject, UNUserNotificationCenterDelegate
             case .authorized, .provisional:
                 Self.addNotification(id: id, title: title, body: body, completion: completion)
             case .notDetermined:
-                center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-                    guard granted else {
-                        completion?(.notGranted)
-                        return
-                    }
-                    Self.addNotification(id: id, title: title, body: body, completion: completion)
-                }
+                completion?(.notGranted)
             case .denied:
                 completion?(.permissionDenied)
             @unknown default:

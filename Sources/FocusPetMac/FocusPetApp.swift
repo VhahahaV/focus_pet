@@ -27,6 +27,14 @@ struct FocusPetApp: App {
         }
         .defaultSize(width: 1180, height: 820)
         .windowStyle(.hiddenTitleBar)
+        .commands {
+            CommandMenu("状态卡") {
+                Button(model.desktopWidgetPanelIsVisible ? "隐藏全部桌面状态卡" : "显示桌面状态卡") {
+                    model.toggleDesktopWidgetPanel()
+                }
+                .keyboardShortcut("d", modifiers: [.command, .option])
+            }
+        }
     }
 }
 

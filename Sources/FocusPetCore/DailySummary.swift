@@ -74,8 +74,9 @@ public struct DailySummaryBuilder: Sendable {
             result[segment.state, default: 0] += segment.durationSeconds
         }
 
-        let appSummary = makeAppSummary(from: clipped, appUsage: appUsage, bounds: bounds)
-        let categorySummary = makeCategorySummary(from: clipped, appUsage: appUsage, bounds: bounds)
+        let appUsageInDay = appUsage.filter { overlaps($0.start, $0.end, bounds: bounds) }
+        let appSummary = makeAppSummary(from: clipped, appUsage: appUsageInDay)
+        let categorySummary = makeCategorySummary(from: clipped, appUsageInDay: appUsageInDay, bounds: bounds)
 
         return DailySummary(
             date: Self.dateString(from: date),
@@ -88,7 +89,7 @@ public struct DailySummaryBuilder: Sendable {
             distractedCount: clipped.filter { $0.state == .distracted }.count,
             awayCount: clipped.filter { $0.state == .away }.count,
             nudgeCount: nudges.filter { $0.time >= bounds.start && $0.time < bounds.end }.count,
-            switchCount: appUsage.filter { overlaps($0.start, $0.end, bounds: bounds) }.count,
+            switchCount: appUsageInDay.count,
             appUsage: appSummary,
             categoryUsage: categorySummary
         )
@@ -96,12 +97,11 @@ public struct DailySummaryBuilder: Sendable {
 
     private func makeAppSummary(
         from segments: [StateSegment],
-        appUsage: [AppUsageSegment],
-        bounds: (start: Date, end: Date)
+        appUsage: [AppUsageSegment]
     ) -> [AppUsageSummary] {
         var result: [String: AppUsageSummary] = [:]
 
-        for usage in appUsage where overlaps(usage.start, usage.end, bounds: bounds) {
+        for usage in appUsage {
             let category = normalizedCategory(usage.category)
             guard !isHiddenSystemUsage(appName: usage.appName, bundleID: usage.bundleID) else { continue }
             let key = "\(usage.bundleID ?? usage.appName)-\(category.rawValue)"
@@ -144,21 +144,20 @@ public struct DailySummaryBuilder: Sendable {
 
     private func makeCategorySummary(
         from segments: [StateSegment],
-        appUsage: [AppUsageSegment],
+        appUsageInDay: [AppUsageSegment],
         bounds: (start: Date, end: Date)
     ) -> [CategoryUsageSummary] {
         var secondsByCategory: [ActivityCategory: Int] = [:]
         var appsByCategory: [ActivityCategory: Set<String>] = [:]
 
-        let usageInDay = appUsage.filter { overlaps($0.start, $0.end, bounds: bounds) }
-        if usageInDay.isEmpty {
+        if appUsageInDay.isEmpty {
             for segment in segments {
                 let category = normalizedCategory(segment.category)
                 secondsByCategory[category, default: 0] += segment.durationSeconds
                 appsByCategory[category, default: []].insert(segment.bundleID ?? segment.appName)
             }
         } else {
-            for usage in usageInDay {
+            for usage in appUsageInDay {
                 let category = normalizedCategory(usage.category)
                 secondsByCategory[category, default: 0] += clippedDuration(start: usage.start, end: usage.end, bounds: bounds)
                 appsByCategory[category, default: []].insert(usage.bundleID ?? usage.appName)

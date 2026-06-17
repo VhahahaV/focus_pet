@@ -22,7 +22,7 @@ enum FPChartPalette {
     static let inputPointer = Color(hex: "#45B7A8")
     static let inputPointerStrong = Color(hex: "#268E82")
     static let inputTrack = Color(hex: "#F0ECFF")
-    static let inputSwitch = Color(hex: "#B8A7FF")
+    static let inputSwitch = Color(hex: "#8A7BAF")
     static let neutralTrack = Color(hex: "#EAF1F7")
     static let gridLine = Color(hex: "#ECF2F8")
     static let axisText = FPColor.textTertiary

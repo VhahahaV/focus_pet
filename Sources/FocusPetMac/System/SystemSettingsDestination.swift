@@ -107,6 +107,10 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
             return .permission(true)
         }
 
+        if canCaptureMainDisplayPixel() {
+            return .permission(true, detail: "已通过屏幕采样确认")
+        }
+
         if canReadForeignWindowTitle() {
             return .permission(true, detail: "已通过窗口标题读取确认")
         }
@@ -183,6 +187,17 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
             let title = info[kCGWindowName as String] as? String
             return title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
+    }
+
+    private static func canCaptureMainDisplayPixel() -> Bool {
+        guard let image = CGDisplayCreateImage(
+            CGMainDisplayID(),
+            rect: CGRect(x: 0, y: 0, width: 1, height: 1)
+        ) else {
+            return false
+        }
+
+        return image.width > 0 && image.height > 0
     }
 
     private static func canReadAccessibilityFocusedApplication() -> Bool {
