@@ -17,7 +17,6 @@ struct RecognitionDiagnosticSnapshot: Equatable {
     var catalogEntryCount: Int
     var defaultRuleCount: Int
     var userRuleCount: Int
-    var screenRecordingStatus: String
     var inputMonitoringStatus: String
     var accessibilityStatus: String
     var recordingPaused: Bool
@@ -42,7 +41,6 @@ struct RecognitionDiagnosticSnapshot: Equatable {
         catalogEntryCount: 0,
         defaultRuleCount: 0,
         userRuleCount: 0,
-        screenRecordingStatus: "检查中",
         inputMonitoringStatus: "检查中",
         accessibilityStatus: "检查中",
         recordingPaused: false
@@ -52,14 +50,12 @@ struct RecognitionDiagnosticSnapshot: Equatable {
 struct SystemPermissionSnapshot: Equatable {
     var refreshedAt: Date
     var inputMonitoring: SystemPermissionStatus
-    var screenRecording: SystemPermissionStatus
     var accessibility: SystemPermissionStatus
     var notifications: SystemPermissionStatus
 
     static let pending = SystemPermissionSnapshot(
         refreshedAt: Date(timeIntervalSince1970: 0),
         inputMonitoring: .checking,
-        screenRecording: .checking,
         accessibility: .checking,
         notifications: .checking
     )
@@ -68,8 +64,6 @@ struct SystemPermissionSnapshot: Equatable {
         switch destination {
         case .inputMonitoring:
             inputMonitoring
-        case .screenRecording:
-            screenRecording
         case .accessibility:
             accessibility
         case .notifications:
@@ -693,7 +687,7 @@ final class FocusPetModel: ObservableObject {
         case .notifications:
             requestNotificationAuthorization(force: true)
             statusMessage = "已请求通知权限。"
-        case .inputMonitoring, .screenRecording:
+        case .inputMonitoring:
             _ = destination.requestAccessIfAvailable()
             destination.open()
             statusMessage = "已打开 macOS \(destination.title) 设置。"
@@ -1216,7 +1210,6 @@ final class FocusPetModel: ObservableObject {
         systemPermissionSnapshot = SystemPermissionSnapshot(
             refreshedAt: Date(),
             inputMonitoring: SystemSettingsDestination.inputMonitoring.currentStatus ?? .checking,
-            screenRecording: SystemSettingsDestination.screenRecording.currentStatus ?? .checking,
             accessibility: SystemSettingsDestination.accessibility.currentStatus ?? .checking,
             notifications: SystemPermissionStatus(
                 title: notificationPermissionTitle,
@@ -1251,7 +1244,6 @@ final class FocusPetModel: ObservableObject {
                 catalogEntryCount: ActivityClassifier.catalogEntries.count,
                 defaultRuleCount: ActivityClassifier.defaultRules.count,
                 userRuleCount: userRuleCount,
-                screenRecordingStatus: SystemSettingsDestination.screenRecording.statusTitle ?? "未知",
                 inputMonitoringStatus: SystemSettingsDestination.inputMonitoring.statusTitle ?? "未知",
                 accessibilityStatus: SystemSettingsDestination.accessibility.statusTitle ?? "未知",
                 recordingPaused: recordingPaused

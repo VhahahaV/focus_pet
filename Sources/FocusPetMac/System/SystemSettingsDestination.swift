@@ -18,7 +18,6 @@ struct SystemPermissionStatus: Equatable, Sendable {
 
 enum SystemSettingsDestination: String, CaseIterable, Identifiable {
     case inputMonitoring
-    case screenRecording
     case notifications
     case accessibility
     case privacySecurity
@@ -28,7 +27,6 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .inputMonitoring: "输入监控"
-        case .screenRecording: "屏幕录制"
         case .notifications: "通知"
         case .accessibility: "辅助功能"
         case .privacySecurity: "隐私与安全"
@@ -43,8 +41,6 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .inputMonitoring:
             return Self.inputMonitoringStatus()
-        case .screenRecording:
-            return Self.screenRecordingStatus()
         case .accessibility:
             return Self.accessibilityStatus()
         case .notifications, .privacySecurity:
@@ -57,8 +53,6 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .inputMonitoring:
             rawValue = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
-        case .screenRecording:
-            rawValue = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
         case .notifications:
             rawValue = "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
         case .accessibility:
@@ -78,8 +72,6 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .inputMonitoring:
             return IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) || CGRequestListenEventAccess()
-        case .screenRecording:
-            return CGRequestScreenCaptureAccess()
         case .accessibility, .notifications, .privacySecurity:
             return nil
         }
@@ -97,22 +89,6 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
 
         if canCreatePassiveInputEventTap() {
             return .permission(true, detail: "已通过输入事件监听确认")
-        }
-
-        return .permission(false, detail: currentAppIdentityHint)
-    }
-
-    private static func screenRecordingStatus() -> SystemPermissionStatus {
-        if CGPreflightScreenCaptureAccess() {
-            return .permission(true)
-        }
-
-        if canCaptureMainDisplayPixel() {
-            return .permission(true, detail: "已通过屏幕采样确认")
-        }
-
-        if canReadForeignWindowTitle() {
-            return .permission(true, detail: "已通过窗口标题读取确认")
         }
 
         return .permission(false, detail: currentAppIdentityHint)
@@ -169,37 +145,6 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
         }
     }
 
-    private static func canReadForeignWindowTitle() -> Bool {
-        guard let windowList = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements],
-            kCGNullWindowID
-        ) as? [[String: Any]] else {
-            return false
-        }
-
-        let currentProcessID = getpid()
-        return windowList.contains { info in
-            guard (info[kCGWindowLayer as String] as? Int) == 0 else { return false }
-
-            let ownerPID = Self.windowOwnerPID(from: info)
-            guard ownerPID != currentProcessID else { return false }
-
-            let title = info[kCGWindowName as String] as? String
-            return title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        }
-    }
-
-    private static func canCaptureMainDisplayPixel() -> Bool {
-        guard let image = CGDisplayCreateImage(
-            CGMainDisplayID(),
-            rect: CGRect(x: 0, y: 0, width: 1, height: 1)
-        ) else {
-            return false
-        }
-
-        return image.width > 0 && image.height > 0
-    }
-
     private static func canReadAccessibilityFocusedApplication() -> Bool {
         let systemWideElement = AXUIElementCreateSystemWide()
         var value: CFTypeRef?
@@ -209,18 +154,5 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
             &value
         )
         return result == .success
-    }
-
-    private static func windowOwnerPID(from info: [String: Any]) -> pid_t? {
-        if let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t {
-            return ownerPID
-        }
-        if let ownerPID = info[kCGWindowOwnerPID as String] as? Int32 {
-            return ownerPID
-        }
-        if let ownerPID = info[kCGWindowOwnerPID as String] as? NSNumber {
-            return ownerPID.int32Value
-        }
-        return nil
     }
 }

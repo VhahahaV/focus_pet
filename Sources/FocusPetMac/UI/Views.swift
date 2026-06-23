@@ -6703,13 +6703,11 @@ private struct RecognitionDiagnosticsPanel: View {
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 7) {
-                    DiagnosticPermissionChip(title: "屏幕录制", status: diagnostic.screenRecordingStatus)
                     DiagnosticPermissionChip(title: "输入监控", status: diagnostic.inputMonitoringStatus)
                     DiagnosticPermissionChip(title: "辅助功能", status: diagnostic.accessibilityStatus)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    DiagnosticPermissionChip(title: "屏幕录制", status: diagnostic.screenRecordingStatus)
                     DiagnosticPermissionChip(title: "输入监控", status: diagnostic.inputMonitoringStatus)
                     DiagnosticPermissionChip(title: "辅助功能", status: diagnostic.accessibilityStatus)
                 }
@@ -6798,8 +6796,7 @@ private struct RecognitionDiagnosticSummaryRow: View {
     }
 
     private var allPermissionsAllowed: Bool {
-        diagnostic.screenRecordingStatus == "已允许"
-            && diagnostic.inputMonitoringStatus == "已允许"
+        diagnostic.inputMonitoringStatus == "已允许"
             && diagnostic.accessibilityStatus == "已允许"
     }
 
@@ -7319,12 +7316,6 @@ private struct PermissionSettingsPanel: View {
             canRequest: true
         ),
         PermissionSettingsItem(
-            destination: .screenRecording,
-            subtitle: "前台窗口标题识别",
-            status: .privacy,
-            canRequest: true
-        ),
-        PermissionSettingsItem(
             destination: .accessibility,
             subtitle: "前台窗口与交互状态",
             status: .warning,
@@ -7421,8 +7412,6 @@ private struct PermissionSettingsRow: View {
         switch item.destination {
         case .inputMonitoring:
             return "keyboard"
-        case .screenRecording:
-            return "rectangle.on.rectangle"
         case .notifications:
             return "bell.badge.fill"
         case .accessibility:
