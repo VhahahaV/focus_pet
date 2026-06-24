@@ -4917,9 +4917,11 @@ struct SessionsView: View {
             VStack(alignment: .leading, spacing: DashboardLayout.cardGap) {
                 AttentionHeatmapPanel(snapshot: historyData.snapshot)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .zIndex(10)
 
                 FocusHistorySegmentsPanel(snapshot: historyData.workTimeline)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .zIndex(0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -5193,6 +5195,7 @@ private struct AttentionHistorySnapshot {
 private struct AttentionHeatmapPanel: View {
     var snapshot: AttentionHistorySnapshot
     @State private var scope: AttentionHeatmapScope = .week
+    @State private var hoverState: AttentionHeatmapHoverState?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -5226,18 +5229,62 @@ private struct AttentionHeatmapPanel: View {
             }
         }
         .dashboardCard(14)
+        .coordinateSpace(name: AttentionHeatmapCoordinateSpace.name)
+        .overlay(alignment: .topLeading) {
+            heatmapHoverOverlay
+        }
         .onAppear {
             scope = .week
+        }
+        .onChange(of: scope) { _, _ in
+            hoverState = nil
         }
     }
 
     @ViewBuilder
     private var heatmapBody: some View {
         if scope == .week {
-            WeeklyAttentionHeatmap(weeks: snapshot.weeks)
+            WeeklyAttentionHeatmap(weeks: snapshot.weeks, hoverState: $hoverState)
         } else {
-            MonthlyAttentionHeatmap(months: snapshot.months)
+            MonthlyAttentionHeatmap(months: snapshot.months, hoverState: $hoverState)
         }
+    }
+
+    private var heatmapHoverOverlay: some View {
+        GeometryReader { proxy in
+            if let hoverState {
+                let width: CGFloat = 204
+                let origin = hoverOrigin(for: hoverState, panelSize: proxy.size, width: width)
+                AttentionHeatmapHoverCard(day: hoverState.day, width: width)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .offset(x: origin.x, y: origin.y)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topLeading)))
+                    .zIndex(1_000)
+            }
+        }
+        .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.08), value: hoverState?.id)
+    }
+
+    private func hoverOrigin(
+        for hoverState: AttentionHeatmapHoverState,
+        panelSize: CGSize,
+        width: CGFloat
+    ) -> CGPoint {
+        let horizontalPadding: CGFloat = 12
+        let idealX: CGFloat
+        switch hoverState.placement {
+        case .leading:
+            idealX = hoverState.cellFrame.minX - width - 8
+        case .trailing:
+            idealX = hoverState.cellFrame.maxX + 8
+        }
+        let x = min(
+            max(horizontalPadding, idealX),
+            max(horizontalPadding, panelSize.width - width - horizontalPadding)
+        )
+        let y = max(12, hoverState.cellFrame.minY - 10)
+        return CGPoint(x: x, y: y)
     }
 
     private var scopeOptions: [SlidingSegmentOption<AttentionHeatmapScope>] {
@@ -5422,8 +5469,21 @@ private enum HeatmapHoverPlacement {
     case trailing
 }
 
+private enum AttentionHeatmapCoordinateSpace {
+    static let name = "attentionHeatmapPanel"
+}
+
+private struct AttentionHeatmapHoverState: Equatable {
+    var day: AttentionDayBucket
+    var cellFrame: CGRect
+    var placement: HeatmapHoverPlacement
+
+    var id: TimeInterval { day.id }
+}
+
 private struct WeeklyAttentionHeatmap: View {
     var weeks: [AttentionWeekBucket]
+    @Binding var hoverState: AttentionHeatmapHoverState?
 
     var body: some View {
         VStack(alignment: .center, spacing: 9) {
@@ -5454,7 +5514,8 @@ private struct WeeklyAttentionHeatmap: View {
                             AttentionHeatmapCell(
                                 day: day,
                                 size: 22,
-                                hoverPlacement: index >= max(0, weeks.count - 2) ? .leading : .trailing
+                                hoverPlacement: index >= max(0, weeks.count - 2) ? .leading : .trailing,
+                                hoverState: $hoverState
                             )
                         }
                     }
@@ -5494,6 +5555,7 @@ private struct WeeklyAttentionHeatmap: View {
 
 private struct MonthlyAttentionHeatmap: View {
     var months: [AttentionMonthCalendar]
+    @Binding var hoverState: AttentionHeatmapHoverState?
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 14) {
@@ -5515,7 +5577,8 @@ private struct MonthlyAttentionHeatmap: View {
                             AttentionHeatmapCell(
                                 day: day,
                                 size: 14,
-                                hoverPlacement: index % 7 >= 5 ? .leading : .trailing
+                                hoverPlacement: index % 7 >= 5 ? .leading : .trailing,
+                                hoverState: $hoverState
                             )
                         }
                     }
@@ -5596,51 +5659,47 @@ private struct AttentionHeatmapCell: View {
     var day: AttentionDayBucket?
     var size: CGFloat
     var hoverPlacement: HeatmapHoverPlacement = .trailing
-    @State private var isHovering = false
+    @Binding var hoverState: AttentionHeatmapHoverState?
 
     var body: some View {
-        let hoverWidth: CGFloat = 204
-        RoundedRectangle(cornerRadius: max(2, size * 0.22), style: .continuous)
-            .fill(fillColor)
-            .frame(width: size, height: size)
-            .overlay {
-                RoundedRectangle(cornerRadius: max(2, size * 0.22), style: .continuous)
-                    .stroke(isToday ? DashboardPalette.focusBlue : borderColor, lineWidth: isToday ? 1.8 : 0.7)
-            }
-            .overlay(alignment: .topTrailing) {
-                if isToday {
-                    Circle()
-                        .fill(DashboardPalette.focusBlue)
-                        .frame(width: max(4, size * 0.24), height: max(4, size * 0.24))
-                        .offset(x: 2, y: -2)
+        GeometryReader { proxy in
+            RoundedRectangle(cornerRadius: max(2, size * 0.22), style: .continuous)
+                .fill(fillColor)
+                .frame(width: size, height: size)
+                .overlay {
+                    RoundedRectangle(cornerRadius: max(2, size * 0.22), style: .continuous)
+                        .stroke(isToday ? DashboardPalette.focusBlue : borderColor, lineWidth: isToday ? 1.8 : 0.7)
                 }
-            }
-            .overlay(alignment: .topLeading) {
-                if isHovering, let day {
-                    AttentionHeatmapHoverCard(day: day, width: hoverWidth)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .offset(x: hoverXOffset(width: hoverWidth), y: -10)
-                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topLeading)))
-                        .zIndex(100)
-                        .allowsHitTesting(false)
+                .overlay(alignment: .topTrailing) {
+                    if isToday {
+                        Circle()
+                            .fill(DashboardPalette.focusBlue)
+                            .frame(width: max(4, size * 0.24), height: max(4, size * 0.24))
+                            .offset(x: 2, y: -2)
+                    }
                 }
-            }
-            .zIndex(isHovering ? 50 : 0)
-            .onContinuousHover { phase in
-                guard day != nil else { return }
-                switch phase {
-                case .active:
-                    if !isHovering {
-                        withAnimation(.easeOut(duration: 0.08)) {
-                            isHovering = true
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    guard let day else { return }
+                    switch phase {
+                    case .active:
+                        let frame = proxy.frame(in: .named(AttentionHeatmapCoordinateSpace.name))
+                        if hoverState?.id != day.id || hoverState?.cellFrame != frame {
+                            hoverState = AttentionHeatmapHoverState(
+                                day: day,
+                                cellFrame: frame,
+                                placement: hoverPlacement
+                            )
+                        }
+                    case .ended:
+                        if hoverState?.id == day.id {
+                            hoverState = nil
                         }
                     }
-                case .ended:
-                    withAnimation(.easeOut(duration: 0.08)) {
-                        isHovering = false
-                    }
                 }
-            }
+        }
+        .frame(width: size, height: size)
+        .zIndex(hoverState?.id == day?.id ? 50 : 0)
     }
 
     private var fillColor: Color {
@@ -5657,14 +5716,6 @@ private struct AttentionHeatmapCell: View {
         return Calendar(identifier: .gregorian).isDateInToday(day.date)
     }
 
-    private func hoverXOffset(width: CGFloat) -> CGFloat {
-        switch hoverPlacement {
-        case .leading:
-            return -width - 8
-        case .trailing:
-            return size + 8
-        }
-    }
 }
 
 private struct AttentionHeatmapHoverCard: View {

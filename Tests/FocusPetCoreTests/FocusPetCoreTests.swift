@@ -1278,6 +1278,17 @@ struct FocusPetMVPProbe {
             now: now
         )
 
+        let overlappingAwaySnapshot = RecentWorkTimelineSnapshot(
+            orderedSegments: [
+                StateSegment(start: start, end: start.addingTimeInterval(10_000), state: .away, appName: "Away", bundleID: nil, category: .ignore, titleStored: false, titleDisplay: nil, source: [.idleTime]),
+                StateSegment(start: start.addingTimeInterval(100), end: start.addingTimeInterval(1_000), state: .focus, appName: "Cursor", bundleID: "cursor", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(4_000), end: start.addingTimeInterval(4_600), state: .focus, appName: "Codex", bundleID: "codex", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(4_700), end: start.addingTimeInterval(5_000), state: .distracted, appName: "Browser", bundleID: "browser", category: .entertainment, titleStored: false, titleDisplay: nil, source: [.windowTitle]),
+                StateSegment(start: start.addingTimeInterval(9_000), end: start.addingTimeInterval(9_010), state: .focus, appName: "Finder", bundleID: "finder", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication])
+            ],
+            now: start.addingTimeInterval(10_000)
+        )
+
         return snapshot.intervals.count == 1
             && snapshot.discardedShortIntervalCount == 2
             && snapshot.summary.focusSeconds == 420
@@ -1286,6 +1297,12 @@ struct FocusPetMVPProbe {
             && snapshot.summary.workSeconds == 540
             && snapshot.intervals[0].totalSeconds == 600
             && snapshot.intervals[0].ranges.count == 4
+            && overlappingAwaySnapshot.intervals.count == 2
+            && overlappingAwaySnapshot.discardedShortIntervalCount == 1
+            && overlappingAwaySnapshot.summary.focusSeconds == 1_500
+            && overlappingAwaySnapshot.summary.distractedSeconds == 300
+            && overlappingAwaySnapshot.summary.awaySeconds == 100
+            && overlappingAwaySnapshot.intervals[1].ranges.map(\.state) == [.focus, .away, .distracted]
     }
 
     func inputWorkloadSummaryAggregatesReadableMetrics() -> Bool {

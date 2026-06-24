@@ -360,7 +360,6 @@ public struct RecentWorkTimelineSnapshot: Hashable, Sendable {
         var totalBreakdown = WorkTimelineBreakdown()
         var discardedCount = 0
         var discardedWorkSeconds = 0
-        var consumedUntil = windowStart
 
         func resetCurrent() {
             currentStart = nil
@@ -458,21 +457,12 @@ public struct RecentWorkTimelineSnapshot: Hashable, Sendable {
             appendRange(range)
         }
 
-        for segment in orderedSegments {
-            if segment.end <= windowStart { continue }
-            if segment.start >= windowEnd { break }
-
-            let clippedEnd = min(segment.end, windowEnd)
-            let clippedStart = max(max(segment.start, windowStart), consumedUntil)
-            guard clippedEnd > clippedStart else {
-                consumedUntil = max(consumedUntil, clippedEnd)
-                continue
-            }
-
-            let range = WorkTimelineRange(start: clippedStart, end: clippedEnd, state: segment.state)
-            consumedUntil = max(consumedUntil, clippedEnd)
-
-            if Self.isWorkState(segment.state) {
+        for range in Self.normalizedRanges(
+            from: orderedSegments,
+            start: windowStart,
+            end: windowEnd
+        ) {
+            if Self.isWorkState(range.state) {
                 addWorkRange(range)
             } else {
                 addAwayRangeIfBridged(range)
@@ -496,6 +486,100 @@ public struct RecentWorkTimelineSnapshot: Hashable, Sendable {
             return false
         }
     }
+
+    private static func normalizedRanges(
+        from segments: [StateSegment],
+        start windowStart: Date,
+        end windowEnd: Date
+    ) -> [WorkTimelineRange] {
+        let clipped = orderedStateSegments(segments).enumerated().compactMap { order, segment -> NormalizedSegment? in
+            let start = max(segment.start, windowStart)
+            let end = min(segment.end, windowEnd)
+            guard end > start else { return nil }
+            return NormalizedSegment(
+                start: start,
+                end: end,
+                state: segment.state,
+                order: order
+            )
+        }
+        guard !clipped.isEmpty else { return [] }
+
+        let boundaries = Array(
+            Set(clipped.flatMap { [$0.start, $0.end] } + [windowStart, windowEnd])
+        )
+        .sorted()
+
+        guard boundaries.count > 1 else { return [] }
+
+        var ranges: [WorkTimelineRange] = []
+        for index in boundaries.indices.dropLast() {
+            let start = boundaries[index]
+            let end = boundaries[boundaries.index(after: index)]
+            guard end > start,
+                  let selected = clipped
+                    .filter({ $0.start < end && $0.end > start })
+                    .sorted(by: shouldPrefer(_:over:))
+                    .first else {
+                continue
+            }
+
+            let range = WorkTimelineRange(start: start, end: end, state: selected.state)
+            if let lastIndex = ranges.indices.last,
+               ranges[lastIndex].state == range.state,
+               range.start.timeIntervalSince(ranges[lastIndex].end) <= 1.5 {
+                ranges[lastIndex] = WorkTimelineRange(
+                    start: ranges[lastIndex].start,
+                    end: range.end,
+                    state: range.state
+                )
+            } else {
+                ranges.append(range)
+            }
+        }
+        return ranges
+    }
+
+    private static func orderedStateSegments(_ segments: [StateSegment]) -> [StateSegment] {
+        guard !segments.isEmpty else { return [] }
+        for index in segments.indices.dropFirst() {
+            let previous = segments[segments.index(before: index)]
+            let current = segments[index]
+            if current.start < previous.start {
+                return segments.sorted {
+                    if $0.start != $1.start { return $0.start < $1.start }
+                    return $0.end < $1.end
+                }
+            }
+        }
+        return segments
+    }
+
+    private static func shouldPrefer(_ lhs: NormalizedSegment, over rhs: NormalizedSegment) -> Bool {
+        let lhsPriority = normalizedPriority(for: lhs.state)
+        let rhsPriority = normalizedPriority(for: rhs.state)
+        if lhsPriority != rhsPriority {
+            return lhsPriority > rhsPriority
+        }
+        if lhs.start != rhs.start {
+            return lhs.start < rhs.start
+        }
+        if lhs.end != rhs.end {
+            return lhs.end > rhs.end
+        }
+        return lhs.order < rhs.order
+    }
+
+    private static func normalizedPriority(for state: FocusState) -> Int {
+        isWorkState(state) ? 1 : 0
+    }
+}
+
+private struct NormalizedSegment: Hashable, Sendable {
+    var start: Date
+    var end: Date
+    var state: FocusState
+    var order: Int
 }
 
 public struct InputActivityRecorder: Sendable {

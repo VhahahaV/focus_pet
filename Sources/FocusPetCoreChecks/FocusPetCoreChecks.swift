@@ -1172,11 +1172,27 @@ enum FocusPetCoreChecks {
             now: now
         )
 
+        let overlappingAwaySnapshot = RecentWorkTimelineSnapshot(
+            orderedSegments: [
+                StateSegment(start: start, end: start.addingTimeInterval(10_000), state: .away, appName: "Away", bundleID: nil, category: .ignore, titleStored: false, titleDisplay: nil, source: [.idleTime]),
+                StateSegment(start: start.addingTimeInterval(100), end: start.addingTimeInterval(1_000), state: .focus, appName: "Cursor", bundleID: "cursor", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(4_000), end: start.addingTimeInterval(4_600), state: .focus, appName: "Codex", bundleID: "codex", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(4_700), end: start.addingTimeInterval(5_000), state: .distracted, appName: "Browser", bundleID: "browser", category: .entertainment, titleStored: false, titleDisplay: nil, source: [.windowTitle]),
+                StateSegment(start: start.addingTimeInterval(9_000), end: start.addingTimeInterval(9_010), state: .focus, appName: "Finder", bundleID: "finder", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication])
+            ],
+            now: start.addingTimeInterval(10_000)
+        )
+
         expect(snapshot.intervals.count == 1, "recent work timeline should hide tiny standalone intervals")
         expect(snapshot.discardedShortIntervalCount == 2, "recent work timeline should report filtered short intervals")
         expect(snapshot.summary.focusSeconds == 420 && snapshot.summary.distractedSeconds == 120, "recent work timeline should normalize overlapping raw segments")
         expect(snapshot.summary.awaySeconds == 60 && snapshot.summary.workSeconds == 540, "recent work timeline should preserve bridged short away gaps without counting them as work")
         expect(snapshot.intervals[0].totalSeconds == 600 && snapshot.intervals[0].ranges.count == 4, "recent work timeline should build one coherent interval with normalized ranges")
+        expect(overlappingAwaySnapshot.intervals.count == 2, "recent work timeline should recover multiple work intervals hidden under overlapping away data")
+        expect(overlappingAwaySnapshot.discardedShortIntervalCount == 1, "recent work timeline should still filter tiny recovered work intervals")
+        expect(overlappingAwaySnapshot.summary.focusSeconds == 1_500 && overlappingAwaySnapshot.summary.distractedSeconds == 300, "recent work timeline should prefer work states over overlapping away states")
+        expect(overlappingAwaySnapshot.summary.awaySeconds == 100, "recent work timeline should keep short bridged away gaps inside recovered intervals")
+        expect(overlappingAwaySnapshot.intervals[1].ranges.map(\.state) == [.focus, .away, .distracted], "recent work timeline should preserve normalized range order inside recovered intervals")
     }
 
     private static func checkInputWorkloadSummary() {
