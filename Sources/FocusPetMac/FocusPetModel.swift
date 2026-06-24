@@ -637,6 +637,9 @@ final class FocusPetModel: ObservableObject {
             },
             onClose: { [weak self] in
                 self?.desktopWidgetPanelDidClose(kind)
+            },
+            onCommand: { [weak self] command in
+                self?.handleDesktopWidgetPanelCommand(command, for: kind)
             }
         )
         if persist {
@@ -1154,6 +1157,7 @@ final class FocusPetModel: ObservableObject {
     func deleteAllData() {
         summaryTask?.cancel()
         summaryGeneration += 1
+        pendingSaveSnapshot = nil
         store.deleteAll()
         stateSegments = []
         appUsage = []
@@ -1162,8 +1166,8 @@ final class FocusPetModel: ObservableObject {
         breakSessions = []
         nudges = []
         summary = summaryBuilder.summary(for: Date(), segments: [], appUsage: [], focusSessions: [], breakSessions: [], nudges: [])
-        statusMessage = "本地数据已清空。"
-        save()
+        let didSave = saveImmediately()
+        statusMessage = didSave ? "本地数据已清空。" : "本地数据已清空，但写入空白设置失败。"
     }
 
     func exportData(redacted: Bool = false) {
@@ -1191,11 +1195,47 @@ final class FocusPetModel: ObservableObject {
         updatePet()
     }
 
+    func prepareForApplicationTermination() {
+        stop()
+    }
+
     private func applySettingsMigrationsIfNeeded() {
-        guard !settings.reminder.hasAppliedSystemNotificationDefault else { return }
-        settings.reminder.hasAppliedSystemNotificationDefault = true
-        save()
+        var didChange = false
+        if !settings.reminder.hasAppliedSystemNotificationDefault {
+            settings.reminder.hasAppliedSystemNotificationDefault = true
+            didChange = true
+        }
+        if applyGentleReminderTuningIfNeeded() {
+            didChange = true
+        }
+        if didChange {
+            save()
+        }
         refreshNotificationPermissionStatus()
+    }
+
+    private func applyGentleReminderTuningIfNeeded() -> Bool {
+        guard !settings.reminder.hasAppliedGentleReminderTuning else { return false }
+
+        if settings.reminder.lightDistractedMinutes == 8,
+           settings.reminder.strongDistractedMinutes == 15 {
+            settings.reminder.lightDistractedMinutes = 5
+            settings.reminder.strongDistractedMinutes = 12
+        }
+
+        if settings.reminder.longFocusMinutes == 25,
+           settings.reminder.veryLongFocusMinutes == 60 {
+            settings.reminder.longFocusMinutes = 45
+            settings.reminder.veryLongFocusMinutes = 90
+        }
+
+        if settings.reminder.enableWelcomeBackNudges {
+            settings.reminder.enableWelcomeBackNudges = false
+        }
+
+        settings.reminder.hasAppliedGentleReminderTuning = true
+        settings.reminder.normalize()
+        return true
     }
 
     func refreshNotificationPermissionStatus() {
@@ -1875,8 +1915,9 @@ final class FocusPetModel: ObservableObject {
     private func recordWelcomeBackNudgeIfNeeded(now: Date, awayDuration: TimeInterval) {
         let thresholds = settings.reminder.nudgePolicyThresholds
         guard awayDuration >= thresholds.welcomeBackAwaySeconds else { return }
+        let cooldownSeconds = max(thresholds.cooldownSeconds, 2 * 60 * 60)
         if let last = lastNudgeAt[.welcomeBack],
-           now.timeIntervalSince(last) < thresholds.cooldownSeconds {
+           now.timeIntervalSince(last) < cooldownSeconds {
             return
         }
 
@@ -1887,7 +1928,7 @@ final class FocusPetModel: ObservableObject {
             appName: "Focus Pet",
             category: .work,
             petIntent: .welcomeBack,
-            cooldownSeconds: thresholds.cooldownSeconds,
+            cooldownSeconds: cooldownSeconds,
             message: "欢迎回来，先接上刚才的节奏。"
         )
         guard recordNudgeIfAllowed(event, now: now) != nil else { return }
@@ -1990,7 +2031,7 @@ final class FocusPetModel: ObservableObject {
                 state: .breakTime,
                 appName: "Break",
                 category: .ignore,
-                petIntent: .breakEnding,
+                petIntent: .mouseSummon,
                 cooldownSeconds: 0,
                 message: "休息结束，回来工作啦。"
             )
@@ -2055,33 +2096,33 @@ final class FocusPetModel: ObservableObject {
 
     private func remapCustomPetOrigin(from previousHint: ScreenPlacementHint?, to nextHint: ScreenPlacementHint) {
         let panelSize = currentPetPanelSize()
-        let previousVisible = previousHint?.visibleFrame
-            ?? visibleFrameContainingCustomOrigin()
-            ?? nextHint.visibleFrame
-        let nextVisible = nextHint.visibleFrame
+        let previousFrame = previousHint?.screenFrame
+            ?? screenFrameContainingCustomOrigin()
+            ?? nextHint.screenFrame
+        let nextFrame = nextHint.screenFrame
         let currentOrigin = CGPoint(
-            x: settings.pet.customOriginX ?? previousVisible.maxX - panelSize.width - 24,
-            y: settings.pet.customOriginY ?? previousVisible.minY + 24
+            x: settings.pet.customOriginX ?? previousFrame.maxX - panelSize.width - 24,
+            y: settings.pet.customOriginY ?? previousFrame.minY + 24
         )
         let xRatio = normalizedPosition(
             value: currentOrigin.x,
-            lower: previousVisible.minX,
-            upper: previousVisible.maxX - panelSize.width
+            lower: previousFrame.minX,
+            upper: previousFrame.maxX - panelSize.width
         )
         let yRatio = normalizedPosition(
             value: currentOrigin.y,
-            lower: previousVisible.minY,
-            upper: previousVisible.maxY - panelSize.height
+            lower: previousFrame.minY,
+            upper: previousFrame.maxY - panelSize.height
         )
         settings.pet.customOriginX = mappedPosition(
             ratio: xRatio,
-            lower: nextVisible.minX,
-            upper: nextVisible.maxX - panelSize.width
+            lower: nextFrame.minX,
+            upper: nextFrame.maxX - panelSize.width
         )
         settings.pet.customOriginY = mappedPosition(
             ratio: yRatio,
-            lower: nextVisible.minY,
-            upper: nextVisible.maxY - panelSize.height
+            lower: nextFrame.minY,
+            upper: nextFrame.maxY - panelSize.height
         )
     }
 
@@ -2102,13 +2143,13 @@ final class FocusPetModel: ObservableObject {
         return dy >= 0 ? .moveUp : .moveDown
     }
 
-    private func visibleFrameContainingCustomOrigin() -> CGRect? {
+    private func screenFrameContainingCustomOrigin() -> CGRect? {
         guard let x = settings.pet.customOriginX,
               let y = settings.pet.customOriginY else {
             return nil
         }
         let origin = CGPoint(x: x, y: y)
-        return NSScreen.screens.first { $0.frame.contains(origin) }?.visibleFrame
+        return NSScreen.screens.first { $0.frame.contains(origin) }?.frame
     }
 
     private func normalizedPosition(value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
@@ -2173,8 +2214,10 @@ final class FocusPetModel: ObservableObject {
         if availablePetPacks.isEmpty {
             refreshPetPacks(saveIfChanged: false)
         }
-        let selectedRecord = selectedPetPackRecord()
-            ?? PetPackRecord(pack: PetPackCatalog.fallbackPack, rootURL: nil, isBundled: true)
+        guard let selectedRecord = selectedPetPackRecord() else {
+            petPanel.hide()
+            return
+        }
         let now = Date()
         let intent = resolvedPetIntent(now: now)
         currentPetIntentKind = intent.kind
@@ -2244,17 +2287,23 @@ final class FocusPetModel: ObservableObject {
         schedulePendingSave(force: false)
     }
 
-    private func saveImmediately() {
+    @discardableResult
+    private func saveImmediately() -> Bool {
         saveTask?.cancel()
-        let snapshot = pendingSaveSnapshot ?? snapshot()
+        let snapshot = snapshot()
         pendingSaveSnapshot = nil
-        lastEnqueuedSaveSnapshot = snapshot
         lastSaveStartedAt = Date()
-        store.saveSnapshot(snapshot)
-        Task { [persistenceService] in
-            await persistenceService.replaceBaseline(snapshot)
+        let didSave = store.saveSnapshot(snapshot)
+        if didSave {
+            lastEnqueuedSaveSnapshot = snapshot
+            Task { [persistenceService] in
+                await persistenceService.replaceBaseline(snapshot)
+            }
+        } else {
+            lastEnqueuedSaveSnapshot = nil
         }
         writeWidgetSnapshot()
+        return didSave
     }
 
     private func schedulePendingSave(force: Bool) {
@@ -2299,14 +2348,33 @@ final class FocusPetModel: ObservableObject {
         }
 
         let usesPet = settings.reminder.enablePetBubbles
+        let showsPetBubble = usesPet && shouldShowPetBubble(for: event.reason)
         return ReminderDeliveryPlan(
             shouldRecord: true,
-            shouldShowPetBubble: usesPet,
-            shouldUsePetIntent: usesPet,
+            shouldShowPetBubble: showsPetBubble,
+            shouldUsePetIntent: usesPet && shouldUsePetIntent(for: event.reason),
             shouldDeliverSystemNotification: settings.reminder.enableSystemNotifications
                 && shouldDeliverSystemNotification(for: event.reason),
             petBubbleSeconds: petBubbleVisibleSeconds(for: event.reason)
         )
+    }
+
+    private func shouldShowPetBubble(for reason: NudgeReason) -> Bool {
+        switch reason {
+        case .welcomeBack:
+            return false
+        case .distractedOverThreshold, .distractedStrong, .longFocusRest, .veryLongFocusRest, .focusSessionCompleted, .breakEnding, .frequentSwitching:
+            return true
+        }
+    }
+
+    private func shouldUsePetIntent(for reason: NudgeReason) -> Bool {
+        switch reason {
+        case .welcomeBack:
+            return true
+        case .distractedOverThreshold, .distractedStrong, .longFocusRest, .veryLongFocusRest, .focusSessionCompleted, .breakEnding, .frequentSwitching:
+            return true
+        }
     }
 
     private func petBubbleVisibleSeconds(for reason: NudgeReason) -> TimeInterval {
@@ -2343,9 +2411,9 @@ final class FocusPetModel: ObservableObject {
 
     private func shouldDeliverSystemNotification(for reason: NudgeReason) -> Bool {
         switch reason {
-        case .distractedOverThreshold, .welcomeBack, .frequentSwitching:
+        case .distractedOverThreshold, .longFocusRest, .veryLongFocusRest, .breakEnding, .welcomeBack, .frequentSwitching:
             return false
-        case .distractedStrong, .longFocusRest, .veryLongFocusRest, .focusSessionCompleted, .breakEnding:
+        case .distractedStrong, .focusSessionCompleted:
             return true
         }
     }
@@ -2508,6 +2576,24 @@ final class FocusPetModel: ObservableObject {
     private func desktopWidgetPanelDidMove(_ kind: DesktopWidgetCardKind, origin: CGPoint) {
         if setDesktopWidgetOrigin(origin, for: kind) {
             save()
+        }
+    }
+
+    private func handleDesktopWidgetPanelCommand(
+        _ command: DesktopWidgetPanelCommand,
+        for kind: DesktopWidgetCardKind
+    ) {
+        switch command {
+        case .openDashboard:
+            openDashboard(tab: .today)
+        case .openSettings:
+            openDashboard(tab: .settings)
+        case .showAllCards:
+            showAllDesktopWidgetCards()
+        case .hideCard:
+            hideDesktopWidgetCard(kind)
+        case .hideAllCards:
+            hideAllDesktopWidgetCards()
         }
     }
 
@@ -2812,7 +2898,7 @@ private actor SnapshotPersistenceService {
     }
 
     func save(_ snapshot: LocalStoreSnapshot) {
-        store.saveSnapshot(snapshot, changedFrom: lastPersistedSnapshot)
+        guard store.saveSnapshot(snapshot, changedFrom: lastPersistedSnapshot) else { return }
         lastPersistedSnapshot = snapshot
     }
 }

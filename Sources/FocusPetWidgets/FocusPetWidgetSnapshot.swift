@@ -77,9 +77,13 @@ public struct FocusPetWidgetRhythmSnapshot: Codable, Hashable, Sendable, Identif
         focusSeconds + distractedSeconds + breakSeconds + awaySeconds
     }
 
+    public var activeSeconds: Int {
+        focusSeconds + distractedSeconds + breakSeconds
+    }
+
     public var focusRatio: Double {
-        guard totalSeconds > 0 else { return 0 }
-        return Double(focusSeconds) / Double(totalSeconds)
+        guard activeSeconds > 0 else { return 0 }
+        return Double(focusSeconds) / Double(activeSeconds)
     }
 
     public init(
@@ -128,14 +132,12 @@ public struct FocusPetWidgetRhythmRange: Codable, Hashable, Sendable, Identifiab
 extension FocusPetWidgetSnapshot {
     public static func sample(now: Date = Date()) -> FocusPetWidgetSnapshot {
         let ranges: [FocusPetWidgetRhythmRange] = [
-            FocusPetWidgetRhythmRange(state: .focus, startProgress: 0.00, endProgress: 0.18),
-            FocusPetWidgetRhythmRange(state: .distracted, startProgress: 0.18, endProgress: 0.25),
-            FocusPetWidgetRhythmRange(state: .breakTime, startProgress: 0.25, endProgress: 0.30),
-            FocusPetWidgetRhythmRange(state: .focus, startProgress: 0.30, endProgress: 0.58),
-            FocusPetWidgetRhythmRange(state: .distracted, startProgress: 0.58, endProgress: 0.66),
-            FocusPetWidgetRhythmRange(state: .focus, startProgress: 0.66, endProgress: 0.88),
-            FocusPetWidgetRhythmRange(state: .breakTime, startProgress: 0.88, endProgress: 0.93),
-            FocusPetWidgetRhythmRange(state: .away, startProgress: 0.93, endProgress: 1.00)
+            FocusPetWidgetRhythmRange(state: .focus, startProgress: 0.00, endProgress: 0.40),
+            FocusPetWidgetRhythmRange(state: .distracted, startProgress: 0.40, endProgress: 0.46),
+            FocusPetWidgetRhythmRange(state: .breakTime, startProgress: 0.46, endProgress: 0.53),
+            FocusPetWidgetRhythmRange(state: .focus, startProgress: 0.53, endProgress: 0.84),
+            FocusPetWidgetRhythmRange(state: .distracted, startProgress: 0.84, endProgress: 0.89),
+            FocusPetWidgetRhythmRange(state: .breakTime, startProgress: 0.89, endProgress: 1.00)
         ]
         let rhythm4h = FocusPetWidgetRhythmSnapshot(
             windowHours: 4,

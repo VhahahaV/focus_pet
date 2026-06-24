@@ -12,7 +12,7 @@ struct FocusPetApp: App {
             MenuBarContentView()
                 .environmentObject(model)
         } label: {
-            MenuBarLabelView()
+            MenuBarLabelView(appDelegate: appDelegate)
                 .environmentObject(model)
         }
         .menuBarExtraStyle(.window)
@@ -22,6 +22,7 @@ struct FocusPetApp: App {
                 .environmentObject(model)
                 .frame(minWidth: 980, minHeight: 760)
                 .onAppear {
+                    appDelegate.model = model
                     model.start()
                 }
         }
@@ -39,6 +40,8 @@ struct FocusPetApp: App {
 }
 
 private struct MenuBarLabelView: View {
+    weak var appDelegate: AppDelegate?
+
     @EnvironmentObject private var model: FocusPetModel
     @Environment(\.openWindow) private var openWindow
     @State private var didOpenInitialDashboard = false
@@ -46,6 +49,7 @@ private struct MenuBarLabelView: View {
     var body: some View {
         StatusBarIconView(title: model.menuTitle)
             .task {
+                appDelegate?.model = model
                 model.start()
                 registerDashboardOpener()
                 openInitialDashboardIfNeeded()

@@ -212,6 +212,292 @@ public struct StateReclassificationResult: Hashable, Sendable {
     }
 }
 
+public struct WorkTimelineBreakdown: Hashable, Sendable {
+    public var focusSeconds: Int
+    public var distractedSeconds: Int
+    public var breakSeconds: Int
+    public var awaySeconds: Int
+
+    public var attentionSeconds: Int {
+        focusSeconds + distractedSeconds
+    }
+
+    public var trackedSeconds: Int {
+        focusSeconds + distractedSeconds + breakSeconds + awaySeconds
+    }
+
+    public var workSeconds: Int {
+        focusSeconds + distractedSeconds + breakSeconds
+    }
+
+    public var focusRatio: Double {
+        guard attentionSeconds > 0 else { return 0 }
+        return Double(focusSeconds) / Double(attentionSeconds)
+    }
+
+    public var distractedRatio: Double {
+        guard attentionSeconds > 0 else { return 0 }
+        return Double(distractedSeconds) / Double(attentionSeconds)
+    }
+
+    public init(
+        focusSeconds: Int = 0,
+        distractedSeconds: Int = 0,
+        breakSeconds: Int = 0,
+        awaySeconds: Int = 0
+    ) {
+        self.focusSeconds = max(0, focusSeconds)
+        self.distractedSeconds = max(0, distractedSeconds)
+        self.breakSeconds = max(0, breakSeconds)
+        self.awaySeconds = max(0, awaySeconds)
+    }
+
+    public mutating func add(state: FocusState, seconds: Int) {
+        let safeSeconds = max(0, seconds)
+        switch state {
+        case .focus:
+            focusSeconds += safeSeconds
+        case .distracted:
+            distractedSeconds += safeSeconds
+        case .breakTime:
+            breakSeconds += safeSeconds
+        case .away:
+            awaySeconds += safeSeconds
+        }
+    }
+
+    public mutating func merge(_ other: WorkTimelineBreakdown) {
+        focusSeconds += other.focusSeconds
+        distractedSeconds += other.distractedSeconds
+        breakSeconds += other.breakSeconds
+        awaySeconds += other.awaySeconds
+    }
+}
+
+public struct WorkTimelineRange: Identifiable, Hashable, Sendable {
+    public var start: Date
+    public var end: Date
+    public var state: FocusState
+
+    public var id: String {
+        "\(state.id)-\(Int(start.timeIntervalSince1970))-\(Int(end.timeIntervalSince1970))"
+    }
+
+    public init(start: Date, end: Date, state: FocusState) {
+        self.start = start
+        self.end = max(end, start)
+        self.state = state
+    }
+}
+
+public struct WorkTimelineInterval: Identifiable, Hashable, Sendable {
+    public var start: Date
+    public var end: Date
+    public var ranges: [WorkTimelineRange]
+    public var breakdown: WorkTimelineBreakdown
+
+    public var id: String {
+        "\(Int(start.timeIntervalSince1970))-\(Int(end.timeIntervalSince1970))-\(ranges.count)"
+    }
+
+    public var totalSeconds: Int {
+        max(0, Int(end.timeIntervalSince(start).rounded()))
+    }
+
+    public var activeSeconds: Int {
+        breakdown.workSeconds
+    }
+
+    public var focusRatio: Double {
+        breakdown.focusRatio
+    }
+
+    public init(
+        start: Date,
+        end: Date,
+        ranges: [WorkTimelineRange],
+        breakdown: WorkTimelineBreakdown
+    ) {
+        self.start = start
+        self.end = max(end, start)
+        self.ranges = ranges
+        self.breakdown = breakdown
+    }
+}
+
+public struct RecentWorkTimelineSnapshot: Hashable, Sendable {
+    public var start: Date
+    public var end: Date
+    public var intervals: [WorkTimelineInterval]
+    public var summary: WorkTimelineBreakdown
+    public var discardedShortIntervalCount: Int
+    public var discardedShortWorkSeconds: Int
+
+    public var hasData: Bool {
+        !intervals.isEmpty
+    }
+
+    public var longestInterval: WorkTimelineInterval? {
+        intervals.max { $0.totalSeconds < $1.totalSeconds }
+    }
+
+    public init(
+        orderedSegments: [StateSegment],
+        now: Date = Date(),
+        windowSeconds: TimeInterval = 86_400,
+        maxSessionBridgeGap: TimeInterval = 20 * 60,
+        minimumStandaloneWorkSeconds: Int = 120
+    ) {
+        let windowEnd = now
+        let windowStart = now.addingTimeInterval(-max(60, windowSeconds))
+        let bridgeGap = max(0, maxSessionBridgeGap)
+        let minimumWorkSeconds = max(0, minimumStandaloneWorkSeconds)
+        var result: [WorkTimelineInterval] = []
+        var currentStart: Date?
+        var currentEnd: Date?
+        var currentRanges: [WorkTimelineRange] = []
+        var currentBreakdown = WorkTimelineBreakdown()
+        var totalBreakdown = WorkTimelineBreakdown()
+        var discardedCount = 0
+        var discardedWorkSeconds = 0
+        var consumedUntil = windowStart
+
+        func resetCurrent() {
+            currentStart = nil
+            currentEnd = nil
+            currentRanges = []
+            currentBreakdown = WorkTimelineBreakdown()
+        }
+
+        func appendRange(_ range: WorkTimelineRange) {
+            guard range.end > range.start else { return }
+            if let lastIndex = currentRanges.indices.last {
+                let last = currentRanges[lastIndex]
+                if last.state == range.state,
+                   range.start.timeIntervalSince(last.end) <= 1.5 {
+                    currentRanges[lastIndex] = WorkTimelineRange(
+                        start: last.start,
+                        end: max(last.end, range.end),
+                        state: last.state
+                    )
+                    return
+                }
+            }
+            currentRanges.append(range)
+        }
+
+        func flushCurrent() {
+            guard let start = currentStart,
+                  let end = currentEnd,
+                  end > start,
+                  !currentRanges.isEmpty else {
+                resetCurrent()
+                return
+            }
+
+            let interval = WorkTimelineInterval(
+                start: start,
+                end: end,
+                ranges: currentRanges,
+                breakdown: currentBreakdown
+            )
+            if interval.activeSeconds >= minimumWorkSeconds {
+                result.append(interval)
+                totalBreakdown.merge(currentBreakdown)
+            } else {
+                discardedCount += 1
+                discardedWorkSeconds += interval.activeSeconds
+            }
+            resetCurrent()
+        }
+
+        func addBridgeGapIfNeeded(until nextStart: Date) -> Bool {
+            guard let previousEnd = currentEnd,
+                  nextStart > previousEnd else { return true }
+
+            let gap = nextStart.timeIntervalSince(previousEnd)
+            guard gap <= bridgeGap else {
+                flushCurrent()
+                return false
+            }
+
+            let seconds = max(0, Int(gap.rounded()))
+            if seconds > 0 {
+                currentBreakdown.add(state: .away, seconds: seconds)
+                appendRange(WorkTimelineRange(start: previousEnd, end: nextStart, state: .away))
+                currentEnd = nextStart
+            }
+            return true
+        }
+
+        func addWorkRange(_ range: WorkTimelineRange) {
+            if currentStart == nil {
+                currentStart = range.start
+            } else if !addBridgeGapIfNeeded(until: range.start) {
+                currentStart = range.start
+            }
+
+            currentEnd = max(currentEnd ?? range.end, range.end)
+            let seconds = max(0, Int(range.end.timeIntervalSince(range.start).rounded()))
+            currentBreakdown.add(state: range.state, seconds: seconds)
+            appendRange(range)
+        }
+
+        func addAwayRangeIfBridged(_ range: WorkTimelineRange) {
+            guard currentStart != nil, let previousEnd = currentEnd else { return }
+            let separation = range.end.timeIntervalSince(previousEnd)
+            guard separation <= bridgeGap else {
+                flushCurrent()
+                return
+            }
+
+            guard addBridgeGapIfNeeded(until: range.start) else { return }
+            currentEnd = max(currentEnd ?? range.end, range.end)
+            let seconds = max(0, Int(range.end.timeIntervalSince(range.start).rounded()))
+            currentBreakdown.add(state: .away, seconds: seconds)
+            appendRange(range)
+        }
+
+        for segment in orderedSegments {
+            if segment.end <= windowStart { continue }
+            if segment.start >= windowEnd { break }
+
+            let clippedEnd = min(segment.end, windowEnd)
+            let clippedStart = max(max(segment.start, windowStart), consumedUntil)
+            guard clippedEnd > clippedStart else {
+                consumedUntil = max(consumedUntil, clippedEnd)
+                continue
+            }
+
+            let range = WorkTimelineRange(start: clippedStart, end: clippedEnd, state: segment.state)
+            consumedUntil = max(consumedUntil, clippedEnd)
+
+            if Self.isWorkState(segment.state) {
+                addWorkRange(range)
+            } else {
+                addAwayRangeIfBridged(range)
+            }
+        }
+        flushCurrent()
+
+        start = windowStart
+        end = windowEnd
+        intervals = result
+        summary = totalBreakdown
+        discardedShortIntervalCount = discardedCount
+        discardedShortWorkSeconds = discardedWorkSeconds
+    }
+
+    private static func isWorkState(_ state: FocusState) -> Bool {
+        switch state {
+        case .focus, .distracted, .breakTime:
+            return true
+        case .away:
+            return false
+        }
+    }
+}
+
 public struct InputActivityRecorder: Sendable {
     public var bucketSeconds: TimeInterval
 
@@ -692,7 +978,6 @@ public struct TimeTracker: Sendable {
         snapshot: ActivitySnapshot,
         segments: [StateSegment]
     ) -> [StateSegment] {
-        let start = snapshot.timestamp.addingTimeInterval(-tickSeconds)
         var updated = segments
 
         if let lastIndex = updated.indices.last,
@@ -700,6 +985,10 @@ public struct TimeTracker: Sendable {
             updated[lastIndex].end = max(updated[lastIndex].end, snapshot.timestamp)
             return updated
         }
+
+        let proposedStart = snapshot.timestamp.addingTimeInterval(-tickSeconds)
+        let start = max(proposedStart, updated.last?.end ?? proposedStart)
+        guard snapshot.timestamp > start else { return updated }
 
         updated.append(StateSegment(
             start: start,
@@ -716,7 +1005,6 @@ public struct TimeTracker: Sendable {
     }
 
     public func recordAppUsage(snapshot: ActivitySnapshot, appUsage: [AppUsageSegment]) -> [AppUsageSegment] {
-        let start = snapshot.timestamp.addingTimeInterval(-tickSeconds)
         var updated = appUsage
 
         if let lastIndex = updated.indices.last,
@@ -727,6 +1015,10 @@ public struct TimeTracker: Sendable {
             updated[lastIndex].end = max(updated[lastIndex].end, snapshot.timestamp)
             return updated
         }
+
+        let proposedStart = snapshot.timestamp.addingTimeInterval(-tickSeconds)
+        let start = max(proposedStart, updated.last?.end ?? proposedStart)
+        guard snapshot.timestamp > start else { return updated }
 
         updated.append(AppUsageSegment(
             start: start,

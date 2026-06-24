@@ -2,7 +2,6 @@ import FocusPetCore
 import Foundation
 
 public struct PetPackCatalog: Sendable {
-    public static let bundledPackID = "local_pet_placeholder"
     public static let localLuoXiaoHeiPackID = "luo_xiaohei_local"
     public static let localXiaoDaiPackID = "xiaodai_local"
     public static let localPixelCatMemePackID = "pixel_cat_meme_local"
@@ -97,22 +96,4 @@ public struct PetPackCatalog: Sendable {
         }
     }
 
-    public static let fallbackPack = PetPack(
-        schemaVersion: 1,
-        id: bundledPackID,
-        name: "Local Pet Placeholder",
-        author: "Focus Pet",
-        style: "placeholder",
-        license: "original",
-        distribution: "internalFallback",
-        defaultSize: PetPackSize(width: 160, height: 160),
-        anchor: PetPackAnchor(x: 0.5, y: 1.0),
-        animations: [
-            .idle: PetAnimationSpec(folder: "idle", fps: 1, loop: true, frameCount: 1),
-            .sleep: PetAnimationSpec(folder: "sleep", fps: 4, loop: true, frameCount: 1),
-            .nudgeGentle: PetAnimationSpec(folder: "nudgeGentle", fps: 8, loop: false, frameCount: 1),
-            .welcomeBack: PetAnimationSpec(folder: "welcomeBack", fps: 8, loop: false, frameCount: 1),
-            .breakRelax: PetAnimationSpec(folder: "breakRelax", fps: 6, loop: true, frameCount: 1)
-        ]
-    )
 }

@@ -485,8 +485,9 @@ tell application "Finder"
     activate
     set dmgFolder to (POSIX file "$MOUNT_POINT") as alias
     set dmgPath to POSIX path of dmgFolder
-    set dmgWindow to make new Finder window to dmgFolder
+    open dmgFolder
     delay 0.5
+    set dmgWindow to container window of dmgFolder
     if POSIX path of ((target of dmgWindow) as alias) is not dmgPath then error "DMG Finder window opened the wrong target"
     set dmgWindowID to id of dmgWindow
     set current view of dmgWindow to icon view
@@ -515,11 +516,20 @@ tell application "Finder"
     if position of item "$APP_BUNDLE_NAME" of dmgFolder is not {210, 230} then error "DMG app icon position was not persisted"
     if position of item "Applications" of dmgFolder is not {510, 230} then error "DMG Applications icon position was not persisted"
     close Finder window id dmgWindowID
+    delay 3
+    open dmgFolder
+    delay 0.5
+    set verifyWindow to container window of dmgFolder
+    set verifyOptions to icon view options of verifyWindow
+    if current view of verifyWindow is not icon view then error "DMG icon view was not persisted"
+    if icon size of verifyOptions is not 96 then error "DMG icon size was not persisted"
+    if text size of verifyOptions is not 14 then error "DMG text size was not persisted"
+    close verifyWindow
 end tell
 OSA
 
 sync
-sleep 1
+sleep 3
 hdiutil detach "$MOUNT_POINT" >/dev/null
 
 hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$FINAL_DMG" >/dev/null

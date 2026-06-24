@@ -86,32 +86,35 @@ public struct LocalStore: Sendable {
         )
     }
 
-    public func saveSnapshot(_ snapshot: LocalStoreSnapshot, changedFrom previous: LocalStoreSnapshot? = nil) {
-        guard prepareStoreForAccess(writeIntent: true) else { return }
+    @discardableResult
+    public func saveSnapshot(_ snapshot: LocalStoreSnapshot, changedFrom previous: LocalStoreSnapshot? = nil) -> Bool {
+        guard prepareStoreForAccess(writeIntent: true) else { return false }
+        var didSave = true
         if previous?.settings != snapshot.settings {
-            save(snapshot.settings, to: "settings.json")
+            didSave = save(snapshot.settings, to: "settings.json") && didSave
         }
         if previous?.classificationRules != snapshot.classificationRules {
-            save(snapshot.classificationRules, to: "classification-rules.json")
+            didSave = save(snapshot.classificationRules, to: "classification-rules.json") && didSave
         }
         if previous?.stateSegments != snapshot.stateSegments {
-            save(snapshot.stateSegments, to: "state-segments.json")
+            didSave = save(snapshot.stateSegments, to: "state-segments.json") && didSave
         }
         if previous?.appUsage != snapshot.appUsage {
-            save(snapshot.appUsage, to: "app-usage.json")
+            didSave = save(snapshot.appUsage, to: "app-usage.json") && didSave
         }
         if previous?.inputActivity != snapshot.inputActivity {
-            save(snapshot.inputActivity, to: "input-activity.json")
+            didSave = save(snapshot.inputActivity, to: "input-activity.json") && didSave
         }
         if previous?.focusSessions != snapshot.focusSessions {
-            save(snapshot.focusSessions, to: "focus-sessions.json")
+            didSave = save(snapshot.focusSessions, to: "focus-sessions.json") && didSave
         }
         if previous?.breakSessions != snapshot.breakSessions {
-            save(snapshot.breakSessions, to: "break-sessions.json")
+            didSave = save(snapshot.breakSessions, to: "break-sessions.json") && didSave
         }
         if previous?.nudges != snapshot.nudges {
-            save(snapshot.nudges, to: "nudges.json")
+            didSave = save(snapshot.nudges, to: "nudges.json") && didSave
         }
+        return didSave
     }
 
     public func exportSnapshot(_ snapshot: LocalStoreSnapshot, redacted: Bool = false) -> URL? {
@@ -119,9 +122,13 @@ public struct LocalStore: Sendable {
         let prefix = redacted ? "focus-pet-redacted-export" : "focus-pet-export"
         let url = rootURL.appendingPathComponent("\(prefix)-\(Int(Date().timeIntervalSince1970)).json")
         let exportSnapshot = redacted ? snapshot.redactedForExport() : snapshot
-        guard let data = try? JSONEncoder.focusPet.encode(exportSnapshot) else { return nil }
-        try? data.write(to: url, options: [.atomic])
-        return url
+        do {
+            let data = try JSONEncoder.focusPet.encode(exportSnapshot)
+            try data.write(to: url, options: [.atomic])
+            return url
+        } catch {
+            return nil
+        }
     }
 
     public func deleteAll() {
@@ -187,15 +194,27 @@ public struct LocalStore: Sendable {
         return decoded
     }
 
-    private func save<T: Encodable>(_ value: T, to fileName: String) {
-        ensureRoot()
+    @discardableResult
+    private func save<T: Encodable>(_ value: T, to fileName: String) -> Bool {
+        guard ensureRoot() else { return false }
         let url = rootURL.appendingPathComponent(fileName)
-        guard let data = try? JSONEncoder.focusPet.encode(value) else { return }
-        try? data.write(to: url, options: [.atomic])
+        do {
+            let data = try JSONEncoder.focusPet.encode(value)
+            try data.write(to: url, options: [.atomic])
+            return true
+        } catch {
+            return false
+        }
     }
 
-    private func ensureRoot() {
-        try? FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+    @discardableResult
+    private func ensureRoot() -> Bool {
+        do {
+            try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func saveMetadata() {
@@ -325,13 +344,48 @@ public extension LocalStoreSnapshot {
         var copy = self
         copy.settings.privacy.storeRawTitle = false
         copy.settings.privacy.storeOnlyCategoryResult = true
+        copy.classificationRules = []
         copy.stateSegments = stateSegments.map { segment in
             var redacted = segment
+            redacted.appName = segment.category.redactedAppName
+            redacted.bundleID = nil
             redacted.titleStored = false
             redacted.titleDisplay = nil
             return redacted
         }
+        copy.appUsage = appUsage.map { usage in
+            var redacted = usage
+            redacted.appName = usage.category.redactedAppName
+            redacted.bundleID = nil
+            return redacted
+        }
+        copy.focusSessions = focusSessions.map { session in
+            var redacted = session
+            redacted.taskName = "专注任务"
+            redacted.mainAppName = nil
+            return redacted
+        }
+        copy.nudges = nudges.map { nudge in
+            var redacted = nudge
+            redacted.appName = nudge.category.redactedAppName
+            return redacted
+        }
         return copy
+    }
+}
+
+private extension ActivityCategory {
+    var redactedAppName: String {
+        switch self {
+        case .work:
+            return "工作工具"
+        case .entertainment:
+            return "容易分心"
+        case .ignore:
+            return "不参与判断"
+        case .neutral:
+            return "旧数据"
+        }
     }
 }
 

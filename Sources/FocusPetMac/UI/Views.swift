@@ -781,6 +781,7 @@ struct MenuBarContentView: View {
             }
         }
         .padding(14)
+        .frame(width: 360, alignment: .leading)
         .background {
             FPGlassLayer(
                 role: .menu,
@@ -797,8 +798,7 @@ struct MenuBarContentView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.white.opacity(0.62), lineWidth: 1)
         }
-        .padding(8)
-        .frame(width: 360, alignment: .leading)
+        .background(MenuBarWindowChromeCleaner().allowsHitTesting(false))
         .opacity(contentRevealed ? 1 : 0.96)
         .scaleEffect(contentRevealed ? 1 : 0.986, anchor: .top)
         .animation(.smooth(duration: 0.28), value: contentRevealed)
@@ -845,6 +845,32 @@ struct MenuBarContentView: View {
                 liquidMotionPhase = 1.16
             }
         }
+    }
+}
+
+private struct MenuBarWindowChromeCleaner: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            self.configureWindow(for: view)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            self.configureWindow(for: nsView)
+        }
+    }
+
+    private func configureWindow(for view: NSView) {
+        guard let window = view.window else { return }
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.contentView?.wantsLayer = true
+        window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+        window.contentView?.superview?.wantsLayer = true
+        window.contentView?.superview?.layer?.backgroundColor = NSColor.clear.cgColor
     }
 }
 
@@ -913,19 +939,11 @@ private struct MenuStatusHeader: View {
 private struct MenuStatusStrip: View {
     @EnvironmentObject private var model: FocusPetModel
 
-    private var stripSegments: [MenuStateStripSegment] {
-        menuStateStripSegments(from: model.stateSegments)
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
-                MenuMetricChip(title: "专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), tint: FocusPetCore.FocusState.focus.timelineColor)
-                MenuMetricChip(title: "走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), tint: FocusPetCore.FocusState.distracted.timelineColor)
-                MenuMetricChip(title: "休息", value: FocusPetFormatters.duration(model.summary.breakSeconds), tint: FocusPetCore.FocusState.breakTime.timelineColor)
-            }
-
-            MenuStateStripBar(segments: stripSegments)
+        HStack(spacing: 8) {
+            MenuMetricChip(title: "专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), tint: FocusPetCore.FocusState.focus.timelineColor)
+            MenuMetricChip(title: "走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), tint: FocusPetCore.FocusState.distracted.timelineColor)
+            MenuMetricChip(title: "休息", value: FocusPetFormatters.duration(model.summary.breakSeconds), tint: FocusPetCore.FocusState.breakTime.timelineColor)
         }
     }
 }
@@ -951,80 +969,6 @@ private struct MenuMetricChip: View {
         .padding(.vertical, 5)
         .frame(maxWidth: .infinity)
         .fpGlassBackground(role: .control, cornerRadius: 8, tint: tint, intensity: 0.82)
-    }
-}
-
-private struct MenuStateStripBar: View {
-    var segments: [MenuStateStripSegment]
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(DashboardPalette.trackFill)
-                ForEach(segments) { segment in
-                    Rectangle()
-                        .fill(segment.state.timelineColor.gradient)
-                        .frame(width: segmentWidth(segment, totalWidth: proxy.size.width))
-                        .offset(x: segmentOffset(segment, totalWidth: proxy.size.width))
-                }
-                .clipShape(Capsule())
-            }
-        }
-        .frame(height: 8)
-        .animation(.smooth(duration: 0.54), value: animationKey)
-    }
-
-    private var animationKey: String {
-        segments.map { "\($0.id):\($0.startProgress)-\($0.endProgress)" }.joined(separator: "|")
-    }
-
-    private func segmentOffset(_ segment: MenuStateStripSegment, totalWidth: CGFloat) -> CGFloat {
-        totalWidth * CGFloat(segment.startProgress)
-    }
-
-    private func segmentWidth(_ segment: MenuStateStripSegment, totalWidth: CGFloat) -> CGFloat {
-        let progress = max(0, min(1, segment.endProgress - segment.startProgress))
-        return max(2, totalWidth * CGFloat(progress))
-    }
-}
-
-private struct MenuStateStripSegment: Identifiable, Hashable {
-    var startProgress: Double
-    var endProgress: Double
-    var state: FocusPetCore.FocusState
-    var sourceStart: Date
-    var sourceEnd: Date
-
-    var id: String {
-        "\(state.id)-\(Int(sourceStart.timeIntervalSince1970))-\(Int(sourceEnd.timeIntervalSince1970))"
-    }
-}
-
-private func menuStateStripSegments(from segments: [StateSegment], now: Date = Date()) -> [MenuStateStripSegment] {
-    let dayStart = Calendar.current.startOfDay(for: now)
-    let clipped = orderedStateSegments(segments).compactMap { segment -> (start: Date, end: Date, state: FocusPetCore.FocusState)? in
-        guard segment.state != .away else { return nil }
-        let start = max(segment.start, dayStart)
-        let end = min(segment.end, now)
-        guard end > start else { return nil }
-        return (start, end, segment.state)
-    }
-    let durations = clipped.map { $0.end.timeIntervalSince($0.start) }
-    let total = durations.reduce(0, +)
-    guard total > 0 else { return [] }
-
-    var cursor: TimeInterval = 0
-    return zip(clipped, durations).map { item, duration in
-        let startProgress = cursor / total
-        cursor += duration
-        return MenuStateStripSegment(
-            startProgress: startProgress,
-            endProgress: cursor / total,
-            state: item.state,
-            sourceStart: item.start,
-            sourceEnd: item.end
-        )
     }
 }
 
@@ -2804,6 +2748,16 @@ private struct TimelineHoverDetail {
     var y: CGFloat
 }
 
+private struct TimelineAxisTick: Identifiable, Hashable {
+    var date: Date
+    var progress: Double
+    var isBoundary: Bool = false
+
+    var id: String {
+        "\(Int(date.timeIntervalSince1970))-\(Int((progress * 10_000).rounded()))-\(isBoundary)"
+    }
+}
+
 private struct TimelineHoverBubble: View {
     var detail: TimelineHoverDetail
 
@@ -2872,7 +2826,13 @@ private struct InputTimelineChart: View {
                 rowLabels(statusY: statusY, inputY: inputY, inputHeight: inputHeight)
 
                 ZStack(alignment: .topLeading) {
-                    inputGrid(width: chartWidth, top: inputY, height: inputHeight, bottom: markerBottom)
+                    inputGrid(
+                        width: chartWidth,
+                        top: inputY,
+                        height: inputHeight,
+                        bottom: markerBottom,
+                        ticks: snapshot.hourAxisTicks
+                    )
 
                     stateBand(width: chartWidth, y: statusY, height: statusHeight)
 
@@ -2889,14 +2849,7 @@ private struct InputTimelineChart: View {
                         inputBar(bar, chartWidth: chartWidth, y: inputY, height: inputHeight)
                     }
 
-                    HStack {
-                        TimelineTimeChip(snapshot.timeLabels.first ?? "")
-                        Spacer()
-                        TimelineTimeChip(snapshot.timeLabels.dropFirst().first ?? "")
-                        Spacer()
-                        TimelineTimeChip(snapshot.timeLabels.last ?? "")
-                    }
-                    .offset(y: axisY)
+                    timelineHourAxis(ticks: snapshot.hourAxisTicks, width: chartWidth, y: axisY)
 
                     Rectangle()
                         .fill(Color.white.opacity(0.001))
@@ -2965,20 +2918,45 @@ private struct InputTimelineChart: View {
         .frame(width: labelWidth, alignment: .leading)
     }
 
-    private func inputGrid(width: CGFloat, top: CGFloat, height: CGFloat, bottom: CGFloat) -> some View {
+    private func inputGrid(
+        width: CGFloat,
+        top: CGFloat,
+        height: CGFloat,
+        bottom: CGFloat,
+        ticks: [TimelineAxisTick]
+    ) -> some View {
         Path { path in
             for index in 0...4 {
                 let y = top + height * CGFloat(index) / 4
                 path.move(to: CGPoint(x: 0, y: y))
                 path.addLine(to: CGPoint(x: width, y: y))
             }
-            for index in 0...4 {
-                let x = width * CGFloat(index) / 4
+            for tick in ticks {
+                let x = width * CGFloat(tick.progress)
                 path.move(to: CGPoint(x: x, y: 0))
                 path.addLine(to: CGPoint(x: x, y: bottom))
             }
         }
         .stroke(FPChartPalette.gridLine, style: StrokeStyle(lineWidth: 1, dash: [4, 8]))
+    }
+
+    private func timelineHourAxis(ticks: [TimelineAxisTick], width: CGFloat, y: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(ticks) { tick in
+                VStack(spacing: 3) {
+                    Rectangle()
+                        .fill(DashboardPalette.innerStroke.opacity(0.72))
+                        .frame(width: 1, height: 6)
+                    Text(FocusPetFormatters.clock(tick.date))
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                        .fixedSize()
+                }
+                .frame(width: 34)
+                .offset(x: max(0, min(width - 34, width * CGFloat(tick.progress) - 17)), y: y)
+            }
+        }
+        .frame(width: width, height: 24, alignment: .topLeading)
     }
 
     private func stateBand(width: CGFloat, y: CGFloat, height: CGFloat) -> some View {
@@ -3299,6 +3277,34 @@ private extension InputTimelineSnapshot {
 
     var rangeLabel: String {
         "\(FocusPetFormatters.clock(start)) - \(FocusPetFormatters.clock(end))"
+    }
+
+    var hourAxisTicks: [TimelineAxisTick] {
+        let span = max(1, end.timeIntervalSince(start))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "zh_CN")
+
+        func progress(for date: Date) -> Double {
+            max(0, min(1, date.timeIntervalSince(start) / span))
+        }
+
+        var ticks: [TimelineAxisTick] = []
+
+        var components = calendar.dateComponents([.year, .month, .day, .hour], from: start)
+        components.minute = 0
+        components.second = 0
+        let startHour = calendar.date(from: components) ?? start
+        var cursor = startHour <= start
+            ? (calendar.date(byAdding: .hour, value: 1, to: startHour) ?? start.addingTimeInterval(3_600))
+            : startHour
+
+        while cursor < end {
+            ticks.append(TimelineAxisTick(date: cursor, progress: progress(for: cursor)))
+            guard let next = calendar.date(byAdding: .hour, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+
+        return ticks
     }
 }
 
@@ -3856,6 +3862,7 @@ private extension FocusPetCore.FocusState {
         case .away: FPChartPalette.away
         }
     }
+
 }
 
 private extension ActivityCategory {
@@ -5198,21 +5205,23 @@ private struct AttentionHeatmapPanel: View {
             }
 
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 8) {
                         heatmapBody
                         HeatmapLegend()
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .zIndex(2)
 
                     AttentionInsightPanel(snapshot: snapshot, scope: scope)
                         .frame(width: 268)
+                        .zIndex(0)
                 }
 
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 12) {
                     heatmapBody
-                    AttentionInsightPanel(snapshot: snapshot, scope: scope)
                     HeatmapLegend()
+                    AttentionInsightPanel(snapshot: snapshot, scope: scope)
                 }
             }
         }
@@ -5408,6 +5417,11 @@ private struct AttentionSummaryPill: View {
     }
 }
 
+private enum HeatmapHoverPlacement {
+    case leading
+    case trailing
+}
+
 private struct WeeklyAttentionHeatmap: View {
     var weeks: [AttentionWeekBucket]
 
@@ -5425,7 +5439,7 @@ private struct WeeklyAttentionHeatmap: View {
                     }
                 }
 
-                ForEach(weeks) { week in
+                ForEach(Array(weeks.enumerated()), id: \.element.id) { index, week in
                     VStack(spacing: 5) {
                         VStack(spacing: 1) {
                             Text("W\(weekNumber(week.start))")
@@ -5437,7 +5451,11 @@ private struct WeeklyAttentionHeatmap: View {
                         .frame(width: 26, height: 32)
 
                         ForEach(week.days) { day in
-                            AttentionHeatmapCell(day: day, size: 22)
+                            AttentionHeatmapCell(
+                                day: day,
+                                size: 22,
+                                hoverPlacement: index >= max(0, weeks.count - 2) ? .leading : .trailing
+                            )
                         }
                     }
                 }
@@ -5493,8 +5511,12 @@ private struct MonthlyAttentionHeatmap: View {
                     }
 
                     LazyVGrid(columns: Array(repeating: GridItem(.fixed(14), spacing: 5), count: 7), spacing: 5) {
-                        ForEach(Array(month.days.enumerated()), id: \.offset) { _, day in
-                            AttentionHeatmapCell(day: day, size: 14)
+                        ForEach(Array(month.days.enumerated()), id: \.offset) { index, day in
+                            AttentionHeatmapCell(
+                                day: day,
+                                size: 14,
+                                hoverPlacement: index % 7 >= 5 ? .leading : .trailing
+                            )
                         }
                     }
                 }
@@ -5514,45 +5536,70 @@ private struct MonthlyAttentionHeatmap: View {
     }
 }
 
-private func attentionHeatmapFocusLevel(_ focusSeconds: Int) -> Int {
-    switch max(0, focusSeconds) {
-    case 0..<900:
+private func attentionHeatmapWorkLevel(_ workSeconds: Int) -> Int {
+    switch max(0, workSeconds) {
+    case 0:
         return 0
-    case 900..<2_700:
+    case 1..<1_800:
         return 1
-    case 2_700..<5_400:
+    case 1_800..<7_200:
         return 2
-    case 5_400..<10_800:
+    case 7_200..<14_400:
         return 3
-    case 10_800..<14_400:
+    case 14_400..<21_600:
         return 4
-    default:
+    case 21_600..<28_800:
         return 5
+    case 28_800..<36_000:
+        return 6
+    case 36_000..<43_200:
+        return 7
+    default:
+        return 8
     }
 }
 
-private func attentionHeatmapBlueColor(_ level: Int) -> Color {
-    switch min(5, max(0, level)) {
-    case 0:
-        return FPColor.insetSurface
-    case 1:
-        return FPColor.focus100
-    case 2:
-        return FPColor.focus300
-    case 3:
-        return FPColor.focus400
-    case 4:
-        return FPColor.focus500
-    default:
-        return FPColor.focus600
+private func attentionHeatmapColor(level: Int, focusRatio: Double = 0.78) -> Color {
+    let level = min(8, max(0, level))
+    guard level > 0 else { return FPColor.insetSurface }
+
+    let intensity = Double(level) / 8
+    let ratio = max(0, min(1, focusRatio))
+    let hue: Double
+    if ratio >= 0.72 {
+        hue = 0.58
+    } else if ratio >= 0.55 {
+        hue = 0.48
+    } else if ratio >= 0.38 {
+        hue = 0.12
+    } else {
+        hue = 0.06
     }
+    return Color(
+        hue: hue,
+        saturation: 0.18 + 0.56 * intensity,
+        brightness: 0.98 - 0.30 * intensity
+    )
+}
+
+private func attentionHeatmapColor(for breakdown: AttentionDurationBreakdown) -> Color {
+    guard breakdown.workSeconds > 0 else {
+        return DashboardPalette.trackFill.opacity(0.55)
+    }
+    return attentionHeatmapColor(
+        level: attentionHeatmapWorkLevel(breakdown.workSeconds),
+        focusRatio: breakdown.focusRatio
+    )
 }
 
 private struct AttentionHeatmapCell: View {
     var day: AttentionDayBucket?
     var size: CGFloat
+    var hoverPlacement: HeatmapHoverPlacement = .trailing
+    @State private var isHovering = false
 
     var body: some View {
+        let hoverWidth: CGFloat = 204
         RoundedRectangle(cornerRadius: max(2, size * 0.22), style: .continuous)
             .fill(fillColor)
             .frame(width: size, height: size)
@@ -5568,16 +5615,37 @@ private struct AttentionHeatmapCell: View {
                         .offset(x: 2, y: -2)
                 }
             }
-            .help(helpText)
+            .overlay(alignment: .topLeading) {
+                if isHovering, let day {
+                    AttentionHeatmapHoverCard(day: day, width: hoverWidth)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .offset(x: hoverXOffset(width: hoverWidth), y: -10)
+                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topLeading)))
+                        .zIndex(100)
+                        .allowsHitTesting(false)
+                }
+            }
+            .zIndex(isHovering ? 50 : 0)
+            .onContinuousHover { phase in
+                guard day != nil else { return }
+                switch phase {
+                case .active:
+                    if !isHovering {
+                        withAnimation(.easeOut(duration: 0.08)) {
+                            isHovering = true
+                        }
+                    }
+                case .ended:
+                    withAnimation(.easeOut(duration: 0.08)) {
+                        isHovering = false
+                    }
+                }
+            }
     }
 
     private var fillColor: Color {
         guard let day else { return Color.clear }
-        guard day.attentionSeconds > 0 else {
-            return DashboardPalette.trackFill.opacity(0.55)
-        }
-        let level = attentionHeatmapFocusLevel(day.breakdown.focusSeconds)
-        return attentionHeatmapBlueColor(level)
+        return attentionHeatmapColor(for: day.breakdown)
     }
 
     private var borderColor: Color {
@@ -5589,176 +5657,173 @@ private struct AttentionHeatmapCell: View {
         return Calendar(identifier: .gregorian).isDateInToday(day.date)
     }
 
-    private var helpText: String {
-        guard let day else { return "" }
-        return "\(dayLabel(day.date)) · 专注 \(FocusPetFormatters.duration(day.breakdown.focusSeconds)) · 走神 \(FocusPetFormatters.duration(day.breakdown.distractedSeconds))"
+    private func hoverXOffset(width: CGFloat) -> CGFloat {
+        switch hoverPlacement {
+        case .leading:
+            return -width - 8
+        case .trailing:
+            return size + 8
+        }
+    }
+}
+
+private struct AttentionHeatmapHoverCard: View {
+    var day: AttentionDayBucket
+    var width: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(attentionHeatmapColor(for: day.breakdown))
+                    .frame(width: 12, height: 12)
+                Text(dayTitle)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(DashboardPalette.primaryText)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text(FocusPetFormatters.duration(day.breakdown.workSeconds))
+                    .font(.caption.monospacedDigit().weight(.bold))
+                    .foregroundStyle(DashboardPalette.focusBlue)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+
+            HeatmapHoverRatioRow(title: "专注占比", ratio: day.breakdown.focusRatio, tint: DashboardPalette.focusBlue)
+            HeatmapHoverLine(title: "专注", value: FocusPetFormatters.duration(day.breakdown.focusSeconds), tint: FocusPetCore.FocusState.focus.timelineColor)
+            HeatmapHoverLine(title: "走神", value: FocusPetFormatters.duration(day.breakdown.distractedSeconds), tint: FocusPetCore.FocusState.distracted.timelineColor)
+            HeatmapHoverLine(title: "休息", value: FocusPetFormatters.duration(day.breakdown.breakSeconds), tint: FocusPetCore.FocusState.breakTime.timelineColor)
+            if day.breakdown.awaySeconds > 0 {
+                HeatmapHoverLine(title: "暂离", value: FocusPetFormatters.duration(day.breakdown.awaySeconds), tint: FocusPetCore.FocusState.away.timelineColor)
+            }
+        }
+        .padding(9)
+        .frame(width: width, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.94))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(attentionHeatmapColor(for: day.breakdown).opacity(0.30), lineWidth: 1)
+                }
+                .shadow(color: DashboardPalette.shadow.opacity(0.20), radius: 10, x: 0, y: 6)
+        }
     }
 
-    private func dayLabel(_ date: Date) -> String {
+    private var dayTitle: String {
         let calendar = Calendar(identifier: .gregorian)
-        let components = calendar.dateComponents([.month, .day], from: date)
-        return "\(components.month ?? 0)/\(components.day ?? 0)"
+        let components = calendar.dateComponents([.month, .day], from: day.date)
+        return "\(components.month ?? 0)月\(components.day ?? 0)日"
+    }
+}
+
+private struct HeatmapHoverRatioRow: View {
+    var title: String
+    var ratio: Double
+    var tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(FocusPetFormatters.percentage(ratio))
+                    .monospacedDigit()
+            }
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(DashboardPalette.secondaryText)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(DashboardPalette.trackFill.opacity(0.70))
+                    Capsule()
+                        .fill(tint.gradient)
+                        .frame(width: max(6, proxy.size.width * ratio))
+                }
+            }
+            .frame(height: 6)
+        }
+    }
+}
+
+private struct HeatmapHoverLine: View {
+    var title: String
+    var value: String
+    var tint: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(tint)
+                .frame(width: 6, height: 6)
+            Text(title)
+                .foregroundStyle(DashboardPalette.secondaryText)
+            Spacer(minLength: 12)
+            Text(value)
+                .foregroundStyle(DashboardPalette.primaryText)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+        }
+        .font(.caption2.weight(.semibold))
     }
 }
 
 private struct HeatmapLegend: View {
     var body: some View {
-        HStack(spacing: 10) {
-            Text("少")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(DashboardPalette.secondaryText)
-            HStack(spacing: 4) {
-                ForEach(0..<6, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(attentionHeatmapBlueColor(index))
-                        .frame(width: 15, height: 15)
+        ViewThatFits(in: .horizontal) {
+            content
+            ScrollView(.horizontal, showsIndicators: false) {
+                content
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.42), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(DashboardPalette.innerStroke.opacity(0.85), lineWidth: 1)
+        }
+    }
+
+    private var content: some View {
+        HStack(spacing: 8) {
+            Text("时长")
+                .font(.caption2.weight(.semibold))
+            HStack(spacing: 3) {
+                ForEach(0..<9, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                        .fill(attentionHeatmapColor(level: index))
+                        .frame(width: 10, height: 10)
                 }
             }
-            Text("多")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(DashboardPalette.secondaryText)
-            Spacer()
+            Text("0-12h+")
+                .font(.system(size: 8, weight: .semibold, design: .rounded))
+            Divider()
+                .frame(height: 12)
+            legendItem("高", color: attentionHeatmapColor(level: 6, focusRatio: 0.82))
+            legendItem("稳", color: attentionHeatmapColor(level: 6, focusRatio: 0.62))
+            legendItem("波动", color: attentionHeatmapColor(level: 6, focusRatio: 0.48))
+            legendItem("偏离", color: attentionHeatmapColor(level: 6, focusRatio: 0.24))
+        }
+        .font(.caption2.weight(.medium))
+        .foregroundStyle(DashboardPalette.secondaryText)
+    }
+
+    private func legendItem(_ title: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                .fill(color)
+                .frame(width: 10, height: 10)
+            Text(title)
         }
     }
 }
 
-private struct WorkTimelineInterval: Identifiable {
-    var start: Date
-    var end: Date
-    var ranges: [StatusStripRange]
-    var breakdown: AttentionDurationBreakdown
-
-    var id: String {
-        "\(Int(start.timeIntervalSince1970))-\(Int(end.timeIntervalSince1970))-\(ranges.count)"
-    }
-
-    var totalSeconds: Int {
-        max(0, Int(end.timeIntervalSince(start).rounded()))
-    }
-
-    var activeSeconds: Int {
-        breakdown.workSeconds
-    }
-
-    var focusRatio: Double {
-        breakdown.focusRatio
-    }
-}
-
-private struct WorkTimelineSnapshot {
-    var start: Date
-    var end: Date
-    var intervals: [WorkTimelineInterval]
-    var summary: AttentionDurationBreakdown
-
-    var hasData: Bool {
-        !intervals.isEmpty
-    }
-
-    var longestInterval: WorkTimelineInterval? {
-        intervals.max { $0.totalSeconds < $1.totalSeconds }
-    }
-
-    init(orderedSegments: [StateSegment], now: Date = Date()) {
-        let windowEnd = now
-        let windowStart = now.addingTimeInterval(-86_400)
-        let maxSessionBridgeGap: TimeInterval = 20 * 60
-        var result: [WorkTimelineInterval] = []
-        var currentStart: Date?
-        var currentEnd: Date?
-        var currentRanges: [StatusStripRange] = []
-        var currentBreakdown = AttentionDurationBreakdown()
-        var totalBreakdown = AttentionDurationBreakdown()
-
-        func resetCurrent() {
-            currentStart = nil
-            currentEnd = nil
-            currentRanges = []
-            currentBreakdown = AttentionDurationBreakdown()
-        }
-
-        func flushCurrent() {
-            guard let start = currentStart,
-                  let end = currentEnd,
-                  end > start,
-                  !currentRanges.isEmpty else {
-                resetCurrent()
-                return
-            }
-            result.append(WorkTimelineInterval(
-                start: start,
-                end: end,
-                ranges: currentRanges,
-                breakdown: currentBreakdown
-            ))
-            totalBreakdown.merge(currentBreakdown)
-            resetCurrent()
-        }
-
-        func appendRange(_ range: StatusStripRange) {
-            guard range.end > range.start else { return }
-            if let lastIndex = currentRanges.indices.last {
-                let last = currentRanges[lastIndex]
-                if last.state == range.state,
-                   range.start.timeIntervalSince(last.end) <= 1.5 {
-                    currentRanges[lastIndex] = StatusStripRange(
-                        start: last.start,
-                        end: max(last.end, range.end),
-                        state: last.state
-                    )
-                    return
-                }
-            }
-            currentRanges.append(range)
-        }
-
-        for segment in orderedSegments {
-            if segment.end <= windowStart { continue }
-            if segment.start >= windowEnd { break }
-
-            let clippedStart = max(segment.start, windowStart)
-            let clippedEnd = min(segment.end, windowEnd)
-            guard clippedEnd > clippedStart else { continue }
-
-            guard Self.isWorkState(segment.state) else {
-                if let previousEnd = currentEnd,
-                   clippedEnd.timeIntervalSince(previousEnd) > maxSessionBridgeGap {
-                    flushCurrent()
-                }
-                continue
-            }
-
-            if let previousEnd = currentEnd,
-               clippedStart.timeIntervalSince(previousEnd) > maxSessionBridgeGap {
-                flushCurrent()
-            }
-
-            if currentStart == nil {
-                currentStart = clippedStart
-            }
-            currentEnd = max(currentEnd ?? clippedEnd, clippedEnd)
-
-            let seconds = max(0, Int(clippedEnd.timeIntervalSince(clippedStart).rounded()))
-            currentBreakdown.add(state: segment.state, seconds: seconds)
-            appendRange(StatusStripRange(start: clippedStart, end: clippedEnd, state: segment.state))
-        }
-        flushCurrent()
-
-        start = windowStart
-        end = windowEnd
-        intervals = result
-        summary = totalBreakdown
-    }
-
-    private static func isWorkState(_ state: FocusPetCore.FocusState) -> Bool {
-        switch state {
-        case .focus, .distracted, .breakTime:
-            return true
-        case .away:
-            return false
-        }
-    }
-}
+private typealias WorkTimelineSnapshot = RecentWorkTimelineSnapshot
+private typealias WorkTimelineInterval = FocusPetCore.WorkTimelineInterval
+private typealias WorkTimelineRange = FocusPetCore.WorkTimelineRange
 
 private struct FocusHistorySegmentsPanel: View {
     var snapshot: WorkTimelineSnapshot
@@ -5769,7 +5834,7 @@ private struct FocusHistorySegmentsPanel: View {
                 Label("近24小时工作段", systemImage: "waveform.path.ecg")
                     .font(.headline.weight(.semibold))
                 Spacer()
-                StatusPill("\(snapshot.intervals.count) 段 · 仅工作段", symbol: "number")
+                StatusPill(statusCaption, symbol: "number")
             }
 
             LazyVGrid(columns: summaryColumns, spacing: 10) {
@@ -5802,7 +5867,7 @@ private struct FocusHistorySegmentsPanel: View {
             if snapshot.hasData {
                 FocusSegmentDurationChart(snapshot: snapshot)
             } else {
-                Text("最近 24 小时暂无工作时间。")
+                Text(emptyStateText)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(DashboardPalette.secondaryText)
                     .frame(maxWidth: .infinity, minHeight: 132, alignment: .center)
@@ -5820,6 +5885,20 @@ private struct FocusHistorySegmentsPanel: View {
     private var summaryColumns: [GridItem] {
         [GridItem(.adaptive(minimum: 150), spacing: 10)]
     }
+
+    private var statusCaption: String {
+        if snapshot.discardedShortIntervalCount > 0 {
+            return "\(snapshot.intervals.count) 段 · 已降噪"
+        }
+        return "\(snapshot.intervals.count) 段 · 仅工作段"
+    }
+
+    private var emptyStateText: String {
+        if snapshot.discardedShortIntervalCount > 0 {
+            return "最近 24 小时暂无有效工作时间，短暂片段已自动过滤。"
+        }
+        return "最近 24 小时暂无工作时间。"
+    }
 }
 
 private struct FocusSegmentDurationChart: View {
@@ -5828,7 +5907,7 @@ private struct FocusSegmentDurationChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             WorkSessionOverviewStrip(snapshot: snapshot)
-                .frame(height: 34)
+                .frame(height: 66)
 
             LazyVGrid(columns: sessionColumns, spacing: 10) {
                 ForEach(displayIntervals) { interval in
@@ -5860,25 +5939,43 @@ private struct WorkSessionOverviewStrip: View {
     var body: some View {
         GeometryReader { proxy in
             let total = max(1, snapshot.intervals.reduce(0) { $0 + $1.totalSeconds })
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(DashboardPalette.trackFill.opacity(0.34))
-
-                ForEach(layoutRanges(total: total, width: proxy.size.width)) { range in
-                    Capsule()
-                        .fill(range.tint.gradient)
-                        .frame(width: range.width, height: 18)
-                        .offset(x: range.x)
+            let ranges = layoutRanges(total: total, width: proxy.size.width)
+            ZStack(alignment: .topLeading) {
+                HStack {
+                    Spacer()
+                    Text("压缩工作段")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(DashboardPalette.secondaryText)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(.white.opacity(0.62), in: Capsule())
                 }
-            }
-            .overlay(alignment: .trailing) {
-                Text("压缩工作段")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(DashboardPalette.secondaryText)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(.white.opacity(0.62), in: Capsule())
-                    .padding(.trailing, 5)
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(DashboardPalette.trackFill.opacity(0.34))
+                        .frame(height: 18)
+
+                    ForEach(ranges) { range in
+                        Capsule()
+                            .fill(range.tint.gradient)
+                            .frame(width: range.width, height: 18)
+                            .offset(x: range.x)
+                    }
+                }
+                .offset(y: 24)
+
+                ForEach(ranges) { range in
+                    if range.showsTimeLabel {
+                        Text(range.timeLabel)
+                            .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(DashboardPalette.secondaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                            .frame(width: range.width, alignment: .center)
+                            .offset(x: range.x, y: 48)
+                    }
+                }
             }
         }
     }
@@ -5886,14 +5983,23 @@ private struct WorkSessionOverviewStrip: View {
     private func layoutRanges(total: Int, width: CGFloat) -> [CompressedWorkSessionRange] {
         var cursor: CGFloat = 0
         let gap: CGFloat = snapshot.intervals.count > 1 ? 4 : 0
+        let intervalCount = CGFloat(snapshot.intervals.count)
         let usableWidth = max(0, width - gap * CGFloat(max(0, snapshot.intervals.count - 1)))
+        let minimumSegmentWidth: CGFloat = 12
+        let canUseMinimumWidth = intervalCount * minimumSegmentWidth <= usableWidth
+        let remainingWidth = canUseMinimumWidth ? usableWidth - intervalCount * minimumSegmentWidth : usableWidth
         return snapshot.intervals.map { interval in
-            let segmentWidth = max(12, usableWidth * CGFloat(interval.totalSeconds) / CGFloat(max(1, total)))
+            let proportionalWidth = usableWidth * CGFloat(interval.totalSeconds) / CGFloat(max(1, total))
+            let segmentWidth = canUseMinimumWidth
+                ? minimumSegmentWidth + remainingWidth * CGFloat(interval.totalSeconds) / CGFloat(max(1, total))
+                : proportionalWidth
             defer { cursor += segmentWidth + gap }
             return CompressedWorkSessionRange(
                 x: cursor,
                 width: segmentWidth,
-                tint: interval.focusRatio >= 0.72 ? DashboardPalette.focusBlue : FocusPetCore.FocusState.distracted.timelineColor
+                tint: interval.focusRatio >= 0.72 ? DashboardPalette.focusBlue : FocusPetCore.FocusState.distracted.timelineColor,
+                timeLabel: "\(FocusPetFormatters.clock(interval.start))-\(FocusPetFormatters.clock(interval.end))",
+                showsTimeLabel: segmentWidth >= 78
             )
         }
     }
@@ -5903,9 +6009,11 @@ private struct CompressedWorkSessionRange: Identifiable {
     var x: CGFloat
     var width: CGFloat
     var tint: Color
+    var timeLabel: String
+    var showsTimeLabel: Bool
 
     var id: String {
-        "\(Int((x * 10).rounded()))-\(Int((width * 10).rounded()))"
+        "\(Int((x * 10).rounded()))-\(Int((width * 10).rounded()))-\(timeLabel)"
     }
 }
 
@@ -5932,11 +6040,9 @@ private struct WorkSessionCard: View {
             WorkSessionRangeBar(interval: interval)
                 .frame(height: 12)
 
-            HStack(spacing: 8) {
-                WorkSessionMetric(title: "专注", seconds: interval.breakdown.focusSeconds, tint: DashboardPalette.focusBlue)
-                WorkSessionMetric(title: "走神", seconds: interval.breakdown.distractedSeconds, tint: FocusPetCore.FocusState.distracted.timelineColor)
-                if interval.breakdown.breakSeconds > 0 {
-                    WorkSessionMetric(title: "休息", seconds: interval.breakdown.breakSeconds, tint: DashboardPalette.restGreen)
+            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 5) {
+                ForEach(metrics) { metric in
+                    WorkSessionMetric(title: metric.title, seconds: metric.seconds, tint: metric.tint)
                 }
             }
         }
@@ -5948,6 +6054,28 @@ private struct WorkSessionCard: View {
                 .stroke(interval.focusRatio >= 0.72 ? DashboardPalette.focusBlue.opacity(0.20) : DashboardPalette.distractedRed.opacity(0.18), lineWidth: 1)
         }
     }
+
+    private var metrics: [WorkSessionMetricItem] {
+        [
+            WorkSessionMetricItem(title: "专注", seconds: interval.breakdown.focusSeconds, tint: DashboardPalette.focusBlue),
+            WorkSessionMetricItem(title: "走神", seconds: interval.breakdown.distractedSeconds, tint: FocusPetCore.FocusState.distracted.timelineColor),
+            WorkSessionMetricItem(title: "休息", seconds: interval.breakdown.breakSeconds, tint: DashboardPalette.restGreen),
+            WorkSessionMetricItem(title: "暂离", seconds: interval.breakdown.awaySeconds, tint: FocusPetCore.FocusState.away.timelineColor)
+        ]
+        .filter { $0.seconds > 0 }
+    }
+
+    private var metricColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 86), spacing: 6, alignment: .leading)]
+    }
+}
+
+private struct WorkSessionMetricItem: Identifiable {
+    var title: String
+    var seconds: Int
+    var tint: Color
+
+    var id: String { title }
 }
 
 private struct WorkSessionRangeBar: View {
@@ -5978,18 +6106,28 @@ private struct WorkSessionRangeBar: View {
     }
 
     private var helpText: String {
-        "专注 \(FocusPetFormatters.duration(interval.breakdown.focusSeconds)) · 走神 \(FocusPetFormatters.duration(interval.breakdown.distractedSeconds)) · 休息 \(FocusPetFormatters.duration(interval.breakdown.breakSeconds))"
+        var parts = [
+            "专注 \(FocusPetFormatters.duration(interval.breakdown.focusSeconds))",
+            "走神 \(FocusPetFormatters.duration(interval.breakdown.distractedSeconds))"
+        ]
+        if interval.breakdown.breakSeconds > 0 {
+            parts.append("休息 \(FocusPetFormatters.duration(interval.breakdown.breakSeconds))")
+        }
+        if interval.breakdown.awaySeconds > 0 {
+            parts.append("暂离 \(FocusPetFormatters.duration(interval.breakdown.awaySeconds))")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private var span: TimeInterval {
         max(1, interval.end.timeIntervalSince(interval.start))
     }
 
-    private func rangeOffset(_ range: StatusStripRange, width: CGFloat) -> CGFloat {
+    private func rangeOffset(_ range: WorkTimelineRange, width: CGFloat) -> CGFloat {
         width * CGFloat(max(0, range.start.timeIntervalSince(interval.start) / span))
     }
 
-    private func rangeWidth(_ range: StatusStripRange, width: CGFloat) -> CGFloat {
+    private func rangeWidth(_ range: WorkTimelineRange, width: CGFloat) -> CGFloat {
         let clippedStart = max(range.start, interval.start)
         let clippedEnd = min(range.end, interval.end)
         return width * CGFloat(max(0, clippedEnd.timeIntervalSince(clippedStart) / span))
@@ -6014,6 +6152,7 @@ private struct WorkSessionMetric: View {
         .foregroundStyle(DashboardPalette.secondaryText)
         .lineLimit(1)
         .minimumScaleFactor(0.78)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -6109,12 +6248,12 @@ private struct FocusSegmentTimelineOverview: View {
         CGFloat(max(0, min(1, date.timeIntervalSince(snapshot.start) / span))) * width
     }
 
-    private func rangeOffset(_ range: StatusStripRange, interval: WorkTimelineInterval, width: CGFloat) -> CGFloat {
+    private func rangeOffset(_ range: WorkTimelineRange, interval: WorkTimelineInterval, width: CGFloat) -> CGFloat {
         let intervalSpan = max(1, interval.end.timeIntervalSince(interval.start))
         return width * CGFloat(max(0, range.start.timeIntervalSince(interval.start) / intervalSpan))
     }
 
-    private func rangeWidth(_ range: StatusStripRange, interval: WorkTimelineInterval, width: CGFloat) -> CGFloat {
+    private func rangeWidth(_ range: WorkTimelineRange, interval: WorkTimelineInterval, width: CGFloat) -> CGFloat {
         let intervalSpan = max(1, interval.end.timeIntervalSince(interval.start))
         return width * CGFloat(max(0, min(range.end, interval.end).timeIntervalSince(max(range.start, interval.start)) / intervalSpan))
     }
@@ -7467,7 +7606,7 @@ private struct ReminderSettingsPanel: View {
                     .onChange(of: model.settings.reminder.enablePetBubbles) { _, _ in model.saveSettings() }
                 TogglePillButton(title: "系统通知", symbol: "bell.fill", isOn: $model.settings.reminder.enableSystemNotifications, status: .focus)
                     .onChange(of: model.settings.reminder.enableSystemNotifications) { _, _ in model.saveSettings() }
-                    .help("系统通知只用于强提醒、长专注、专注完成和休息结束。")
+                    .help("系统通知只用于强走神和专注会话完成；长专注和休息结束由桌宠轻提醒。")
                 TogglePillButton(title: "走神提醒", symbol: "eye.trianglebadge.exclamationmark", isOn: $model.settings.reminder.enableDistractedNudges, status: .distracted)
                     .onChange(of: model.settings.reminder.enableDistractedNudges) { _, _ in model.saveSettings() }
                 TogglePillButton(title: "专注休息提醒", symbol: "figure.cooldown", isOn: $model.settings.reminder.enableFocusRestNudges, status: .rest)

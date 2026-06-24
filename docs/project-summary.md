@@ -44,7 +44,6 @@ Required commands:
 
 ```bash
 swift build
-swift test
 swift run FocusPetCoreChecks
 ./scripts/package-macos-app.sh
 ```

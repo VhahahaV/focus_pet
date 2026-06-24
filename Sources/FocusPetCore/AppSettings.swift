@@ -4,6 +4,7 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
     public var enablePetBubbles: Bool
     public var enableSystemNotifications: Bool
     public var hasAppliedSystemNotificationDefault: Bool
+    public var hasAppliedGentleReminderTuning: Bool
     public var pauseUntil: Date?
     public var pauseMinutes: Int
     public var enableDistractedNudges: Bool
@@ -19,20 +20,22 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
         enablePetBubbles: Bool = true,
         enableSystemNotifications: Bool = false,
         hasAppliedSystemNotificationDefault: Bool = true,
+        hasAppliedGentleReminderTuning: Bool = true,
         pauseUntil: Date? = nil,
         pauseMinutes: Int = 30,
         enableDistractedNudges: Bool = true,
         enableFocusRestNudges: Bool = true,
-        enableWelcomeBackNudges: Bool = true,
-        lightDistractedMinutes: Int = 8,
-        strongDistractedMinutes: Int = 15,
-        longFocusMinutes: Int = 25,
-        veryLongFocusMinutes: Int = 60,
+        enableWelcomeBackNudges: Bool = false,
+        lightDistractedMinutes: Int = 5,
+        strongDistractedMinutes: Int = 12,
+        longFocusMinutes: Int = 45,
+        veryLongFocusMinutes: Int = 90,
         cooldownMinutes: Int = 10
     ) {
         self.enablePetBubbles = enablePetBubbles
         self.enableSystemNotifications = enableSystemNotifications
         self.hasAppliedSystemNotificationDefault = hasAppliedSystemNotificationDefault
+        self.hasAppliedGentleReminderTuning = hasAppliedGentleReminderTuning
         self.pauseUntil = pauseUntil
         self.pauseMinutes = min(240, max(5, pauseMinutes))
         self.enableDistractedNudges = enableDistractedNudges
@@ -71,6 +74,7 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
             enablePetBubbles: enablePetBubbles,
             enableSystemNotifications: enableSystemNotifications,
             hasAppliedSystemNotificationDefault: hasAppliedSystemNotificationDefault,
+            hasAppliedGentleReminderTuning: hasAppliedGentleReminderTuning,
             pauseUntil: pauseUntil,
             pauseMinutes: pauseMinutes,
             enableDistractedNudges: enableDistractedNudges,
@@ -88,6 +92,7 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
         case enablePetBubbles
         case enableSystemNotifications
         case hasAppliedSystemNotificationDefault
+        case hasAppliedGentleReminderTuning
         case pauseUntil
         case pauseMinutes
         case enableDistractedNudges
@@ -106,15 +111,16 @@ public struct ReminderSettings: Codable, Hashable, Sendable {
             enablePetBubbles: try container.decodeIfPresent(Bool.self, forKey: .enablePetBubbles) ?? true,
             enableSystemNotifications: try container.decodeIfPresent(Bool.self, forKey: .enableSystemNotifications) ?? false,
             hasAppliedSystemNotificationDefault: try container.decodeIfPresent(Bool.self, forKey: .hasAppliedSystemNotificationDefault) ?? false,
+            hasAppliedGentleReminderTuning: try container.decodeIfPresent(Bool.self, forKey: .hasAppliedGentleReminderTuning) ?? false,
             pauseUntil: try container.decodeIfPresent(Date.self, forKey: .pauseUntil),
             pauseMinutes: try container.decodeIfPresent(Int.self, forKey: .pauseMinutes) ?? 30,
             enableDistractedNudges: try container.decodeIfPresent(Bool.self, forKey: .enableDistractedNudges) ?? true,
             enableFocusRestNudges: try container.decodeIfPresent(Bool.self, forKey: .enableFocusRestNudges) ?? true,
-            enableWelcomeBackNudges: try container.decodeIfPresent(Bool.self, forKey: .enableWelcomeBackNudges) ?? true,
-            lightDistractedMinutes: try container.decodeIfPresent(Int.self, forKey: .lightDistractedMinutes) ?? 8,
-            strongDistractedMinutes: try container.decodeIfPresent(Int.self, forKey: .strongDistractedMinutes) ?? 15,
-            longFocusMinutes: try container.decodeIfPresent(Int.self, forKey: .longFocusMinutes) ?? 25,
-            veryLongFocusMinutes: try container.decodeIfPresent(Int.self, forKey: .veryLongFocusMinutes) ?? 60,
+            enableWelcomeBackNudges: try container.decodeIfPresent(Bool.self, forKey: .enableWelcomeBackNudges) ?? false,
+            lightDistractedMinutes: try container.decodeIfPresent(Int.self, forKey: .lightDistractedMinutes) ?? 5,
+            strongDistractedMinutes: try container.decodeIfPresent(Int.self, forKey: .strongDistractedMinutes) ?? 12,
+            longFocusMinutes: try container.decodeIfPresent(Int.self, forKey: .longFocusMinutes) ?? 45,
+            veryLongFocusMinutes: try container.decodeIfPresent(Int.self, forKey: .veryLongFocusMinutes) ?? 90,
             cooldownMinutes: try container.decodeIfPresent(Int.self, forKey: .cooldownMinutes) ?? 10
         )
     }

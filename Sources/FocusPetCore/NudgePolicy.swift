@@ -150,11 +150,11 @@ public struct NudgePolicyThresholds: Codable, Hashable, Sendable {
     public var cooldownSeconds: TimeInterval
 
     public init(
-        lightDistractedSeconds: TimeInterval = 8 * 60,
-        strongDistractedSeconds: TimeInterval = 15 * 60,
-        longFocusSeconds: TimeInterval = 25 * 60,
-        veryLongFocusSeconds: TimeInterval = 60 * 60,
-        welcomeBackAwaySeconds: TimeInterval = 15 * 60,
+        lightDistractedSeconds: TimeInterval = 5 * 60,
+        strongDistractedSeconds: TimeInterval = 12 * 60,
+        longFocusSeconds: TimeInterval = 45 * 60,
+        veryLongFocusSeconds: TimeInterval = 90 * 60,
+        welcomeBackAwaySeconds: TimeInterval = 30 * 60,
         cooldownSeconds: TimeInterval = 10 * 60
     ) {
         self.lightDistractedSeconds = lightDistractedSeconds
@@ -177,11 +177,11 @@ public struct NudgePolicyThresholds: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
-            lightDistractedSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .lightDistractedSeconds) ?? 8 * 60,
-            strongDistractedSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .strongDistractedSeconds) ?? 15 * 60,
-            longFocusSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .longFocusSeconds) ?? 25 * 60,
-            veryLongFocusSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .veryLongFocusSeconds) ?? 60 * 60,
-            welcomeBackAwaySeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .welcomeBackAwaySeconds) ?? 15 * 60,
+            lightDistractedSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .lightDistractedSeconds) ?? 5 * 60,
+            strongDistractedSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .strongDistractedSeconds) ?? 12 * 60,
+            longFocusSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .longFocusSeconds) ?? 45 * 60,
+            veryLongFocusSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .veryLongFocusSeconds) ?? 90 * 60,
+            welcomeBackAwaySeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .welcomeBackAwaySeconds) ?? 30 * 60,
             cooldownSeconds: try container.decodeIfPresent(TimeInterval.self, forKey: .cooldownSeconds) ?? 10 * 60
         )
     }
@@ -237,9 +237,10 @@ public struct NudgePolicy: Sendable {
         message: String,
         lastTriggeredAt: [NudgeReason: Date]
     ) -> NudgeEvent? {
+        let cooldownSeconds = cooldownSeconds(for: reason)
         for cooldownReason in cooldownReasons(for: reason) {
             if let last = lastTriggeredAt[cooldownReason],
-               now.timeIntervalSince(last) < thresholds.cooldownSeconds {
+               now.timeIntervalSince(last) < cooldownSeconds {
                 return nil
             }
         }
@@ -251,9 +252,20 @@ public struct NudgePolicy: Sendable {
             appName: state.appName,
             category: state.category,
             petIntent: intent,
-            cooldownSeconds: thresholds.cooldownSeconds,
+            cooldownSeconds: cooldownSeconds,
             message: message
         )
+    }
+
+    private func cooldownSeconds(for reason: NudgeReason) -> TimeInterval {
+        switch reason {
+        case .longFocusRest, .veryLongFocusRest:
+            return max(thresholds.cooldownSeconds, 30 * 60)
+        case .welcomeBack:
+            return max(thresholds.cooldownSeconds, 2 * 60 * 60)
+        case .distractedOverThreshold, .distractedStrong, .frequentSwitching, .focusSessionCompleted, .breakEnding:
+            return thresholds.cooldownSeconds
+        }
     }
 
     private func cooldownReasons(for reason: NudgeReason) -> [NudgeReason] {

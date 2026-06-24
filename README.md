@@ -111,7 +111,7 @@ Focus Pet 用的是一条很短、很克制的产品链路：
 
 ## 桌宠资源
 
-Focus Pet 保留每个资源包自己的动作命名，再把运行时语义映射过去。当前本地测试资源包括：
+Focus Pet 保留每个资源包自己的动作命名，再把运行时语义映射过去。正式发行包不再内置占位桌宠；下面这些第三方资源只用于本地测试与资源包验证。
 
 | 资源包 | 预览 | 说明 |
 | --- | --- | --- |
@@ -135,7 +135,6 @@ Focus Pet 的默认设计是本地优先：
 ```bash
 swift build
 swift run FocusPet
-swift test
 swift run FocusPetCoreChecks
 ```
 

@@ -96,13 +96,23 @@ tell application "Finder"
     activate
     set dmgFolder to (POSIX file "$mount_point") as alias
     set dmgPath to POSIX path of dmgFolder
-    set dmgWindow to make new Finder window to dmgFolder
+    open dmgFolder
     delay 0.8
+    set dmgWindow to container window of dmgFolder
     if POSIX path of ((target of dmgWindow) as alias) is not dmgPath then error "Finder opened the wrong DMG target"
-    if current view of dmgWindow is not icon view then error "DMG window is not in icon view"
-    set viewOptions to icon view options of dmgWindow
-    if icon size of viewOptions is not 96 then error "Unexpected DMG icon size"
-    if text size of viewOptions is not 14 then error "Unexpected DMG text size"
+    repeat with attempt from 1 to 5
+        set currentDmgView to current view of dmgWindow
+        set viewOptions to icon view options of dmgWindow
+        set currentIconSize to icon size of viewOptions
+        set currentTextSize to text size of viewOptions
+        if currentDmgView is icon view and currentIconSize is 96 and currentTextSize is 14 then exit repeat
+        if attempt is 5 then
+            if currentDmgView is not icon view then error "DMG window is not in icon view"
+            if currentIconSize is not 96 then error "Unexpected DMG icon size (" & currentIconSize & ")"
+            if currentTextSize is not 14 then error "Unexpected DMG text size (" & currentTextSize & ")"
+        end if
+        delay 0.4
+    end repeat
     if position of item "Focus Pet.app" of dmgFolder is not {210, 230} then error "Focus Pet.app icon position is wrong"
     if position of item "Applications" of dmgFolder is not {510, 230} then error "Applications icon position is wrong"
     close dmgWindow

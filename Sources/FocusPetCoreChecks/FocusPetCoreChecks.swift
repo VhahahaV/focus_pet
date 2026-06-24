@@ -18,16 +18,20 @@ enum FocusPetCoreChecks {
         checkLongInputIdleBecomesAway()
         checkLongIdleReclassificationBackfillsAway()
         checkIncrementalAwayRecordingMergesWithoutDuplication()
+        checkTimeTrackerDoesNotOverlapStateChanges()
         checkNudgePolicy()
         checkReminderSettingsNudgeConfiguration()
         checkOldNudgeDoesNotOverridePetState()
         checkFocusAmbientActionsCycle()
         checkPrivacy()
         checkCategoryOnlyPrivacy()
+        checkRedactedExport()
+        checkStoreWriteFailuresAreReported()
         checkSummary()
         checkInputActivityBuckets()
         checkInputTimelineSnapshot()
         checkInputTimelineStateDisplay()
+        checkRecentWorkTimeline()
         checkInputWorkloadSummary()
         checkInputActivityStorage()
         checkLocalStoreSchemaCompatibility()
@@ -40,7 +44,7 @@ enum FocusPetCoreChecks {
         checkUserRulesOverrideCatalog()
         checkStoredBuiltInsAreFiltered()
         checkPetFallback()
-        checkPetCatalogDoesNotExposeFallbackAsDefault()
+        checkPetCatalogProvidesDistributionFallback()
         checkLocalPetPackActions()
         checkPetHoverPresentation()
         checkPetNonLoopFramesDoNotFreeze()
@@ -356,17 +360,58 @@ enum FocusPetCoreChecks {
         )
     }
 
+    private static func checkTimeTrackerDoesNotOverlapStateChanges() {
+        let start = Date(timeIntervalSince1970: 50_000)
+        let firstSnapshot = ActivitySnapshot(
+            timestamp: start.addingTimeInterval(10),
+            appName: "Cursor",
+            bundleID: "cursor",
+            windowTitle: nil,
+            category: .work,
+            idleSeconds: 0,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 10,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+        let secondSnapshot = ActivitySnapshot(
+            timestamp: start.addingTimeInterval(15),
+            appName: "Browser",
+            bundleID: "browser",
+            windowTitle: nil,
+            category: .entertainment,
+            idleSeconds: 0,
+            switchCountLast5Min: 1,
+            switchCountLast15Min: 1,
+            activeCategoryDuration: 5,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+        let firstDecision = StateDecision(timestamp: firstSnapshot.timestamp, state: .focus, category: .work, confidence: 1, reason: [.workCategory], stableDuration: 10)
+        let secondDecision = StateDecision(timestamp: secondSnapshot.timestamp, state: .distracted, category: .entertainment, confidence: 1, reason: [.entertainmentStable], stableDuration: 5)
+
+        var segments: [StateSegment] = []
+        segments = TimeTracker(tickSeconds: 10).record(decision: firstDecision, snapshot: firstSnapshot, segments: segments)
+        segments = TimeTracker(tickSeconds: 10).record(decision: secondDecision, snapshot: secondSnapshot, segments: segments)
+
+        expect(segments.count == 2, "state changes should still create separate state segments")
+        expect(segments[0].start == start && segments[0].end == start.addingTimeInterval(10), "first state segment should keep its sampled duration")
+        expect(segments[1].start == segments[0].end && segments[1].end == start.addingTimeInterval(15), "new state segment should start at previous segment end instead of overlapping it")
+        expect(segments[0].durationSeconds == 10 && segments[1].durationSeconds == 5, "state segment durations should not double count overlapped tick windows")
+    }
+
     private static func checkNudgePolicy() {
         let state = FocusStateSnapshot(
-            timestamp: Date(timeIntervalSince1970: 1_500),
+            timestamp: Date(timeIntervalSince1970: 2_700),
             state: .focus,
             category: .work,
-            stableDuration: 1_500,
+            stableDuration: 2_700,
             appName: "Cursor",
             bundleID: "cursor"
         )
         let event = NudgePolicy().nudge(for: state, previousState: .focus, now: state.timestamp, lastTriggeredAt: [:])
-        expect(event?.reason == .longFocusRest && event?.petIntent == .focusRestHint, "25 minute focus should trigger rest nudge intent")
+        expect(event?.reason == .longFocusRest && event?.petIntent == .focusRestHint, "45 minute focus should trigger rest nudge intent")
 
         let recentFocusState = FocusStateSnapshot(
             timestamp: Date(timeIntervalSince1970: 1_505),
@@ -387,7 +432,7 @@ enum FocusPetCoreChecks {
         let longWelcomeBack = NudgePolicy().nudge(
             for: recentFocusState,
             previousState: .away,
-            previousStateDuration: 15 * 60,
+            previousStateDuration: 30 * 60,
             now: recentFocusState.timestamp,
             lastTriggeredAt: [:]
         )
@@ -428,10 +473,11 @@ enum FocusPetCoreChecks {
             return
         }
         expect(legacy.pauseMinutes == 30, "legacy reminder settings should default pause minutes")
-        expect(legacy.lightDistractedMinutes == 8, "legacy reminder settings should default light distracted threshold")
-        expect(legacy.strongDistractedMinutes == 15, "legacy reminder settings should default strong distracted threshold")
-        expect(legacy.longFocusMinutes == 25, "legacy reminder settings should default long focus threshold")
-        expect(legacy.veryLongFocusMinutes == 60, "legacy reminder settings should default very long focus threshold")
+        expect(!legacy.enableWelcomeBackNudges, "welcome-back reminders should default to quiet")
+        expect(legacy.lightDistractedMinutes == 5, "legacy reminder settings should default light distracted threshold")
+        expect(legacy.strongDistractedMinutes == 12, "legacy reminder settings should default strong distracted threshold")
+        expect(legacy.longFocusMinutes == 45, "legacy reminder settings should default long focus threshold")
+        expect(legacy.veryLongFocusMinutes == 90, "legacy reminder settings should default very long focus threshold")
         expect(legacy.cooldownMinutes == 10, "legacy reminder settings should default cooldown")
 
         let custom = ReminderSettings(
@@ -492,6 +538,12 @@ enum FocusPetCoreChecks {
             now: Date(timeIntervalSince1970: 3_600)
         )
         expect(intent == .sleep, "old nudge actions should expire and let the current pet state drive intent")
+        let focusAfterAway = PetBehaviorPolicy().intentKind(
+            for: .focus,
+            previousState: .away,
+            now: Date(timeIntervalSince1970: 3_610)
+        )
+        expect(focusAfterAway == .quietCompanion, "welcome-back should not become a persistent baseline pet state")
     }
 
     private static func checkFocusAmbientActionsCycle() {
@@ -521,6 +573,111 @@ enum FocusPetCoreChecks {
                 && sanitized.titleStored == false,
             "category-only privacy should not store title metadata"
         )
+    }
+
+    private static func checkRedactedExport() {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-redacted-export-check-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let start = Date(timeIntervalSince1970: 0)
+        let snapshot = LocalStoreSnapshot(
+            settings: AppSettings(privacy: WindowTitlePrivacy(storeRawTitle: true)),
+            classificationRules: [
+                ClassificationRule(matchKind: .windowTitle, pattern: "Secret Draft", category: .work, priority: 200)
+            ],
+            stateSegments: [
+                StateSegment(
+                    start: start,
+                    end: start.addingTimeInterval(60),
+                    state: .focus,
+                    appName: "Cursor",
+                    bundleID: "cursor",
+                    category: .work,
+                    titleStored: true,
+                    titleDisplay: "Secret Draft",
+                    source: [.windowTitle]
+                )
+            ],
+            appUsage: [
+                AppUsageSegment(
+                    start: start,
+                    end: start.addingTimeInterval(60),
+                    appName: "Cursor",
+                    bundleID: "cursor",
+                    category: .work
+                )
+            ],
+            focusSessions: [
+                FocusSession(
+                    taskName: "Secret Launch Plan",
+                    start: start,
+                    targetDurationSeconds: 25 * 60,
+                    mainAppName: "Cursor"
+                )
+            ],
+            breakSessions: [],
+            nudges: [
+                NudgeEvent(
+                    time: start.addingTimeInterval(30),
+                    reason: .distractedOverThreshold,
+                    state: .distracted,
+                    appName: "YouTube",
+                    category: .entertainment,
+                    petIntent: .nudgeGentle,
+                    cooldownSeconds: 60,
+                    message: "回到任务"
+                )
+            ]
+        )
+
+        guard let url = LocalStore(rootURL: root).exportSnapshot(snapshot, redacted: true),
+              let data = try? Data(contentsOf: url) else {
+            expect(false, "redacted export should write a file")
+            return
+        }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let decoded = try? decoder.decode(LocalStoreSnapshot.self, from: data),
+              let segment = decoded.stateSegments.first,
+              let usage = decoded.appUsage.first,
+              let session = decoded.focusSessions.first,
+              let nudge = decoded.nudges.first else {
+            expect(false, "redacted export should decode")
+            return
+        }
+
+        expect(!decoded.settings.privacy.storeRawTitle, "redacted export should disable raw title storage")
+        expect(decoded.settings.privacy.storeOnlyCategoryResult, "redacted export should keep only classification results")
+        expect(decoded.classificationRules.isEmpty, "redacted export should remove user classification patterns")
+        expect(segment.appName == "工作工具" && segment.bundleID == nil, "redacted export should generalize state app identity")
+        expect(!segment.titleStored && segment.titleDisplay == nil, "redacted export should remove title metadata")
+        expect(usage.appName == "工作工具" && usage.bundleID == nil, "redacted export should generalize app usage identity")
+        expect(session.taskName == "专注任务" && session.mainAppName == nil, "redacted export should remove session task identity")
+        expect(nudge.appName == "容易分心", "redacted export should generalize nudge app identity")
+    }
+
+    private static func checkStoreWriteFailuresAreReported() {
+        let fileManager = FileManager.default
+        let parent = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-write-failure-check-\(UUID().uuidString)", isDirectory: true)
+        let blockedRoot = parent.appendingPathComponent("blocked-root", isDirectory: true)
+        defer { try? fileManager.removeItem(at: parent) }
+
+        do {
+            try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+            try Data().write(to: blockedRoot)
+        } catch {
+            expect(false, "write failure check should create blocked root")
+            return
+        }
+
+        let store = LocalStore(rootURL: blockedRoot)
+        let snapshot = LocalStoreSnapshot(settings: AppSettings(focusTargetMinutes: 42))
+        expect(!store.saveSnapshot(snapshot), "local store should report save write failures")
+        expect(store.exportSnapshot(snapshot) == nil, "local store should report export write failures")
     }
 
     private static func checkSummary() {
@@ -675,18 +832,30 @@ enum FocusPetCoreChecks {
     }
 
     private static func checkPetFallback() {
-        let pack = PetPackCatalog.fallbackPack
+        let pack = PetPack(
+            schemaVersion: 1,
+            id: "test_pet",
+            name: "Test Pet",
+            author: "Focus Pet",
+            style: "test",
+            license: "original",
+            distribution: "test",
+            defaultSize: PetPackSize(width: 160, height: 160),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
+            animations: [
+                .idle: PetAnimationSpec(folder: "idle", fps: 1, loop: true, frameCount: 1),
+                .nudgeGentle: PetAnimationSpec(folder: "nudgeGentle", fps: 8, loop: false, frameCount: 1)
+            ]
+        )
         expect(PetActionResolver().animationKey(for: .nudgeStrong, in: pack) == .nudgeGentle, "strong nudge should fall back to gentle nudge")
     }
 
-    private static func checkPetCatalogDoesNotExposeFallbackAsDefault() {
+    private static func checkPetCatalogProvidesDistributionFallback() {
         let defaultSettings = AppSettings()
-        let fallbackPack = PetPackCatalog.fallbackPack
+        let bundledPacks = PetPackCatalog().bundledPacks()
 
-        expect(PetPackCatalog().bundledPacks().isEmpty, "placeholder pet should not be exposed as a selectable bundled pack")
+        expect(bundledPacks.isEmpty, "placeholder pet should not be bundled")
         expect(defaultSettings.pet.selectedPackID == PetPackCatalog.localXiaoDaiPackID, "default pet selection should prefer a local pack")
-        expect(fallbackPack.id == PetPackCatalog.bundledPackID, "fallback pack id should match its catalog id")
-        expect(fallbackPack.name == "Local Pet Placeholder", "fallback pack should be a generic placeholder")
     }
 
     private static func checkLocalPetPackActions() {
@@ -746,7 +915,7 @@ enum FocusPetCoreChecks {
             size: 150,
             opacity: 0.94,
             animationEnabled: true,
-            packName: "Local Pet Placeholder",
+            packName: "Test Pet",
             frameURLs: [normalFrame],
             framesPerSecond: 6,
             loops: true,
@@ -773,7 +942,7 @@ enum FocusPetCoreChecks {
             size: 150,
             opacity: 0.94,
             animationEnabled: true,
-            packName: "Local Pet Placeholder",
+            packName: "Test Pet",
             frameURLs: [first, second],
             framesPerSecond: 1,
             loops: false,
@@ -984,6 +1153,30 @@ enum FocusPetCoreChecks {
         expect(snapshot.stateRanges[0].state == .focus, "state display should keep the first focus range")
         expect(snapshot.stateRanges[1].state == .distracted && snapshot.stateRanges[1].endProgress > snapshot.stateRanges[1].startProgress, "state display should keep the tiny distracted range")
         expect(snapshot.stateRanges[2].state == .focus && snapshot.stateRanges[3].state == .breakTime, "state display should keep following focus and break ranges")
+    }
+
+    private static func checkRecentWorkTimeline() {
+        let start = Date(timeIntervalSince1970: 10_000)
+        let now = start.addingTimeInterval(14_400)
+        let snapshot = RecentWorkTimelineSnapshot(
+            orderedSegments: [
+                StateSegment(start: start.addingTimeInterval(60), end: start.addingTimeInterval(70), state: .focus, appName: "Cursor", bundleID: "cursor", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(70), end: start.addingTimeInterval(3_600), state: .away, appName: "Away", bundleID: nil, category: .ignore, titleStored: false, titleDisplay: nil, source: [.idleTime]),
+                StateSegment(start: start.addingTimeInterval(3_600), end: start.addingTimeInterval(3_900), state: .focus, appName: "Codex", bundleID: "codex", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(3_890), end: start.addingTimeInterval(4_020), state: .distracted, appName: "Browser", bundleID: "browser", category: .entertainment, titleStored: false, titleDisplay: nil, source: [.windowTitle]),
+                StateSegment(start: start.addingTimeInterval(4_020), end: start.addingTimeInterval(4_080), state: .away, appName: "Away", bundleID: nil, category: .ignore, titleStored: false, titleDisplay: nil, source: [.idleTime]),
+                StateSegment(start: start.addingTimeInterval(4_080), end: start.addingTimeInterval(4_200), state: .focus, appName: "Codex", bundleID: "codex", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(4_200), end: start.addingTimeInterval(7_200), state: .away, appName: "Away", bundleID: nil, category: .ignore, titleStored: false, titleDisplay: nil, source: [.idleTime]),
+                StateSegment(start: start.addingTimeInterval(7_200), end: start.addingTimeInterval(7_230), state: .focus, appName: "Cursor", bundleID: "cursor", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication])
+            ],
+            now: now
+        )
+
+        expect(snapshot.intervals.count == 1, "recent work timeline should hide tiny standalone intervals")
+        expect(snapshot.discardedShortIntervalCount == 2, "recent work timeline should report filtered short intervals")
+        expect(snapshot.summary.focusSeconds == 420 && snapshot.summary.distractedSeconds == 120, "recent work timeline should normalize overlapping raw segments")
+        expect(snapshot.summary.awaySeconds == 60 && snapshot.summary.workSeconds == 540, "recent work timeline should preserve bridged short away gaps without counting them as work")
+        expect(snapshot.intervals[0].totalSeconds == 600 && snapshot.intervals[0].ranges.count == 4, "recent work timeline should build one coherent interval with normalized ranges")
     }
 
     private static func checkInputWorkloadSummary() {

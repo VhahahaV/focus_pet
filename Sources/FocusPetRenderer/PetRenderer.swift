@@ -186,7 +186,7 @@ public struct PetRenderState: Hashable, Sendable {
         size: 150,
         opacity: 0.94,
         animationEnabled: true,
-        packName: "Local Pet Placeholder",
+        packName: "Focus Pet",
         placement: .bottomRight,
         customOriginX: nil,
         customOriginY: nil,
@@ -520,7 +520,7 @@ public final class PetPanelController {
         var frame = panel.frame
         frame.origin.x = dragStartFrameOrigin.x + (mouseLocation.x - dragStartMouseLocation.x)
         frame.origin.y = dragStartFrameOrigin.y + (mouseLocation.y - dragStartMouseLocation.y)
-        panel.setFrame(clamped(frame), display: true)
+        panel.setFrame(clampedToScreen(frame, containing: mouseLocation), display: true)
     }
 
     private func finishDrag() {
@@ -563,6 +563,7 @@ public final class PetPanelController {
                 x: model.renderState.customOriginX ?? visibleFrame.maxX - panelSize.width - margin,
                 y: model.renderState.customOriginY ?? visibleFrame.minY + margin
             )
+            return clampedToScreen(NSRect(origin: origin, size: panelSize), preferredScreenFrame: screenFrame)
         }
 
         return clamped(NSRect(origin: origin, size: panelSize), preferredVisibleFrame: visibleFrame)
@@ -661,6 +662,23 @@ public final class PetPanelController {
         let visible = safeVisibleFrame(screenFrame: screenFrame, visibleFrame: rawVisible)
         let x = clampedOrigin(frame.origin.x, lower: visible.minX, upper: visible.maxX - frame.width)
         let y = clampedOrigin(frame.origin.y, lower: visible.minY, upper: visible.maxY - frame.height)
+        return NSRect(x: x, y: y, width: frame.width, height: frame.height)
+    }
+
+    private func clampedToScreen(_ frame: NSRect, containing point: CGPoint? = nil, preferredScreenFrame: NSRect? = nil) -> NSRect {
+        let screenFrame: NSRect
+        if let preferredScreenFrame {
+            screenFrame = preferredScreenFrame
+        } else if let point,
+                  let screen = NSScreen.screens.first(where: { $0.frame.contains(point) }) {
+            screenFrame = screen.frame
+        } else {
+            screenFrame = (NSScreen.screens.first { $0.frame.intersects(frame) } ?? NSScreen.main ?? NSScreen.screens.first)?.frame
+                ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        }
+
+        let x = clampedOrigin(frame.origin.x, lower: screenFrame.minX, upper: screenFrame.maxX - frame.width)
+        let y = clampedOrigin(frame.origin.y, lower: screenFrame.minY, upper: screenFrame.maxY - frame.height)
         return NSRect(x: x, y: y, width: frame.width, height: frame.height)
     }
 

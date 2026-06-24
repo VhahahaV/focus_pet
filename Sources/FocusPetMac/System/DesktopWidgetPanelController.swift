@@ -46,7 +46,15 @@ enum DesktopWidgetCardKind: String, CaseIterable, Identifiable, Hashable {
         )
     }
 
-    fileprivate static let panelShadowPadding: CGFloat = 16
+    fileprivate static let panelShadowPadding: CGFloat = 0
+}
+
+enum DesktopWidgetPanelCommand {
+    case openDashboard
+    case openSettings
+    case showAllCards
+    case hideCard
+    case hideAllCards
 }
 
 @MainActor
@@ -56,6 +64,7 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
         var panel: DesktopWidgetPanel?
         var onMoveEnded: ((NSPoint) -> Void)?
         var onClose: (() -> Void)?
+        var onCommand: ((DesktopWidgetPanelCommand) -> Void)?
     }
 
     private var records: [DesktopWidgetCardKind: PanelRecord] = [:]
@@ -69,26 +78,31 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
         snapshot: FocusPetWidgetSnapshot,
         preferredOrigin: NSPoint?,
         onMoveEnded: @escaping (NSPoint) -> Void,
-        onClose: @escaping () -> Void
+        onClose: @escaping () -> Void,
+        onCommand: @escaping (DesktopWidgetPanelCommand) -> Void
     ) {
         var record = records[kind] ?? PanelRecord(
             state: DesktopWidgetPanelState(snapshot: snapshot),
             panel: nil,
             onMoveEnded: nil,
-            onClose: nil
+            onClose: nil,
+            onCommand: nil
         )
         record.state.snapshot = snapshot
         record.onMoveEnded = onMoveEnded
         record.onClose = onClose
+        record.onCommand = onCommand
 
         let panel = record.panel ?? makePanel(
             kind: kind,
             state: record.state,
-            onMoveEnded: onMoveEnded
+            onCommand: onCommand
         )
+        panel.onMoveEnded = onMoveEnded
+        panel.onCommand = onCommand
         record.panel = panel
         records[kind] = record
-        updatePanelMoveHandler(panel, onMoveEnded: onMoveEnded)
+        updatePanelCommandHandler(panel, state: record.state, onCommand: onCommand)
 
         if !panel.isVisible {
             panel.setFrameOrigin(preferredOrigin ?? defaultOrigin(for: kind))
@@ -130,13 +144,13 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
     private func makePanel(
         kind: DesktopWidgetCardKind,
         state: DesktopWidgetPanelState,
-        onMoveEnded: @escaping (NSPoint) -> Void
+        onCommand: @escaping (DesktopWidgetPanelCommand) -> Void
     ) -> DesktopWidgetPanel {
         let size = kind.panelSize
         let panel = DesktopWidgetPanel(
             kind: kind,
             contentRect: NSRect(origin: defaultOrigin(for: kind), size: size),
-            styleMask: [.nonactivatingPanel, .borderless],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
@@ -153,7 +167,7 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
         let rootView = DesktopWidgetPanelView(
             kind: kind,
             state: state,
-            onMoveEnded: onMoveEnded
+            onCommand: onCommand
         )
         let hostingController = NSHostingController(rootView: rootView)
         hostingController.view.frame = NSRect(origin: .zero, size: size)
@@ -163,17 +177,19 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
         return panel
     }
 
-    private func updatePanelMoveHandler(
+    private func updatePanelCommandHandler(
         _ panel: DesktopWidgetPanel,
-        onMoveEnded: @escaping (NSPoint) -> Void
+        state: DesktopWidgetPanelState,
+        onCommand: @escaping (DesktopWidgetPanelCommand) -> Void
     ) {
+        panel.onCommand = onCommand
         guard let hostingController = panel.contentViewController as? NSHostingController<DesktopWidgetPanelView> else {
             return
         }
         hostingController.rootView = DesktopWidgetPanelView(
             kind: panel.kind,
-            state: hostingController.rootView.state,
-            onMoveEnded: onMoveEnded
+            state: state,
+            onCommand: onCommand
         )
     }
 
@@ -204,6 +220,12 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
 
 private final class DesktopWidgetPanel: NSPanel {
     let kind: DesktopWidgetCardKind
+    var onMoveEnded: ((NSPoint) -> Void)?
+    var onCommand: ((DesktopWidgetPanelCommand) -> Void)?
+    private var dragStartMouseLocation: NSPoint?
+    private var dragStartWindowOrigin: NSPoint?
+    private var isDraggingWidget = false
+    private let dragThreshold: CGFloat = 3
 
     init(
         kind: DesktopWidgetCardKind,
@@ -219,6 +241,115 @@ private final class DesktopWidgetPanel: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         frameRect
     }
+
+    override var canBecomeKey: Bool { true }
+
+    override var canBecomeMain: Bool { false }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            if event.clickCount >= 2 {
+                onCommand?(.openDashboard)
+                resetDragState()
+                return
+            }
+            dragStartMouseLocation = NSEvent.mouseLocation
+            dragStartWindowOrigin = frame.origin
+            isDraggingWidget = false
+            super.sendEvent(event)
+        case .leftMouseDragged:
+            guard updateDragPosition(mouseLocation: NSEvent.mouseLocation) else {
+                super.sendEvent(event)
+                return
+            }
+        case .leftMouseUp:
+            if isDraggingWidget {
+                onMoveEnded?(frame.origin)
+                resetDragState()
+                return
+            }
+            resetDragState()
+            super.sendEvent(event)
+        case .rightMouseDown:
+            showContextMenu(for: event)
+        default:
+            super.sendEvent(event)
+        }
+    }
+
+    @discardableResult
+    private func updateDragPosition(mouseLocation: NSPoint) -> Bool {
+        guard let dragStartMouseLocation,
+              let dragStartWindowOrigin else {
+            return false
+        }
+
+        let deltaX = mouseLocation.x - dragStartMouseLocation.x
+        let deltaY = mouseLocation.y - dragStartMouseLocation.y
+        let distance = sqrt(deltaX * deltaX + deltaY * deltaY)
+        guard isDraggingWidget || distance >= dragThreshold else {
+            return false
+        }
+
+        isDraggingWidget = true
+        setFrameOrigin(
+            NSPoint(
+                x: dragStartWindowOrigin.x + deltaX,
+                y: dragStartWindowOrigin.y + deltaY
+            )
+        )
+        return true
+    }
+
+    private func resetDragState() {
+        dragStartMouseLocation = nil
+        dragStartWindowOrigin = nil
+        isDraggingWidget = false
+    }
+
+    private func showContextMenu(for event: NSEvent) {
+        let menu = NSMenu(title: kind.title)
+        addMenuItem("打开面板", command: .openDashboard, symbolName: "macwindow", to: menu)
+        addMenuItem("打开设置", command: .openSettings, symbolName: "gearshape.fill", to: menu)
+        menu.addItem(.separator())
+        addMenuItem("显示全部状态卡", command: .showAllCards, symbolName: "rectangle.on.rectangle.angled", to: menu)
+        addMenuItem("隐藏\(kind.title)", command: .hideCard, symbolName: "rectangle.slash", to: menu)
+        addMenuItem("隐藏全部状态卡", command: .hideAllCards, symbolName: "eye.slash.fill", to: menu)
+
+        if let contentView {
+            NSMenu.popUpContextMenu(menu, with: event, for: contentView)
+        }
+    }
+
+    private func addMenuItem(
+        _ title: String,
+        command: DesktopWidgetPanelCommand,
+        symbolName: String,
+        to menu: NSMenu
+    ) {
+        let item = NSMenuItem(title: title, action: #selector(handleContextMenuItem(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = DesktopWidgetPanelCommandBox(command)
+        item.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: title)
+        menu.addItem(item)
+    }
+
+    @objc private func handleContextMenuItem(_ sender: NSMenuItem) {
+        guard let box = sender.representedObject as? DesktopWidgetPanelCommandBox else { return }
+        onCommand?(box.command)
+    }
+}
+
+private final class DesktopWidgetPanelCommandBox: NSObject {
+    let command: DesktopWidgetPanelCommand
+
+    init(_ command: DesktopWidgetPanelCommand) {
+        self.command = command
+        super.init()
+    }
 }
 
 private final class DesktopWidgetPanelState: ObservableObject {
@@ -232,17 +363,14 @@ private final class DesktopWidgetPanelState: ObservableObject {
 private struct DesktopWidgetPanelView: View {
     var kind: DesktopWidgetCardKind
     @ObservedObject var state: DesktopWidgetPanelState
-    var onMoveEnded: (NSPoint) -> Void
+    var onCommand: (DesktopWidgetPanelCommand) -> Void
 
     var body: some View {
-        ZStack {
-            card
-                .frame(width: kind.cardSize.width, height: kind.cardSize.height)
-            DesktopWidgetDragSurface(onMoveEnded: onMoveEnded)
-                .frame(width: kind.cardSize.width, height: kind.cardSize.height)
-        }
-        .padding(DesktopWidgetCardKind.panelShadowPadding)
-        .background(Color.clear)
+        card
+            .frame(width: kind.cardSize.width, height: kind.cardSize.height)
+            .padding(DesktopWidgetCardKind.panelShadowPadding)
+            .background(Color.clear)
+            .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -253,55 +381,5 @@ private struct DesktopWidgetPanelView: View {
         case .recentRhythm:
             FocusPetRecentRhythmWidgetView(snapshot: state.snapshot, selectedWindowHours: 4)
         }
-    }
-}
-
-private struct DesktopWidgetDragSurface: NSViewRepresentable {
-    var onMoveEnded: (NSPoint) -> Void
-
-    func makeNSView(context: Context) -> DesktopWidgetDragView {
-        let view = DesktopWidgetDragView()
-        view.onMoveEnded = onMoveEnded
-        return view
-    }
-
-    func updateNSView(_ nsView: DesktopWidgetDragView, context: Context) {
-        nsView.onMoveEnded = onMoveEnded
-    }
-}
-
-private final class DesktopWidgetDragView: NSView {
-    private var mouseDownLocation: NSPoint?
-    private var mouseDownWindowOrigin: NSPoint?
-    var onMoveEnded: ((NSPoint) -> Void)?
-
-    override var acceptsFirstResponder: Bool {
-        true
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        mouseDownLocation = NSEvent.mouseLocation
-        mouseDownWindowOrigin = window?.frame.origin
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let window,
-              let mouseDownLocation,
-              let mouseDownWindowOrigin else { return }
-        let mouseLocation = NSEvent.mouseLocation
-        window.setFrameOrigin(
-            NSPoint(
-                x: mouseDownWindowOrigin.x + mouseLocation.x - mouseDownLocation.x,
-                y: mouseDownWindowOrigin.y + mouseLocation.y - mouseDownLocation.y
-            )
-        )
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        if let origin = window?.frame.origin {
-            onMoveEnded?(origin)
-        }
-        mouseDownLocation = nil
-        mouseDownWindowOrigin = nil
     }
 }

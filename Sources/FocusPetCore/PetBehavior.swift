@@ -60,10 +60,6 @@ public struct PetBehaviorPolicy: Sendable {
         previousState: FocusState?,
         now: Date = Date()
     ) -> PetIntentKind {
-        if previousState == .away, state != .away {
-            return .welcomeBack
-        }
-
         switch state {
         case .focus:
             return .quietCompanion
@@ -82,10 +78,6 @@ public struct PetBehaviorPolicy: Sendable {
         latestNudge: NudgeEvent?,
         now: Date = Date()
     ) -> PetAction {
-        if previousState == .away, state != .away {
-            return .welcomeBack
-        }
-
         if let latestNudge,
            now.timeIntervalSince(latestNudge.time) <= nudgeActionVisibleSeconds {
             return latestNudge.petAction

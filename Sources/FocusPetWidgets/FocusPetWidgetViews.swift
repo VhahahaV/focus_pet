@@ -166,7 +166,7 @@ public struct FocusPetRecentRhythmWidgetView: View {
                     Spacer()
                     rhythmSwitch
                 }
-                .padding(.bottom, 14)
+                .padding(.bottom, 12)
 
                 HStack(alignment: .center, spacing: 14) {
                     rhythmDonut(rhythm)
@@ -179,17 +179,33 @@ public struct FocusPetRecentRhythmWidgetView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.78)
 
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 5), GridItem(.flexible(), spacing: 5)], spacing: 5) {
-                            rhythmMetric("专注", seconds: rhythm.focusSeconds)
-                            rhythmMetric("走神", seconds: rhythm.distractedSeconds)
-                            rhythmMetric("休息", seconds: rhythm.breakSeconds)
-                            rhythmMetric("暂离", seconds: rhythm.awaySeconds)
+                        HStack(spacing: 5) {
+                            rhythmMetric(
+                                "专注",
+                                seconds: rhythm.focusSeconds,
+                                tint: FocusPetWidgetPalette.focus,
+                                strongTint: FocusPetWidgetPalette.focusStrong
+                            )
+                            rhythmMetric(
+                                "走神",
+                                seconds: rhythm.distractedSeconds,
+                                tint: FocusPetWidgetPalette.distracted,
+                                strongTint: FocusPetWidgetPalette.distractedStrong
+                            )
+                            rhythmMetric(
+                                "休息",
+                                seconds: rhythm.breakSeconds,
+                                tint: FocusPetWidgetPalette.rest,
+                                strongTint: FocusPetWidgetPalette.restStrong
+                            )
                         }
 
+                        Spacer(minLength: 4)
+
                         rhythmTimeline(rhythm)
-                            .frame(height: 10)
-                            .padding(.top, 1)
+                            .frame(height: 11)
                     }
+                    .frame(height: 92, alignment: .top)
                 }
             }
             .padding(12)
@@ -205,7 +221,7 @@ public struct FocusPetRecentRhythmWidgetView: View {
     @ViewBuilder
     private var rhythmSwitch: some View {
         if showsWindowSwitcher {
-            HStack(spacing: 2) {
+            HStack(spacing: 4) {
                 ForEach(FocusPetWidgetSnapshotBuilder.supportedRecentRhythmHours, id: \.self) { hours in
                     Button {
                         activeWindowHours = hours
@@ -213,20 +229,21 @@ public struct FocusPetRecentRhythmWidgetView: View {
                         rhythmWindowLabel(hours: hours, isActive: hours == activeWindowHours)
                     }
                     .buttonStyle(.plain)
+                    .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                 }
             }
-            .padding(3)
-            .background(Color.white.opacity(0.56), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(5)
+            .background(Color.white.opacity(0.60), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(Color.white.opacity(0.54), lineWidth: 1)
             }
         } else {
             rhythmWindowLabel(hours: activeWindowHours, isActive: true)
-                .padding(3)
-                .background(Color.white.opacity(0.56), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(5)
+                .background(Color.white.opacity(0.60), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .stroke(Color.white.opacity(0.54), lineWidth: 1)
                 }
         }
@@ -234,12 +251,12 @@ public struct FocusPetRecentRhythmWidgetView: View {
 
     private func rhythmWindowLabel(hours: Int, isActive: Bool) -> some View {
         Text("\(hours)h")
-            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .font(.system(size: 13, weight: .bold, design: .rounded))
             .foregroundStyle(isActive ? Color.white : FocusPetWidgetPalette.secondaryText)
-            .frame(width: 32, height: 19)
+            .frame(width: 50, height: 30)
             .background(
                 isActive ? FocusPetWidgetPalette.focusStrong : Color.clear,
-                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
             )
     }
 
@@ -250,14 +267,15 @@ public struct FocusPetRecentRhythmWidgetView: View {
     }
 
     private func rhythmDonut(_ rhythm: FocusPetWidgetRhythmSnapshot) -> some View {
-        ZStack {
+        let activeSeconds = rhythm.activeSeconds
+        return ZStack {
             Circle()
-                .stroke(FocusPetWidgetPalette.away.opacity(0.24), lineWidth: 17)
-            donutArc(ratio: ratio(rhythm.focusSeconds, total: rhythm.totalSeconds), start: 0, color: FocusPetWidgetPalette.focus)
-            donutArc(ratio: ratio(rhythm.distractedSeconds, total: rhythm.totalSeconds), start: ratio(rhythm.focusSeconds, total: rhythm.totalSeconds), color: FocusPetWidgetPalette.distracted)
+                .stroke(FocusPetWidgetPalette.secondaryText.opacity(0.16), lineWidth: 17)
+            donutArc(ratio: ratio(rhythm.focusSeconds, total: activeSeconds), start: 0, color: FocusPetWidgetPalette.focus)
+            donutArc(ratio: ratio(rhythm.distractedSeconds, total: activeSeconds), start: ratio(rhythm.focusSeconds, total: activeSeconds), color: FocusPetWidgetPalette.distracted)
             donutArc(
-                ratio: ratio(rhythm.breakSeconds, total: rhythm.totalSeconds),
-                start: ratio(rhythm.focusSeconds + rhythm.distractedSeconds, total: rhythm.totalSeconds),
+                ratio: ratio(rhythm.breakSeconds, total: activeSeconds),
+                start: ratio(rhythm.focusSeconds + rhythm.distractedSeconds, total: activeSeconds),
                 color: FocusPetWidgetPalette.rest
             )
             Text(FocusPetFormatters.percentage(rhythm.focusRatio))
@@ -273,33 +291,50 @@ public struct FocusPetRecentRhythmWidgetView: View {
             .rotationEffect(.degrees(-90))
     }
 
-    private func rhythmMetric(_ title: String, seconds: Int) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(FocusPetWidgetFormatters.shortDuration(seconds))
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(FocusPetWidgetPalette.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-            Text(title)
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(FocusPetWidgetPalette.secondaryText)
+    private func rhythmMetric(_ title: String, seconds: Int, tint: Color, strongTint: Color) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(tint)
+                .frame(width: 6, height: 6)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(FocusPetWidgetFormatters.shortDuration(seconds))
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(strongTint)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text(title)
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(strongTint.opacity(0.82))
+            }
         }
-        .padding(.horizontal, 7)
+        .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.54), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .background(
+            LinearGradient(
+                colors: [
+                    tint.opacity(0.34),
+                    tint.opacity(0.16),
+                    Color.white.opacity(0.62)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.white.opacity(0.48), lineWidth: 1)
+                .stroke(tint.opacity(0.36), lineWidth: 1)
         }
     }
 
     private func rhythmTimeline(_ rhythm: FocusPetWidgetRhythmSnapshot) -> some View {
-        GeometryReader { proxy in
+        let ranges = normalizedTimelineRanges(rhythm)
+        return GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(FocusPetWidgetPalette.away.opacity(0.22))
-                ForEach(rhythm.timelineRanges) { range in
+                    .fill(FocusPetWidgetPalette.secondaryText.opacity(0.16))
+                ForEach(ranges) { range in
                     Capsule()
                         .fill(FocusPetWidgetPalette.color(for: range.state))
                         .frame(width: max(3, proxy.size.width * range.width), height: proxy.size.height)
@@ -308,6 +343,25 @@ public struct FocusPetRecentRhythmWidgetView: View {
             }
         }
         .clipShape(Capsule())
+    }
+
+    private func normalizedTimelineRanges(_ rhythm: FocusPetWidgetRhythmSnapshot) -> [FocusPetWidgetTimelineRange] {
+        let visibleRanges = rhythm.timelineRanges.filter { $0.state != .away && $0.width > 0 }
+        let totalWidth = visibleRanges.reduce(0) { $0 + $1.width }
+        guard totalWidth > 0 else { return [] }
+
+        var cursor = 0.0
+        return visibleRanges.enumerated().map { index, range in
+            let width = range.width / totalWidth
+            let normalizedRange = FocusPetWidgetTimelineRange(
+                id: index,
+                state: range.state,
+                startProgress: cursor,
+                width: width
+            )
+            cursor += width
+            return normalizedRange
+        }
     }
 
     private func ratio(_ seconds: Int, total: Int) -> Double {
@@ -336,6 +390,7 @@ private enum FocusPetWidgetPalette {
     static let distracted = Color(red: 0.95, green: 0.70, blue: 0.36)
     static let distractedStrong = Color(red: 0.79, green: 0.52, blue: 0.13)
     static let rest = Color(red: 0.41, green: 0.75, blue: 0.55)
+    static let restStrong = Color(red: 0.20, green: 0.55, blue: 0.34)
     static let away = Color(red: 0.60, green: 0.66, blue: 0.72)
 
     static func color(for state: FocusPetCore.FocusState) -> Color {
@@ -346,6 +401,13 @@ private enum FocusPetWidgetPalette {
         case .away: away
         }
     }
+}
+
+private struct FocusPetWidgetTimelineRange: Identifiable, Hashable {
+    var id: Int
+    var state: FocusPetCore.FocusState
+    var startProgress: Double
+    var width: Double
 }
 
 private enum FocusPetWidgetFormatters {

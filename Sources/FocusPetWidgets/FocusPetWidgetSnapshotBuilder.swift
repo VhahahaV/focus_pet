@@ -60,7 +60,7 @@ public enum FocusPetWidgetSnapshotBuilder {
             appUsage: appUsage,
             inputActivity: inputActivity,
             now: now,
-            includeAwayState: true,
+            includeAwayState: false,
             includeAppSegments: false
         )
         return FocusPetWidgetRhythmSnapshot(
@@ -72,13 +72,41 @@ public enum FocusPetWidgetSnapshotBuilder {
             keyboardCount: timeline.keyboardCount,
             pointerCount: timeline.pointerCount,
             contextSwitchCount: timeline.switchCount,
-            timelineRanges: timeline.stateRanges.map {
-                FocusPetWidgetRhythmRange(
-                    state: $0.state,
-                    startProgress: $0.startProgress,
-                    endProgress: $0.endProgress
+            timelineRanges: compactedRhythmRanges(from: timeline.stateRanges)
+        )
+    }
+
+    private static func compactedRhythmRanges(
+        from ranges: [InputTimelineStateRange]
+    ) -> [FocusPetWidgetRhythmRange] {
+        let visibleRanges = ranges.filter {
+            $0.state != .away && $0.endProgress > $0.startProgress
+        }
+        let totalWidth = visibleRanges.reduce(0) { $0 + $1.width }
+        guard totalWidth > 0 else { return [] }
+
+        var cursor = 0.0
+        var result: [FocusPetWidgetRhythmRange] = []
+        for range in visibleRanges {
+            let nextCursor = min(1, cursor + range.width / totalWidth)
+            if let lastIndex = result.indices.last,
+               result[lastIndex].state == range.state {
+                result[lastIndex].endProgress = nextCursor
+            } else {
+                result.append(
+                    FocusPetWidgetRhythmRange(
+                        state: range.state,
+                        startProgress: cursor,
+                        endProgress: nextCursor
+                    )
                 )
             }
-        )
+            cursor = nextCursor
+        }
+
+        if let lastIndex = result.indices.last {
+            result[lastIndex].endProgress = 1
+        }
+        return result
     }
 }

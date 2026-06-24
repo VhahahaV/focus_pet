@@ -313,12 +313,12 @@ struct FocusPetMVPProbe {
         return decision.state == .focus && !decision.reason.contains(.frequentSwitching)
     }
 
-    func focusTwentyFiveMinutesTriggersRestNudge() -> Bool {
+    func focusFortyFiveMinutesTriggersRestNudge() -> Bool {
         let state = FocusStateSnapshot(
-            timestamp: Date(timeIntervalSince1970: 1_500),
+            timestamp: Date(timeIntervalSince1970: 2_700),
             state: .focus,
             category: .work,
-            stableDuration: 1_500,
+            stableDuration: 2_700,
             appName: "Cursor",
             bundleID: "com.todesktop.230313mzl4w4u92"
         )
@@ -326,7 +326,7 @@ struct FocusPetMVPProbe {
         let event = NudgePolicy().nudge(
             for: state,
             previousState: .focus,
-            now: Date(timeIntervalSince1970: 1_500),
+            now: Date(timeIntervalSince1970: 2_700),
             lastTriggeredAt: [:]
         )
 
@@ -363,7 +363,7 @@ struct FocusPetMVPProbe {
         let longAway = policy.nudge(
             for: focusState,
             previousState: .away,
-            previousStateDuration: 15 * 60,
+            previousStateDuration: 30 * 60,
             now: now,
             lastTriggeredAt: [:]
         )
@@ -388,13 +388,21 @@ struct FocusPetMVPProbe {
             && distractedReturn == nil
     }
 
+    func welcomeBackDoesNotBecomePersistentPetState() -> Bool {
+        PetBehaviorPolicy().intentKind(
+            for: .focus,
+            previousState: .away,
+            now: Date(timeIntervalSince1970: 2_100)
+        ) == .quietCompanion
+    }
+
     func nudgeCooldownAppliesAcrossSimilarReasons() -> Bool {
         let now = Date(timeIntervalSince1970: 4_000)
         let focusState = FocusStateSnapshot(
             timestamp: now,
             state: .focus,
             category: .work,
-            stableDuration: 60 * 60,
+            stableDuration: 90 * 60,
             appName: "Cursor",
             bundleID: "cursor"
         )
@@ -420,16 +428,23 @@ struct FocusPetMVPProbe {
             now: now,
             lastTriggeredAt: [.distractedOverThreshold: now.addingTimeInterval(-5 * 60)]
         )
-        let afterCooldown = policy.nudge(
+        let afterBaseCooldown = policy.nudge(
             for: focusState,
             previousState: .focus,
             now: now,
             lastTriggeredAt: [.longFocusRest: now.addingTimeInterval(-11 * 60)]
         )
+        let afterFocusRestCooldown = policy.nudge(
+            for: focusState,
+            previousState: .focus,
+            now: now,
+            lastTriggeredAt: [.longFocusRest: now.addingTimeInterval(-31 * 60)]
+        )
 
         return recentFocusNudge == nil
             && recentDistractedNudge == nil
-            && afterCooldown?.reason == .veryLongFocusRest
+            && afterBaseCooldown == nil
+            && afterFocusRestCooldown?.reason == .veryLongFocusRest
     }
 
     func legacyReminderSettingsDefaultToCustomizableNudgeParameters() -> Bool {
@@ -447,13 +462,13 @@ struct FocusPetMVPProbe {
         return settings.pauseMinutes == 30
             && settings.enableDistractedNudges
             && settings.enableFocusRestNudges
-            && settings.enableWelcomeBackNudges
-            && settings.lightDistractedMinutes == 8
-            && settings.strongDistractedMinutes == 15
-            && settings.longFocusMinutes == 25
-            && settings.veryLongFocusMinutes == 60
+            && !settings.enableWelcomeBackNudges
+            && settings.lightDistractedMinutes == 5
+            && settings.strongDistractedMinutes == 12
+            && settings.longFocusMinutes == 45
+            && settings.veryLongFocusMinutes == 90
             && settings.cooldownMinutes == 10
-            && settings.nudgePolicyThresholds.lightDistractedSeconds == 480
+            && settings.nudgePolicyThresholds.lightDistractedSeconds == 300
             && settings.nudgePolicyThresholds.cooldownSeconds == 600
     }
 
@@ -860,7 +875,9 @@ struct FocusPetMVPProbe {
         let start = Date(timeIntervalSince1970: 0)
         let snapshot = LocalStoreSnapshot(
             settings: AppSettings(privacy: WindowTitlePrivacy(storeRawTitle: true)),
-            classificationRules: [],
+            classificationRules: [
+                ClassificationRule(matchKind: .windowTitle, pattern: "Secret Draft", category: .work, priority: 200)
+            ],
             stateSegments: [
                 StateSegment(
                     start: start,
@@ -874,10 +891,36 @@ struct FocusPetMVPProbe {
                     source: [.windowTitle]
                 )
             ],
-            appUsage: [],
-            focusSessions: [],
+            appUsage: [
+                AppUsageSegment(
+                    start: start,
+                    end: start.addingTimeInterval(60),
+                    appName: "Cursor",
+                    bundleID: "cursor",
+                    category: .work
+                )
+            ],
+            focusSessions: [
+                FocusSession(
+                    taskName: "Secret Launch Plan",
+                    start: start,
+                    targetDurationSeconds: 25 * 60,
+                    mainAppName: "Cursor"
+                )
+            ],
             breakSessions: [],
-            nudges: []
+            nudges: [
+                NudgeEvent(
+                    time: start.addingTimeInterval(30),
+                    reason: .distractedOverThreshold,
+                    state: .distracted,
+                    appName: "YouTube",
+                    category: .entertainment,
+                    petIntent: .nudgeGentle,
+                    cooldownSeconds: 60,
+                    message: "回到任务"
+                )
+            ]
         )
         guard let url = LocalStore(rootURL: root).exportSnapshot(snapshot, redacted: true),
               let data = try? Data(contentsOf: url) else {
@@ -886,13 +929,24 @@ struct FocusPetMVPProbe {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let decoded = try? decoder.decode(LocalStoreSnapshot.self, from: data),
-              let segment = decoded.stateSegments.first else {
+              let segment = decoded.stateSegments.first,
+              let usage = decoded.appUsage.first,
+              let session = decoded.focusSessions.first,
+              let nudge = decoded.nudges.first else {
             return false
         }
         return decoded.settings.privacy.storeRawTitle == false
             && decoded.settings.privacy.storeOnlyCategoryResult
+            && decoded.classificationRules.isEmpty
+            && segment.appName == "工作工具"
+            && segment.bundleID == nil
             && segment.titleStored == false
             && segment.titleDisplay == nil
+            && usage.appName == "工作工具"
+            && usage.bundleID == nil
+            && session.taskName == "专注任务"
+            && session.mainAppName == nil
+            && nudge.appName == "容易分心"
     }
 
     func inputActivityRecorderMergesBucketsAndClampsCounts() -> Bool {
@@ -1163,6 +1217,77 @@ struct FocusPetMVPProbe {
             && snapshot.stateRanges[3].state == .breakTime
     }
 
+    func timeTrackerDoesNotOverlapStateChanges() -> Bool {
+        let start = Date(timeIntervalSince1970: 50_000)
+        let firstSnapshot = ActivitySnapshot(
+            timestamp: start.addingTimeInterval(10),
+            appName: "Cursor",
+            bundleID: "cursor",
+            windowTitle: nil,
+            category: .work,
+            idleSeconds: 0,
+            switchCountLast5Min: 0,
+            switchCountLast15Min: 0,
+            activeCategoryDuration: 10,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+        let secondSnapshot = ActivitySnapshot(
+            timestamp: start.addingTimeInterval(15),
+            appName: "Browser",
+            bundleID: "browser",
+            windowTitle: nil,
+            category: .entertainment,
+            idleSeconds: 0,
+            switchCountLast5Min: 1,
+            switchCountLast15Min: 1,
+            activeCategoryDuration: 5,
+            isFocusSessionActive: false,
+            isBreakActive: false
+        )
+        let firstDecision = StateDecision(timestamp: firstSnapshot.timestamp, state: .focus, category: .work, confidence: 1, reason: [.workCategory], stableDuration: 10)
+        let secondDecision = StateDecision(timestamp: secondSnapshot.timestamp, state: .distracted, category: .entertainment, confidence: 1, reason: [.entertainmentStable], stableDuration: 5)
+
+        var segments: [StateSegment] = []
+        segments = TimeTracker(tickSeconds: 10).record(decision: firstDecision, snapshot: firstSnapshot, segments: segments)
+        segments = TimeTracker(tickSeconds: 10).record(decision: secondDecision, snapshot: secondSnapshot, segments: segments)
+
+        return segments.count == 2
+            && segments[0].start == start
+            && segments[0].end == start.addingTimeInterval(10)
+            && segments[1].start == segments[0].end
+            && segments[1].end == start.addingTimeInterval(15)
+            && segments[0].durationSeconds == 10
+            && segments[1].durationSeconds == 5
+    }
+
+    func recentWorkTimelineFiltersTinyStandaloneIntervalsAndNormalizesOverlaps() -> Bool {
+        let start = Date(timeIntervalSince1970: 10_000)
+        let now = start.addingTimeInterval(14_400)
+        let snapshot = RecentWorkTimelineSnapshot(
+            orderedSegments: [
+                StateSegment(start: start.addingTimeInterval(60), end: start.addingTimeInterval(70), state: .focus, appName: "Cursor", bundleID: "cursor", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(70), end: start.addingTimeInterval(3_600), state: .away, appName: "Away", bundleID: nil, category: .ignore, titleStored: false, titleDisplay: nil, source: [.idleTime]),
+                StateSegment(start: start.addingTimeInterval(3_600), end: start.addingTimeInterval(3_900), state: .focus, appName: "Codex", bundleID: "codex", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(3_890), end: start.addingTimeInterval(4_020), state: .distracted, appName: "Browser", bundleID: "browser", category: .entertainment, titleStored: false, titleDisplay: nil, source: [.windowTitle]),
+                StateSegment(start: start.addingTimeInterval(4_020), end: start.addingTimeInterval(4_080), state: .away, appName: "Away", bundleID: nil, category: .ignore, titleStored: false, titleDisplay: nil, source: [.idleTime]),
+                StateSegment(start: start.addingTimeInterval(4_080), end: start.addingTimeInterval(4_200), state: .focus, appName: "Codex", bundleID: "codex", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication]),
+                StateSegment(start: start.addingTimeInterval(4_200), end: start.addingTimeInterval(7_200), state: .away, appName: "Away", bundleID: nil, category: .ignore, titleStored: false, titleDisplay: nil, source: [.idleTime]),
+                StateSegment(start: start.addingTimeInterval(7_200), end: start.addingTimeInterval(7_230), state: .focus, appName: "Cursor", bundleID: "cursor", category: .work, titleStored: false, titleDisplay: nil, source: [.frontmostApplication])
+            ],
+            now: now
+        )
+
+        return snapshot.intervals.count == 1
+            && snapshot.discardedShortIntervalCount == 2
+            && snapshot.summary.focusSeconds == 420
+            && snapshot.summary.distractedSeconds == 120
+            && snapshot.summary.awaySeconds == 60
+            && snapshot.summary.workSeconds == 540
+            && snapshot.intervals[0].totalSeconds == 600
+            && snapshot.intervals[0].ranges.count == 4
+    }
+
     func inputWorkloadSummaryAggregatesReadableMetrics() -> Bool {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
@@ -1290,8 +1415,9 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.longIdleBackfillConvertsNoInputWindowToAway(), "long idle backfill should convert the no-input window to away")
     precondition(probe.incrementalAwayRecordingMergesWithoutDuplication(), "incremental away recording should not duplicate screen lock time")
     precondition(probe.frequentSwitchingDoesNotBecomeDistracted(), "app switching alone should not be distracted")
-    precondition(probe.focusTwentyFiveMinutesTriggersRestNudge(), "25 minutes focus should trigger rest nudge")
+    precondition(probe.focusFortyFiveMinutesTriggersRestNudge(), "45 minutes focus should trigger rest nudge")
     precondition(probe.welcomeBackRequiresLongAwayTransition(), "welcome back should require a real long-away transition")
+    precondition(probe.welcomeBackDoesNotBecomePersistentPetState(), "welcome back should not become a persistent pet state")
     precondition(probe.nudgeCooldownAppliesAcrossSimilarReasons(), "similar reminders should share cooldown")
     precondition(probe.legacyReminderSettingsDefaultToCustomizableNudgeParameters(), "legacy reminder settings should decode new nudge defaults")
     precondition(probe.reminderSettingsCustomizeNudgePolicyAndClampValues(), "reminder settings should customize nudge thresholds and clamp values")
@@ -1319,6 +1445,8 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.retentionPrunesInputActivityBuckets(), "retention should prune input activity buckets")
     precondition(probe.inputTimelineSnapshotAggregatesInputAndSmoothsApps(), "input timeline snapshot should aggregate input and smooth short app switches")
     precondition(probe.inputTimelineSnapshotPreservesTinyStateFragments(), "input timeline snapshot should preserve tiny state fragments for display")
+    precondition(probe.timeTrackerDoesNotOverlapStateChanges(), "time tracker should not overlap state changes when tick windows are longer than elapsed time")
+    precondition(probe.recentWorkTimelineFiltersTinyStandaloneIntervalsAndNormalizesOverlaps(), "recent work timeline should filter tiny standalone intervals and normalize overlaps")
     precondition(probe.inputWorkloadSummaryAggregatesReadableMetrics(), "input workload should expose user-readable activity metrics")
     precondition(probe.overnightIdleIsNotHeuristicallyConvertedToAway(), "stored history should not be heuristically rewritten")
     precondition(probe.dashboardPetDockFrameTracksWindowMovement(), "dashboard pet dock frame should move with the dashboard window")
