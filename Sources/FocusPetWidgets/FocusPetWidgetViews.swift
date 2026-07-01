@@ -135,17 +135,21 @@ public struct FocusPetCurrentStatusWidgetView: View {
 
 public struct FocusPetRecentRhythmWidgetView: View {
     public var snapshot: FocusPetWidgetSnapshot
+    private var selectedWindowHours: Int
     private var showsWindowSwitcher: Bool
     @State private var activeWindowHours: Int
 
     public init(snapshot: FocusPetWidgetSnapshot, selectedWindowHours: Int = 4, showsWindowSwitcher: Bool = true) {
         self.snapshot = snapshot
+        self.selectedWindowHours = selectedWindowHours
         self.showsWindowSwitcher = showsWindowSwitcher
         _activeWindowHours = State(initialValue: selectedWindowHours)
     }
 
     public var body: some View {
-        let rhythm = snapshot.rhythm(windowHours: activeWindowHours) ?? FocusPetWidgetRhythmSnapshot.empty(hours: activeWindowHours)
+        let windowHours = showsWindowSwitcher ? activeWindowHours : selectedWindowHours
+        let rhythm = snapshot.rhythm(windowHours: windowHours) ?? FocusPetWidgetRhythmSnapshot.empty(hours: windowHours)
+        let donutSize: CGFloat = showsWindowSwitcher ? 92 : 116
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(
@@ -164,22 +168,24 @@ public struct FocusPetRecentRhythmWidgetView: View {
                 HStack(alignment: .center) {
                     widgetLabel("最近节奏", tint: FocusPetWidgetPalette.focus)
                     Spacer()
-                    rhythmSwitch
+                    if showsWindowSwitcher {
+                        rhythmSwitch
+                    }
                 }
-                .padding(.bottom, 12)
+                .padding(.bottom, showsWindowSwitcher ? 12 : 2)
 
-                HStack(alignment: .center, spacing: 14) {
+                HStack(alignment: .center, spacing: showsWindowSwitcher ? 14 : 14) {
                     rhythmDonut(rhythm)
-                        .frame(width: 92, height: 92)
+                        .frame(width: donutSize, height: donutSize)
 
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: showsWindowSwitcher ? 6 : 8) {
                         Text("近 \(rhythm.windowHours) 小时\(rhythmCaption(rhythm))")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .font(.system(size: showsWindowSwitcher ? 18 : 20, weight: .bold, design: .rounded))
                             .foregroundStyle(FocusPetWidgetPalette.text)
                             .lineLimit(1)
                             .minimumScaleFactor(0.78)
 
-                        HStack(spacing: 5) {
+                        HStack(spacing: showsWindowSwitcher ? 5 : 7) {
                             rhythmMetric(
                                 "专注",
                                 seconds: rhythm.focusSeconds,
@@ -203,10 +209,11 @@ public struct FocusPetRecentRhythmWidgetView: View {
                         Spacer(minLength: 4)
 
                         rhythmTimeline(rhythm)
-                            .frame(height: 11)
+                            .frame(height: showsWindowSwitcher ? 11 : 13)
                     }
-                    .frame(height: 92, alignment: .top)
+                    .frame(height: donutSize, alignment: .center)
                 }
+                .frame(maxHeight: .infinity, alignment: .center)
             }
             .padding(12)
         }
@@ -239,13 +246,7 @@ public struct FocusPetRecentRhythmWidgetView: View {
                     .stroke(Color.white.opacity(0.54), lineWidth: 1)
             }
         } else {
-            rhythmWindowLabel(hours: activeWindowHours, isActive: true)
-                .padding(5)
-                .background(Color.white.opacity(0.60), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(0.54), lineWidth: 1)
-                }
+            EmptyView()
         }
     }
 
@@ -268,48 +269,66 @@ public struct FocusPetRecentRhythmWidgetView: View {
 
     private func rhythmDonut(_ rhythm: FocusPetWidgetRhythmSnapshot) -> some View {
         let activeSeconds = rhythm.activeSeconds
+        let lineWidth: CGFloat = showsWindowSwitcher ? 17 : 19
+        let percentageSize: CGFloat = showsWindowSwitcher ? 20 : 22
         return ZStack {
             Circle()
-                .stroke(FocusPetWidgetPalette.secondaryText.opacity(0.16), lineWidth: 17)
-            donutArc(ratio: ratio(rhythm.focusSeconds, total: activeSeconds), start: 0, color: FocusPetWidgetPalette.focus)
-            donutArc(ratio: ratio(rhythm.distractedSeconds, total: activeSeconds), start: ratio(rhythm.focusSeconds, total: activeSeconds), color: FocusPetWidgetPalette.distracted)
+                .stroke(FocusPetWidgetPalette.secondaryText.opacity(0.16), lineWidth: lineWidth)
+            donutArc(ratio: ratio(rhythm.focusSeconds, total: activeSeconds), start: 0, color: FocusPetWidgetPalette.focus, lineWidth: lineWidth)
+            donutArc(ratio: ratio(rhythm.distractedSeconds, total: activeSeconds), start: ratio(rhythm.focusSeconds, total: activeSeconds), color: FocusPetWidgetPalette.distracted, lineWidth: lineWidth)
             donutArc(
                 ratio: ratio(rhythm.breakSeconds, total: activeSeconds),
                 start: ratio(rhythm.focusSeconds + rhythm.distractedSeconds, total: activeSeconds),
-                color: FocusPetWidgetPalette.rest
+                color: FocusPetWidgetPalette.rest,
+                lineWidth: lineWidth
             )
             Text(FocusPetFormatters.percentage(rhythm.focusRatio))
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.system(size: percentageSize, weight: .bold, design: .rounded))
                 .foregroundStyle(FocusPetWidgetPalette.focusStrong)
         }
     }
 
-    private func donutArc(ratio: Double, start: Double, color: Color) -> some View {
+    private func donutArc(ratio: Double, start: Double, color: Color, lineWidth: CGFloat) -> some View {
         Circle()
             .trim(from: start, to: min(1, start + max(0, ratio)))
-            .stroke(color, style: StrokeStyle(lineWidth: 17, lineCap: .butt))
+            .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
             .rotationEffect(.degrees(-90))
     }
 
     private func rhythmMetric(_ title: String, seconds: Int, tint: Color, strongTint: Color) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(tint)
-                .frame(width: 6, height: 6)
-            VStack(alignment: .leading, spacing: 1) {
+        let compactCard = !showsWindowSwitcher
+        let valueSize: CGFloat = showsWindowSwitcher ? 11 : 12
+        let titleSize: CGFloat = showsWindowSwitcher ? 9 : 10
+        let contentAlignment: HorizontalAlignment = compactCard ? .center : .leading
+        let frameAlignment: Alignment = compactCard ? .center : .leading
+        return VStack(alignment: contentAlignment, spacing: compactCard ? 2 : 1) {
+            if compactCard {
                 Text(FocusPetWidgetFormatters.shortDuration(seconds))
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .font(.system(size: valueSize, weight: .bold, design: .rounded))
                     .foregroundStyle(strongTint)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                Text(title)
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundStyle(strongTint.opacity(0.82))
+                    .minimumScaleFactor(0.58)
+                    .frame(maxWidth: .infinity)
+            } else {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(tint)
+                        .frame(width: 6, height: 6)
+                    Text(FocusPetWidgetFormatters.shortDuration(seconds))
+                        .font(.system(size: valueSize, weight: .bold, design: .rounded))
+                        .foregroundStyle(strongTint)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
             }
+            Text(title)
+                .font(.system(size: titleSize, weight: .bold, design: .rounded))
+                .foregroundStyle(strongTint.opacity(0.82))
+                .lineLimit(1)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, showsWindowSwitcher ? 6 : 8)
+        .padding(.vertical, showsWindowSwitcher ? 4 : 5)
+        .frame(maxWidth: .infinity, minHeight: compactCard ? 46 : 0, alignment: frameAlignment)
         .background(
             LinearGradient(
                 colors: [

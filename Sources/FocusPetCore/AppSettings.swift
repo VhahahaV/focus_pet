@@ -238,7 +238,7 @@ public struct JudgmentSettings: Codable, Hashable, Sendable {
 }
 
 public struct PetSettings: Codable, Hashable, Sendable {
-    public static let defaultSelectedPackID = "xiaodai_local"
+    public static let defaultSelectedPackID = ""
 
     public var opacity: Double
     public var size: Double
@@ -250,8 +250,11 @@ public struct PetSettings: Codable, Hashable, Sendable {
     public var customOriginX: Double?
     public var customOriginY: Double?
     public var hoverStatusEnabled: Bool
+    public var randomActionSwitchEnabled: Bool
+    public var randomActionSwitchSeconds: Int
     public var idleSourceActionIDByPack: [String: String]
     public var intentSourceActionIDByPack: [String: [String: String]]
+    public var hiddenPackIDs: Set<String>
 
     public init(
         opacity: Double = 0.94,
@@ -264,8 +267,11 @@ public struct PetSettings: Codable, Hashable, Sendable {
         customOriginX: Double? = nil,
         customOriginY: Double? = nil,
         hoverStatusEnabled: Bool = true,
+        randomActionSwitchEnabled: Bool = true,
+        randomActionSwitchSeconds: Int = 90,
         idleSourceActionIDByPack: [String: String] = [:],
-        intentSourceActionIDByPack: [String: [String: String]] = [:]
+        intentSourceActionIDByPack: [String: [String: String]] = [:],
+        hiddenPackIDs: Set<String> = []
     ) {
         self.opacity = min(1, max(0.35, opacity))
         self.size = min(260, max(96, size))
@@ -277,8 +283,11 @@ public struct PetSettings: Codable, Hashable, Sendable {
         self.customOriginX = customOriginX
         self.customOriginY = customOriginY
         self.hoverStatusEnabled = hoverStatusEnabled
+        self.randomActionSwitchEnabled = randomActionSwitchEnabled
+        self.randomActionSwitchSeconds = Self.normalizedRandomActionSwitchSeconds(randomActionSwitchSeconds)
         self.idleSourceActionIDByPack = idleSourceActionIDByPack
         self.intentSourceActionIDByPack = intentSourceActionIDByPack
+        self.hiddenPackIDs = hiddenPackIDs
         for (packID, sourceActionID) in idleSourceActionIDByPack
             where self.intentSourceActionIDByPack[packID]?[PetIntentKind.quietCompanion.rawValue] == nil {
             self.intentSourceActionIDByPack[packID, default: [:]][PetIntentKind.quietCompanion.rawValue] = sourceActionID
@@ -296,8 +305,11 @@ public struct PetSettings: Codable, Hashable, Sendable {
         case customOriginX
         case customOriginY
         case hoverStatusEnabled
+        case randomActionSwitchEnabled
+        case randomActionSwitchSeconds
         case idleSourceActionIDByPack
         case intentSourceActionIDByPack
+        case hiddenPackIDs
     }
 
     public init(from decoder: Decoder) throws {
@@ -313,8 +325,11 @@ public struct PetSettings: Codable, Hashable, Sendable {
             customOriginX: try container.decodeIfPresent(Double.self, forKey: .customOriginX),
             customOriginY: try container.decodeIfPresent(Double.self, forKey: .customOriginY),
             hoverStatusEnabled: try container.decodeIfPresent(Bool.self, forKey: .hoverStatusEnabled) ?? true,
+            randomActionSwitchEnabled: try container.decodeIfPresent(Bool.self, forKey: .randomActionSwitchEnabled) ?? true,
+            randomActionSwitchSeconds: try container.decodeIfPresent(Int.self, forKey: .randomActionSwitchSeconds) ?? 90,
             idleSourceActionIDByPack: try container.decodeIfPresent([String: String].self, forKey: .idleSourceActionIDByPack) ?? [:],
-            intentSourceActionIDByPack: try container.decodeIfPresent([String: [String: String]].self, forKey: .intentSourceActionIDByPack) ?? [:]
+            intentSourceActionIDByPack: try container.decodeIfPresent([String: [String: String]].self, forKey: .intentSourceActionIDByPack) ?? [:],
+            hiddenPackIDs: try container.decodeIfPresent(Set<String>.self, forKey: .hiddenPackIDs) ?? []
         )
     }
 
@@ -338,6 +353,14 @@ public struct PetSettings: Codable, Hashable, Sendable {
             }
         }
     }
+
+    public static func normalizedRandomActionSwitchSeconds(_ seconds: Int) -> Int {
+        min(10 * 60, max(15, seconds))
+    }
+
+    public mutating func normalize() {
+        randomActionSwitchSeconds = Self.normalizedRandomActionSwitchSeconds(randomActionSwitchSeconds)
+    }
 }
 
 public struct DesktopWidgetPosition: Codable, Hashable, Sendable {
@@ -350,26 +373,41 @@ public struct DesktopWidgetPosition: Codable, Hashable, Sendable {
     }
 }
 
+public enum DesktopWidgetMovementMode: String, Codable, Hashable, Sendable, CaseIterable, Identifiable {
+    case fixed
+    case free
+
+    public var id: String { rawValue }
+}
+
 public struct DesktopWidgetSettings: Codable, Hashable, Sendable {
     public var currentStatusVisible: Bool
     public var recentRhythmVisible: Bool
     public var currentStatusOrigin: DesktopWidgetPosition?
     public var recentRhythmOrigin: DesktopWidgetPosition?
+    public var recentRhythmWindowHours: Int
+    public var movementMode: DesktopWidgetMovementMode
 
     public var hasVisibleCards: Bool {
         currentStatusVisible || recentRhythmVisible
     }
 
+    public static let supportedRecentRhythmWindowHours = [4, 8, 12]
+
     public init(
         currentStatusVisible: Bool = false,
         recentRhythmVisible: Bool = false,
         currentStatusOrigin: DesktopWidgetPosition? = nil,
-        recentRhythmOrigin: DesktopWidgetPosition? = nil
+        recentRhythmOrigin: DesktopWidgetPosition? = nil,
+        recentRhythmWindowHours: Int = 4,
+        movementMode: DesktopWidgetMovementMode = .free
     ) {
         self.currentStatusVisible = currentStatusVisible
         self.recentRhythmVisible = recentRhythmVisible
         self.currentStatusOrigin = currentStatusOrigin
         self.recentRhythmOrigin = recentRhythmOrigin
+        self.recentRhythmWindowHours = Self.normalizedRecentRhythmWindowHours(recentRhythmWindowHours)
+        self.movementMode = movementMode
     }
 
     public init(allVisible: Bool) {
@@ -379,6 +417,36 @@ public struct DesktopWidgetSettings: Codable, Hashable, Sendable {
     public mutating func setAllVisible(_ visible: Bool) {
         currentStatusVisible = visible
         recentRhythmVisible = visible
+    }
+
+    public static func normalizedRecentRhythmWindowHours(_ hours: Int) -> Int {
+        if supportedRecentRhythmWindowHours.contains(hours) {
+            return hours
+        }
+        return supportedRecentRhythmWindowHours.min {
+            abs($0 - hours) < abs($1 - hours)
+        } ?? 4
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case currentStatusVisible
+        case recentRhythmVisible
+        case currentStatusOrigin
+        case recentRhythmOrigin
+        case recentRhythmWindowHours
+        case movementMode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            currentStatusVisible: try container.decodeIfPresent(Bool.self, forKey: .currentStatusVisible) ?? false,
+            recentRhythmVisible: try container.decodeIfPresent(Bool.self, forKey: .recentRhythmVisible) ?? false,
+            currentStatusOrigin: try container.decodeIfPresent(DesktopWidgetPosition.self, forKey: .currentStatusOrigin),
+            recentRhythmOrigin: try container.decodeIfPresent(DesktopWidgetPosition.self, forKey: .recentRhythmOrigin),
+            recentRhythmWindowHours: try container.decodeIfPresent(Int.self, forKey: .recentRhythmWindowHours) ?? 4,
+            movementMode: try container.decodeIfPresent(DesktopWidgetMovementMode.self, forKey: .movementMode) ?? .free
+        )
     }
 }
 

@@ -45,16 +45,7 @@ public enum PetIntentKind: String, Codable, Hashable, Sendable, CaseIterable, Id
         .nudgeStrong,
         .breakCompanion,
         .breakEnding,
-        .sleep,
-        .welcomeBack,
-        .moveLeft,
-        .moveRight,
-        .moveUp,
-        .moveDown,
-        .dragged,
-        .landing,
-        .mouseSummon,
-        .dashboardGuide
+        .sleep
     ]
 
     public var title: String {

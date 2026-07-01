@@ -13,8 +13,10 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_ROOT = ROOT / "external_generated_packs"
+PET_PACK_ZIP_DIR = ROOT / "dist/local/PetPacks"
 DOWNLOADS = Path.home() / "Downloads"
 LUO_SRC = ROOT / "external_assets/IXiaoHei/src/org/taibai/hellohei/img"
+UNIKEN_ZIP = ROOT / "dist/local/UNIkeNLocal.zip"
 
 
 @dataclass(frozen=True)
@@ -286,6 +288,30 @@ def export_gif_frames(gif_path: Path, out_dir: Path) -> int:
 def copy_png(src_path: Path, dst_path: Path) -> None:
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     Image.open(src_path).convert("RGBA").save(dst_path)
+
+
+def archive_pack_directory(pack_dir: Path, archive_path: Path) -> None:
+    if archive_path.exists():
+        archive_path.unlink()
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(pack_dir.rglob("*")):
+            if path.name == ".DS_Store" or path.name.startswith("._"):
+                continue
+            archive.write(path, path.relative_to(pack_dir.parent))
+
+
+def export_individual_pack_archives() -> None:
+    clean_dir(PET_PACK_ZIP_DIR)
+    for pack_dir in sorted(OUT_ROOT.iterdir()):
+        if not pack_dir.is_dir() or not (pack_dir / "pet.json").exists():
+            continue
+        archive_pack_directory(pack_dir, PET_PACK_ZIP_DIR / f"{pack_dir.name}.zip")
+
+    if UNIKEN_ZIP.exists():
+        shutil.copy2(UNIKEN_ZIP, PET_PACK_ZIP_DIR / UNIKEN_ZIP.name)
+    else:
+        print(f"[WARN] UNIkeN pack zip not found, skipped: {UNIKEN_ZIP}")
 
 
 def build_luo_xiaohei_pack() -> None:
@@ -566,7 +592,9 @@ def main() -> None:
     build_xiaodai_pack()
     build_pixel_cat_pack()
     build_luo_xiaohei_pack()
+    export_individual_pack_archives()
     print(f"[OK] Generated local pet packs under {OUT_ROOT}")
+    print(f"[OK] Exported individual pet pack zips under {PET_PACK_ZIP_DIR}")
 
 
 if __name__ == "__main__":

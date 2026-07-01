@@ -18,7 +18,6 @@ struct RecognitionDiagnosticSnapshot: Equatable {
     var defaultRuleCount: Int
     var userRuleCount: Int
     var inputMonitoringStatus: String
-    var accessibilityStatus: String
     var recordingPaused: Bool
 
     var catalogStatus: String {
@@ -42,7 +41,6 @@ struct RecognitionDiagnosticSnapshot: Equatable {
         defaultRuleCount: 0,
         userRuleCount: 0,
         inputMonitoringStatus: "检查中",
-        accessibilityStatus: "检查中",
         recordingPaused: false
     )
 }
@@ -50,13 +48,11 @@ struct RecognitionDiagnosticSnapshot: Equatable {
 struct SystemPermissionSnapshot: Equatable {
     var refreshedAt: Date
     var inputMonitoring: SystemPermissionStatus
-    var accessibility: SystemPermissionStatus
     var notifications: SystemPermissionStatus
 
     static let pending = SystemPermissionSnapshot(
         refreshedAt: Date(timeIntervalSince1970: 0),
         inputMonitoring: .checking,
-        accessibility: .checking,
         notifications: .checking
     )
 
@@ -64,8 +60,6 @@ struct SystemPermissionSnapshot: Equatable {
         switch destination {
         case .inputMonitoring:
             inputMonitoring
-        case .accessibility:
-            accessibility
         case .notifications:
             notifications
         case .privacySecurity:
@@ -143,6 +137,8 @@ final class FocusPetModel: ObservableObject {
     private var currentPetIntentKind: PetIntentKind = .quietCompanion
     private var petAnimationIdentity: String?
     private var petAnimationStartedAt = Date()
+    private var randomSourceActionIDByKey: [String: String] = [:]
+    private var randomSourceActionSwitchedAtByKey: [String: Date] = [:]
     private var sourceActionSound: NSSound?
     private var sourceActionSoundIdentity: String?
     private var lastTickAt: Date?
@@ -279,6 +275,10 @@ final class FocusPetModel: ObservableObject {
         return nil
     }
 
+    var hasAvailablePetPacks: Bool {
+        !availablePetPacks.isEmpty
+    }
+
     var petHoverMessage: String {
         if let rest = activeBreakSession {
             return "休息中 · 还剩 \(FocusPetFormatters.duration(rest.remainingSeconds()))"
@@ -288,7 +288,7 @@ final class FocusPetModel: ObservableObject {
 
     var petHoverDetails: [PetHoverContextItem] {
         [
-            PetHoverContextItem(symbol: "cup.and.saucer.fill", title: "上次休息", value: lastBreakDistanceTitle),
+            PetHoverContextItem(symbol: "cup.and.saucer.fill", title: "今日休息", value: todayBreakDurationTitle),
             PetHoverContextItem(symbol: "checkmark.circle.fill", title: "今日专注", value: FocusPetFormatters.duration(summary.focusSeconds)),
             PetHoverContextItem(symbol: "eye.trianglebadge.exclamationmark", title: "今日走神", value: FocusPetFormatters.duration(summary.distractedSeconds)),
             PetHoverContextItem(symbol: "keyboard", title: "今日键入", value: FocusPetFormatters.estimatedTypedCharacters(todayWorkload.estimatedTypedCharacters))
@@ -303,14 +303,11 @@ final class FocusPetModel: ObservableObject {
         dashboardPetAttachment != nil && dashboardPetPinIsActive
     }
 
-    private var lastBreakDistanceTitle: String {
+    private var todayBreakDurationTitle: String {
         if activeBreakSession != nil {
             return "正在休息"
         }
-        guard let end = breakSessions.compactMap(\.end).max() else {
-            return "暂无"
-        }
-        return "\(FocusPetFormatters.duration(Int(Date().timeIntervalSince(end))))前"
+        return summary.breakSeconds > 0 ? FocusPetFormatters.duration(summary.breakSeconds) : "暂无"
     }
 
     var reminderPauseTitle: String {
@@ -356,7 +353,7 @@ final class FocusPetModel: ObservableObject {
             }
         }
         mouseTimer?.tolerance = 0.25
-        if !settings.pet.hidden {
+        if !settings.pet.hidden, selectedPetPackRecord() != nil {
             petPanel.show()
         }
         restoreDesktopWidgetPanelIfNeeded()
@@ -577,8 +574,17 @@ final class FocusPetModel: ObservableObject {
     }
 
     func togglePetHidden() {
+        guard selectedPetPackRecord() != nil else {
+            settings.pet.hidden = true
+            petPanel.hide()
+            petImportMessage = nil
+            petImportErrorMessage = "请先导入桌宠资源包。"
+            openDashboard(tab: .settings)
+            save()
+            return
+        }
         settings.pet.hidden.toggle()
-        if settings.pet.hidden {
+        if settings.pet.hidden || selectedPetPackRecord() == nil {
             petPanel.hide()
         } else {
             petPanel.show()
@@ -631,6 +637,8 @@ final class FocusPetModel: ObservableObject {
         desktopWidgetPanel.show(
             kind,
             snapshot: snapshot,
+            recentRhythmWindowHours: settings.desktopWidget.recentRhythmWindowHours,
+            cardsMovable: settings.desktopWidget.movementMode == .free,
             preferredOrigin: storedDesktopWidgetOrigin(for: kind),
             onMoveEnded: { [weak self] origin in
                 self?.desktopWidgetPanelDidMove(kind, origin: origin)
@@ -694,7 +702,7 @@ final class FocusPetModel: ObservableObject {
             _ = destination.requestAccessIfAvailable()
             destination.open()
             statusMessage = "已打开 macOS \(destination.title) 设置。"
-        case .accessibility, .privacySecurity:
+        case .privacySecurity:
             destination.open()
             statusMessage = "已打开 macOS \(destination.title) 设置。"
         }
@@ -756,7 +764,7 @@ final class FocusPetModel: ObservableObject {
     }
 
     func presentPetForDashboard(tab: DashboardTab) {
-        guard !settings.pet.hidden else { return }
+        guard !settings.pet.hidden, selectedPetPackRecord() != nil else { return }
         let plan = dashboardPetPresentationPlan(for: tab)
         let now = Date()
         let expiresAt = now.addingTimeInterval(plan.duration)
@@ -782,6 +790,7 @@ final class FocusPetModel: ObservableObject {
 
     func dashboardWindowDidActivate() {
         guard !settings.pet.hidden,
+              selectedPetPackRecord() != nil,
               dashboardWindow() != nil else { return }
         let now = Date()
         guard now.timeIntervalSince(lastDashboardActivationRefreshAt) >= 0.45 else { return }
@@ -1186,6 +1195,7 @@ final class FocusPetModel: ObservableObject {
         }
         settings.reminder.normalize()
         settings.judgment.normalize()
+        settings.pet.normalize()
         save()
         if settings.reminder.enableSystemNotifications {
             requestNotificationAuthorization()
@@ -1250,7 +1260,6 @@ final class FocusPetModel: ObservableObject {
         systemPermissionSnapshot = SystemPermissionSnapshot(
             refreshedAt: Date(),
             inputMonitoring: SystemSettingsDestination.inputMonitoring.currentStatus ?? .checking,
-            accessibility: SystemSettingsDestination.accessibility.currentStatus ?? .checking,
             notifications: SystemPermissionStatus(
                 title: notificationPermissionTitle,
                 isAllowed: notificationPermissionIsAllowed
@@ -1285,7 +1294,6 @@ final class FocusPetModel: ObservableObject {
                 defaultRuleCount: ActivityClassifier.defaultRules.count,
                 userRuleCount: userRuleCount,
                 inputMonitoringStatus: SystemSettingsDestination.inputMonitoring.statusTitle ?? "未知",
-                accessibilityStatus: SystemSettingsDestination.accessibility.statusTitle ?? "未知",
                 recordingPaused: recordingPaused
             )
             await MainActor.run {
@@ -1333,8 +1341,22 @@ final class FocusPetModel: ObservableObject {
     }
 
     func refreshPetPacks(saveIfChanged: Bool = true) {
-        availablePetPacks = PetPackCatalog().availablePacks(userRootURL: petLibrary.installRootURL)
-        guard !availablePetPacks.isEmpty else { return }
+        availablePetPacks = PetPackCatalog().availablePacks(
+            userRootURL: petLibrary.installRootURL,
+            hiddenPackIDs: settings.pet.hiddenPackIDs
+        )
+        guard !availablePetPacks.isEmpty else {
+            let shouldSave = !settings.pet.selectedPackID.isEmpty || !settings.pet.hidden
+            if !settings.pet.selectedPackID.isEmpty {
+                settings.pet.selectedPackID = ""
+            }
+            settings.pet.hidden = true
+            if shouldSave && saveIfChanged {
+                save()
+            }
+            petPanel.hide()
+            return
+        }
 
         if !availablePetPacks.contains(where: { $0.id == settings.pet.selectedPackID }),
            let first = availablePetPacks.first {
@@ -1349,10 +1371,20 @@ final class FocusPetModel: ObservableObject {
         availablePetPacks.first { $0.id == settings.pet.selectedPackID } ?? availablePetPacks.first
     }
 
+    func selectPetPack(_ record: PetPackRecord) {
+        guard availablePetPacks.contains(where: { $0.id == record.id }) else { return }
+        settings.pet.selectedPackID = record.id
+        petImportErrorMessage = nil
+        randomSourceActionIDByKey = [:]
+        randomSourceActionSwitchedAtByKey = [:]
+        save()
+        updatePet()
+    }
+
     func chooseAndImportPetPack() {
         let panel = NSOpenPanel()
         panel.title = "导入 Focus Pet 资源包"
-        panel.message = "选择包含 pet.json 的文件夹，或直接选择 pet.json。"
+        panel.message = "选择 .zip、包含 pet.json 的文件夹，或直接选择 pet.json。"
         panel.prompt = "导入"
         panel.canChooseDirectories = true
         panel.canChooseFiles = true
@@ -1364,18 +1396,57 @@ final class FocusPetModel: ObservableObject {
 
     func importPetPack(from url: URL) {
         do {
-            let imported = try petLibrary.importPack(from: url)
+            let imported = try petLibrary.importPacks(from: url)
+            guard let firstImported = imported.first else {
+                throw PetPackImportError.manifestNotFound
+            }
+            for importedPack in imported {
+                settings.pet.hiddenPackIDs.remove(importedPack.record.id)
+            }
             refreshPetPacks(saveIfChanged: false)
-            settings.pet.selectedPackID = imported.record.id
-            petImportMessage = "已导入：\(imported.record.pack.name)"
+            settings.pet.selectedPackID = firstImported.record.id
+            settings.pet.hidden = false
+            let names = imported.map(\.record.pack.name).joined(separator: "、")
+            petImportMessage = imported.count == 1 ? "已导入：\(names)" : "已导入 \(imported.count) 个资源包：\(names)"
             petImportErrorMessage = nil
-            statusMessage = "资源包已导入。"
+            statusMessage = imported.count == 1 ? "资源包已导入。" : "资源包集合已导入。"
             save()
             updatePet()
         } catch {
             petImportMessage = nil
             petImportErrorMessage = error.localizedDescription
             statusMessage = "资源包导入失败。"
+        }
+    }
+
+    func canDeletePetPack(_ record: PetPackRecord) -> Bool {
+        !record.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    func deletePetPack(_ record: PetPackRecord) {
+        guard canDeletePetPack(record) else { return }
+
+        do {
+            try petLibrary.deletePack(id: record.id)
+            settings.pet.hiddenPackIDs.insert(record.id)
+            settings.pet.idleSourceActionIDByPack[record.id] = nil
+            settings.pet.intentSourceActionIDByPack[record.id] = nil
+
+            let deletedSelectedPack = settings.pet.selectedPackID == record.id
+            refreshPetPacks(saveIfChanged: false)
+            if deletedSelectedPack {
+                settings.pet.selectedPackID = availablePetPacks.first?.id ?? ""
+            }
+
+            petImportMessage = "已删除：\(record.pack.name)"
+            petImportErrorMessage = nil
+            statusMessage = "桌宠资源包已删除。"
+            save()
+            updatePet()
+        } catch {
+            petImportMessage = nil
+            petImportErrorMessage = "删除失败：\(error.localizedDescription)"
+            statusMessage = "桌宠资源包删除失败。"
         }
     }
 
@@ -1391,6 +1462,7 @@ final class FocusPetModel: ObservableObject {
         }
 
         settings.pet.setSourceActionID(sourceActionID, for: intent, packID: record.id)
+        resetRandomSourceActionTimer(for: intent, in: record, sourceActionID: sourceActionID)
         transientPetIntent = intent
         transientPetIntentSource = .interaction
         transientPetIntentExpiresAt = Date().addingTimeInterval(2.4)
@@ -1408,6 +1480,13 @@ final class FocusPetModel: ObservableObject {
 
     func resolvedSourceAction(for intent: PetIntentKind, in record: PetPackRecord) -> PetSourceActionSpec? {
         record.sourceAction(
+            for: intent,
+            mappedSourceActionID: settings.pet.sourceActionID(for: intent, packID: record.id)
+        )
+    }
+
+    func randomizableSourceActions(for intent: PetIntentKind, in record: PetPackRecord) -> [PetSourceActionSpec] {
+        record.randomizableSourceActions(
             for: intent,
             mappedSourceActionID: settings.pet.sourceActionID(for: intent, packID: record.id)
         )
@@ -2216,16 +2295,15 @@ final class FocusPetModel: ObservableObject {
         }
         guard let selectedRecord = selectedPetPackRecord() else {
             petPanel.hide()
+            petAnimationIdentity = nil
+            stopPetSourceActionSound()
             return
         }
         let now = Date()
         let intent = resolvedPetIntent(now: now)
         currentPetIntentKind = intent.kind
-        let hoverIntent = hoverIntent(for: intent.kind)
-        let sourceAction = resolvedSourceAction(for: intent.kind, in: selectedRecord)
-        let hoverSourceAction = resolvedSourceAction(for: hoverIntent, in: selectedRecord)
+        let sourceAction = resolvedDisplaySourceAction(for: intent, in: selectedRecord, now: now)
         let sourceFrameURLs = sourceAction.map { selectedRecord.frameURLs(forSourceActionID: $0.id) } ?? []
-        let hoverFrameURLs = hoverSourceAction.map { selectedRecord.frameURLs(forSourceActionID: $0.id) } ?? []
         let displayFrameURLs = sourceFrameURLs
         let displayFramesPerSecond = sourceAction?.fps ?? 8
         let displayLoops = sourceAction?.loop ?? true
@@ -2234,9 +2312,7 @@ final class FocusPetModel: ObservableObject {
             selectedRecord.id,
             intent.kind.rawValue,
             intent.source.rawValue,
-            hoverIntent.rawValue,
-            sourceAction?.id ?? "-",
-            hoverSourceAction?.id ?? "-"
+            sourceAction?.id ?? "-"
         ].joined(separator: "|")
         if petAnimationIdentity != nextAnimationIdentity {
             petAnimationIdentity = nextAnimationIdentity
@@ -2267,16 +2343,77 @@ final class FocusPetModel: ObservableObject {
             frameURLs: displayFrameURLs,
             framesPerSecond: displayFramesPerSecond,
             loops: displayLoops,
-            hoverIntent: hoverIntent,
-            hoverFrameURLs: hoverFrameURLs,
-            hoverFramesPerSecond: hoverSourceAction?.fps ?? 8,
-            hoverLoops: hoverSourceAction?.loop ?? false,
             animationStartedAt: petAnimationStartedAt,
             screenHint: petScreenHint.map {
                 PetScreenHint(screenFrame: $0.screenFrame, visibleFrame: $0.visibleFrame)
             }
         ))
         petPanel.show()
+    }
+
+    private func resolvedDisplaySourceAction(
+        for intent: PetIntent,
+        in record: PetPackRecord,
+        now: Date
+    ) -> PetSourceActionSpec? {
+        let fallback = resolvedSourceAction(for: intent.kind, in: record)
+        guard settings.pet.randomActionSwitchEnabled,
+              intent.source != .physicalInteraction else {
+            return fallback
+        }
+
+        let candidates = randomizableSourceActions(for: intent.kind, in: record)
+        guard candidates.count > 1 else {
+            clearRandomSourceAction(for: intent.kind, in: record)
+            return fallback
+        }
+
+        let key = randomSourceActionKey(intent: intent.kind, record: record)
+        let interval = TimeInterval(settings.pet.randomActionSwitchSeconds)
+        let currentID = randomSourceActionIDByKey[key]
+        let currentIndex = currentID.flatMap { id in
+            candidates.firstIndex { $0.id == id }
+        }
+
+        guard let currentIndex,
+              let switchedAt = randomSourceActionSwitchedAtByKey[key] else {
+            let initialID = fallback.flatMap { action in
+                candidates.contains(where: { $0.id == action.id }) ? action.id : nil
+            } ?? candidates.randomElement()?.id ?? candidates[0].id
+            randomSourceActionIDByKey[key] = initialID
+            randomSourceActionSwitchedAtByKey[key] = now
+            return candidates.first { $0.id == initialID } ?? fallback
+        }
+
+        guard now.timeIntervalSince(switchedAt) >= interval else {
+            return candidates[currentIndex]
+        }
+
+        var nextIndex = Int.random(in: 0..<candidates.count)
+        if nextIndex == currentIndex {
+            nextIndex = (nextIndex + 1) % candidates.count
+        }
+        let next = candidates[nextIndex]
+        randomSourceActionIDByKey[key] = next.id
+        randomSourceActionSwitchedAtByKey[key] = now
+        petAnimationIdentity = nil
+        return next
+    }
+
+    private func randomSourceActionKey(intent: PetIntentKind, record: PetPackRecord) -> String {
+        "\(record.id)|\(intent.rawValue)"
+    }
+
+    private func clearRandomSourceAction(for intent: PetIntentKind, in record: PetPackRecord) {
+        let key = randomSourceActionKey(intent: intent, record: record)
+        randomSourceActionIDByKey[key] = nil
+        randomSourceActionSwitchedAtByKey[key] = nil
+    }
+
+    private func resetRandomSourceActionTimer(for intent: PetIntentKind, in record: PetPackRecord, sourceActionID: String?) {
+        let key = randomSourceActionKey(intent: intent, record: record)
+        randomSourceActionIDByKey[key] = sourceActionID
+        randomSourceActionSwitchedAtByKey[key] = Date()
     }
 
     private func save() {
@@ -2538,7 +2675,12 @@ final class FocusPetModel: ObservableObject {
         let snapshot = makeWidgetSnapshot(now: now)
         let visibleKinds = visibleDesktopWidgetKinds()
         if !visibleKinds.isEmpty {
-            desktopWidgetPanel.update(snapshot: snapshot, visibleKinds: visibleKinds)
+            desktopWidgetPanel.update(
+                snapshot: snapshot,
+                visibleKinds: visibleKinds,
+                recentRhythmWindowHours: settings.desktopWidget.recentRhythmWindowHours,
+                cardsMovable: settings.desktopWidget.movementMode == .free
+            )
         }
 
         let snapshotKey = widgetSnapshotPersistenceKey(snapshot)
@@ -2655,6 +2797,33 @@ final class FocusPetModel: ObservableObject {
         Set(DesktopWidgetCardKind.allCases.filter { desktopWidgetPanel.isVisible($0) })
     }
 
+    func setDesktopWidgetRecentRhythmWindowHours(_ hours: Int) {
+        let normalized = DesktopWidgetSettings.normalizedRecentRhythmWindowHours(hours)
+        guard settings.desktopWidget.recentRhythmWindowHours != normalized else { return }
+        settings.desktopWidget.recentRhythmWindowHours = normalized
+        refreshVisibleDesktopWidgetPanels()
+        save()
+    }
+
+    func setDesktopWidgetMovementMode(_ mode: DesktopWidgetMovementMode) {
+        guard settings.desktopWidget.movementMode != mode else { return }
+        captureAllDesktopWidgetOrigins()
+        settings.desktopWidget.movementMode = mode
+        refreshVisibleDesktopWidgetPanels()
+        save()
+    }
+
+    private func refreshVisibleDesktopWidgetPanels() {
+        let visibleKinds = visibleDesktopWidgetKinds()
+        guard !visibleKinds.isEmpty else { return }
+        desktopWidgetPanel.update(
+            snapshot: makeWidgetSnapshot(now: Date()),
+            visibleKinds: visibleKinds,
+            recentRhythmWindowHours: settings.desktopWidget.recentRhythmWindowHours,
+            cardsMovable: settings.desktopWidget.movementMode == .free
+        )
+    }
+
     private func widgetSnapshotPersistenceKey(_ snapshot: FocusPetWidgetSnapshot) -> String {
         let rhythmKey = snapshot.recentRhythms
             .map {
@@ -2727,20 +2896,20 @@ final class FocusPetModel: ObservableObject {
         }
 
         let intent = currentPetIntentKind
-        let actions = record.playableSourceActions.filter {
-            !record.frameURLs(forSourceActionID: $0.id).isEmpty
-        }
+        let actions = randomizableSourceActions(for: intent, in: record)
         guard actions.count > 1 else {
             return
         }
 
-        let currentID = settings.pet.sourceActionID(for: intent, packID: record.id)
+        let currentID = randomSourceActionIDByKey[randomSourceActionKey(intent: intent, record: record)]
+            ?? settings.pet.sourceActionID(for: intent, packID: record.id)
             ?? resolvedSourceAction(for: intent, in: record)?.id
         let currentIndex = currentID.flatMap { id in
             actions.firstIndex { $0.id == id }
         } ?? -1
         let next = actions[(currentIndex + 1) % actions.count]
         settings.pet.setSourceActionID(next.id, for: intent, packID: record.id)
+        resetRandomSourceActionTimer(for: intent, in: record, sourceActionID: next.id)
         transientPetIntent = intent
         transientPetIntentSource = .interaction
         transientPetIntentExpiresAt = Date().addingTimeInterval(2.4)
@@ -2814,15 +2983,6 @@ final class FocusPetModel: ObservableObject {
         )
     }
 
-    private func hoverIntent(for intent: PetIntentKind) -> PetIntentKind {
-        switch intent {
-        case .sleep, .breakCompanion, .breakEnding:
-            return .quietCompanion
-        default:
-            return .welcomeBack
-        }
-    }
-
     private func playPetSourceActionSoundIfNeeded(
         record: PetPackRecord,
         sourceAction: PetSourceActionSpec,
@@ -2843,6 +3003,12 @@ final class FocusPetModel: ObservableObject {
         sound.volume = Float(sourceAction.audio?.volume ?? 0.55)
         sound.play()
         sourceActionSound = sound
+    }
+
+    private func stopPetSourceActionSound() {
+        sourceActionSound?.stop()
+        sourceActionSound = nil
+        sourceActionSoundIdentity = nil
     }
 
     private func reasonTitle(_ reason: StateReason) -> String {

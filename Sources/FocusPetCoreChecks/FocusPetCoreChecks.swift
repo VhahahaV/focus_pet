@@ -46,6 +46,8 @@ enum FocusPetCoreChecks {
         checkPetFallback()
         checkPetCatalogProvidesDistributionFallback()
         checkLocalPetPackActions()
+        checkPetPackZipImportAndDeletion()
+        checkExportedIndividualPetPackZipsIfPresent()
         checkPetHoverPresentation()
         checkPetNonLoopFramesDoNotFreeze()
         checkPetSettingsCompatibility()
@@ -690,6 +692,24 @@ enum FocusPetCoreChecks {
         expect(summary.focusSeconds == 60 && summary.breakSeconds == 60, "summary should aggregate focus and break")
         expect(summary.categorySeconds(.work) == 60 && summary.categorySeconds(.ignore) == 60, "summary should aggregate category usage")
 
+        let breakSessionSummary = DailySummaryBuilder().summary(
+            for: start.addingTimeInterval(120),
+            segments: [],
+            appUsage: [],
+            focusSessions: [],
+            breakSessions: [
+                BreakSession(
+                    start: start,
+                    targetDurationSeconds: 300,
+                    end: start.addingTimeInterval(120),
+                    source: .manual,
+                    completed: true
+                )
+            ],
+            nudges: []
+        )
+        expect(breakSessionSummary.breakSeconds == 120, "summary should use exact break session duration when state ticks lag")
+
         let appUsage = [
             AppUsageSegment(start: start, end: start.addingTimeInterval(3_600), appName: "Locked Screen", bundleID: nil, category: .ignore),
             AppUsageSegment(start: start.addingTimeInterval(3_600), end: start.addingTimeInterval(4_200), appName: "Google Chrome", bundleID: "com.google.Chrome", category: .ignore),
@@ -853,15 +873,20 @@ enum FocusPetCoreChecks {
     private static func checkPetCatalogProvidesDistributionFallback() {
         let defaultSettings = AppSettings()
         let bundledPacks = PetPackCatalog().bundledPacks()
+        let emptyCatalog = PetPackCatalog().availablePacks(
+            userRootURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("focus-pet-empty-catalog-\(UUID().uuidString)", isDirectory: true)
+        )
 
         expect(bundledPacks.isEmpty, "placeholder pet should not be bundled")
-        expect(defaultSettings.pet.selectedPackID == PetPackCatalog.localXiaoDaiPackID, "default pet selection should prefer a local pack")
+        expect(defaultSettings.pet.selectedPackID.isEmpty, "default pet selection should be empty until the user imports a pack")
+        expect(emptyCatalog.isEmpty, "empty pet pack root should not synthesize a default pet")
     }
 
     private static func checkLocalPetPackActions() {
         let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("external_generated_packs", isDirectory: true)
-        let records = PetPackCatalog().availablePacks(userRootURL: root)
+        let records = recordsInLocalGeneratedPackRoot(root)
         let recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
 
         guard let luo = recordsByID[PetPackCatalog.localLuoXiaoHeiPackID],
@@ -926,10 +951,10 @@ enum FocusPetCoreChecks {
         )
 
         expect(renderState.displayIntent(isHovering: false) == .quietCompanion, "normal presentation should keep the base pet intent")
-        expect(renderState.displayIntent(isHovering: true) == .welcomeBack, "hover presentation should switch to the hover intent locally")
-        expect(renderState.displayFrameURLs(isHovering: true) == [hoverFrame], "hover presentation should use hover frames without rebuilding the render state")
-        expect(renderState.displayFramesPerSecond(isHovering: true) == 8, "hover presentation should use hover FPS")
-        expect(renderState.displayLoops(isHovering: true) == false, "hover presentation should use hover loop setting")
+        expect(renderState.displayIntent(isHovering: true) == .quietCompanion, "hover presentation should keep the base pet intent")
+        expect(renderState.displayFrameURLs(isHovering: true) == [normalFrame], "hover presentation should keep the base pet frames")
+        expect(renderState.displayFramesPerSecond(isHovering: true) == 6, "hover presentation should keep the base FPS")
+        expect(renderState.displayLoops(isHovering: true) == true, "hover presentation should keep the base loop setting")
     }
 
     private static func checkPetNonLoopFramesDoNotFreeze() {
@@ -1000,6 +1025,8 @@ enum FocusPetCoreChecks {
         expect(!settings.desktopWidgetVisible, "legacy app settings should default desktop widget card to hidden")
         expect(!settings.desktopWidget.currentStatusVisible, "legacy app settings should default current status card to hidden")
         expect(!settings.desktopWidget.recentRhythmVisible, "legacy app settings should default recent rhythm card to hidden")
+        expect(settings.desktopWidget.recentRhythmWindowHours == 4, "legacy app settings should default recent rhythm card to 4 hours")
+        expect(settings.desktopWidget.movementMode == .free, "legacy app settings should default desktop cards to free dragging")
 
         let legacyVisibleJSON = """
         {
@@ -1017,6 +1044,24 @@ enum FocusPetCoreChecks {
         }
         expect(visibleSettings.desktopWidget.currentStatusVisible, "legacy visible desktop widget should show current status card")
         expect(visibleSettings.desktopWidget.recentRhythmVisible, "legacy visible desktop widget should show recent rhythm card")
+
+        let configuredWidgetJSON = """
+        {
+          "desktopWidget": {
+            "currentStatusVisible": true,
+            "recentRhythmVisible": true,
+            "recentRhythmWindowHours": 12,
+            "movementMode": "fixed"
+          }
+        }
+        """
+        guard let configuredData = configuredWidgetJSON.data(using: .utf8),
+              let configuredSettings = try? JSONDecoder().decode(AppSettings.self, from: configuredData) else {
+            expect(false, "desktop widget settings should decode configured rhythm and movement values")
+            return
+        }
+        expect(configuredSettings.desktopWidget.recentRhythmWindowHours == 12, "desktop widget settings should keep configured recent rhythm window")
+        expect(configuredSettings.desktopWidget.movementMode == .fixed, "desktop widget settings should keep configured movement mode")
 
         var positionedSettings = AppSettings(
             desktopWidget: DesktopWidgetSettings(
@@ -1214,7 +1259,7 @@ enum FocusPetCoreChecks {
         expect(summary.pointerActionCount == 5, "workload summary should aggregate pointer actions")
         expect(summary.contextSwitchCount == 5, "workload summary should aggregate context switches")
         expect(summary.totalWorkloadEvents == 30 && summary.activeMinutes == 2, "workload summary should expose readable totals")
-        expect(FocusPetFormatters.estimatedTypedCharacters(20) == "键入约 20 字", "typed character formatter should be readable")
+        expect(FocusPetFormatters.estimatedTypedCharacters(20) == "键入约 20 次", "typed character formatter should be readable")
         expect(FocusPetFormatters.contextSwitches(5) == "切换 5 次", "context switch formatter should be readable")
     }
 
@@ -1330,6 +1375,172 @@ enum FocusPetCoreChecks {
         expect(loadedMissingSchema.settings == adoptedSettings, "missing schema should keep existing data")
         expect(missingMetadata.contains("focuspet-mvp-1"), "missing schema should adopt current metadata")
         expect(missingBackupExists, "missing schema data should be backed up before adoption")
+    }
+
+    private static func checkPetPackZipImportAndDeletion() {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-pack-zip-check-\(UUID().uuidString)", isDirectory: true)
+        let collection = root.appendingPathComponent("FocusPetPacks", isDirectory: true)
+        let singleArchiveRoot = root.appendingPathComponent("SingleArchives", isDirectory: true)
+        let install = root.appendingPathComponent("Installed", isDirectory: true)
+        let archive = root.appendingPathComponent("FocusPetPacks.zip")
+        defer { try? fileManager.removeItem(at: root) }
+
+        do {
+            let first = minimalImportablePetPack(id: "zip_check_one", name: "Zip Check One")
+            let second = minimalImportablePetPack(id: "zip_check_two", name: "Zip Check Two")
+            try writeMinimalPetPack(first, to: collection.appendingPathComponent("One", isDirectory: true))
+            try writeMinimalPetPack(second, to: collection.appendingPathComponent("Two", isDirectory: true))
+            try archiveDirectory(collection, to: archive)
+
+            let library = PetPackLibrary(installRootURL: install)
+            let imported = try library.importPacks(from: archive)
+            expect(Set(imported.map(\.record.id)) == Set(["zip_check_one", "zip_check_two"]), "zip import should load every pack in a collection archive")
+            try library.deletePack(id: "zip_check_one")
+            let visibleRecords = PetPackCatalog().availablePacks(userRootURL: install, hiddenPackIDs: ["zip_check_one"])
+            expect(!fileManager.fileExists(atPath: install.appendingPathComponent("zip_check_one").path), "delete should remove imported pack files")
+            expect(!visibleRecords.contains { $0.id == "zip_check_one" }, "hidden deleted pack IDs should be filtered from the catalog")
+
+            var importedSinglePackIDs: [String] = []
+            for index in 0..<4 {
+                let id = "single_zip_check_\(index)"
+                let source = singleArchiveRoot.appendingPathComponent("Pack\(index)", isDirectory: true)
+                let archive = singleArchiveRoot.appendingPathComponent("Pack\(index).zip")
+                try writeMinimalPetPack(minimalImportablePetPack(id: id, name: "Single Zip Check \(index)"), to: source)
+                try archiveDirectory(source, to: archive)
+                let singleImported = try library.importPacks(from: archive)
+                expect(singleImported.map(\.record.id) == [id], "single-pack zip import should import exactly \(id)")
+                importedSinglePackIDs.append(id)
+            }
+
+            for id in importedSinglePackIDs {
+                try library.deletePack(id: id)
+                expect(!fileManager.fileExists(atPath: install.appendingPathComponent(id).path), "single-pack delete should remove \(id)")
+            }
+
+            let remainingIDs = Set(PetPackCatalog().availablePacks(
+                userRootURL: install,
+                hiddenPackIDs: Set(importedSinglePackIDs).union(["zip_check_one"])
+            ).map(\.id))
+            expect(remainingIDs == ["zip_check_two"], "deleting individual single-pack zips should leave unrelated imports intact")
+        } catch {
+            expect(false, "zip import/delete check failed: \(error.localizedDescription)")
+        }
+    }
+
+    private static func checkExportedIndividualPetPackZipsIfPresent() {
+        let fileManager = FileManager.default
+        let root = URL(fileURLWithPath: fileManager.currentDirectoryPath)
+            .appendingPathComponent("dist/local/PetPacks", isDirectory: true)
+        guard let archives = try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+            .filter({ $0.pathExtension.lowercased() == "zip" })
+            .sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }),
+              !archives.isEmpty else {
+            return
+        }
+
+        let installRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-exported-pack-check-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: installRoot) }
+
+        let library = PetPackLibrary(installRootURL: installRoot)
+        var checkedIDs: [String] = []
+
+        do {
+            for archive in archives {
+                let imported = try library.importPacks(from: archive)
+                expect(imported.count == 1, "\(archive.lastPathComponent) should contain exactly one importable pet pack")
+                guard let record = imported.first?.record else { continue }
+                checkedIDs.append(record.id)
+
+                let recordsAfterImport = PetPackCatalog().availablePacks(userRootURL: installRoot)
+                expect(recordsAfterImport.contains { $0.id == record.id }, "\(archive.lastPathComponent) should be visible after import")
+                expect(
+                    fileManager.fileExists(atPath: installRoot.appendingPathComponent(record.id).appendingPathComponent("pet.json").path),
+                    "\(archive.lastPathComponent) should copy pet.json into the install root"
+                )
+
+                try library.deletePack(id: record.id)
+                let recordsAfterDelete = PetPackCatalog().availablePacks(userRootURL: installRoot, hiddenPackIDs: [record.id])
+                expect(!recordsAfterDelete.contains { $0.id == record.id }, "\(archive.lastPathComponent) should be absent after deletion")
+                expect(
+                    !fileManager.fileExists(atPath: installRoot.appendingPathComponent(record.id).path),
+                    "\(archive.lastPathComponent) should remove imported files after deletion"
+                )
+            }
+            expect(Set(checkedIDs) == Set([
+                PetPackCatalog.localLuoXiaoHeiPackID,
+                PetPackCatalog.localXiaoDaiPackID,
+                PetPackCatalog.localPixelCatMemePackID,
+                "uniken_local"
+            ]), "exported individual pet pack zips should cover the three local packs plus UNIkeN")
+        } catch {
+            expect(false, "exported individual pet pack import/delete check failed: \(error.localizedDescription)")
+        }
+    }
+
+    private static func recordsInLocalGeneratedPackRoot(_ root: URL) -> [PetPackRecord] {
+        let fileManager = FileManager.default
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return urls
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            .compactMap { PetPackCatalog().record(at: $0, isBundled: false) }
+    }
+
+    private static func minimalImportablePetPack(id: String, name: String) -> PetPack {
+        PetPack(
+            schemaVersion: 1,
+            id: id,
+            name: name,
+            author: "Focus Pet",
+            style: "minimal_2d",
+            license: "original",
+            distribution: "localOnly",
+            defaultSize: PetPackSize(width: 160, height: 160),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
+            animations: [
+                .idle: PetAnimationSpec(folder: "idle", fps: 6, loop: true, frameCount: 1),
+                .sleep: PetAnimationSpec(folder: "sleep", fps: 4, loop: true, frameCount: 1),
+                .nudgeGentle: PetAnimationSpec(folder: "nudgeGentle", fps: 8, loop: false, frameCount: 1),
+                .welcomeBack: PetAnimationSpec(folder: "welcomeBack", fps: 8, loop: false, frameCount: 1),
+                .breakRelax: PetAnimationSpec(folder: "breakRelax", fps: 6, loop: true, frameCount: 1)
+            ]
+        )
+    }
+
+    private static func writeMinimalPetPack(_ pack: PetPack, to root: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONEncoder().encode(pack).write(to: root.appendingPathComponent("pet.json"))
+        try Data([0]).write(to: root.appendingPathComponent("preview.png"))
+        for animation in pack.animations.values {
+            let folder = root.appendingPathComponent(animation.folder, isDirectory: true)
+            try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data([0]).write(to: folder.appendingPathComponent("000.png"))
+        }
+    }
+
+    private static func archiveDirectory(_ directory: URL, to archive: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-c", "-k", "--keepParent", directory.path, archive.path]
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw PetPackImportError.archiveExtractionFailed("ditto 退出码 \(process.terminationStatus)")
+        }
     }
 
     private static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {

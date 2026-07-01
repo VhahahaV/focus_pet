@@ -8,8 +8,8 @@ DIST_DIR="$ROOT_DIR/dist"
 LOCAL_DIST_DIR="$DIST_DIR/local"
 WORK_DIR="$ROOT_DIR/.build/dmg"
 STAGING_DIR="$WORK_DIR/staging"
-BACKGROUND_SWIFT="$WORK_DIR/make-dmg-background.swift"
 BACKGROUND_PNG="$STAGING_DIR/.background/background.png"
+DMG_BACKGROUND_ASSET="$ROOT_DIR/scripts/dmg-assets/background.png"
 VOLUME_NAME="Focus Pet Installer"
 WINDOW_WIDTH=720
 WINDOW_HEIGHT=460
@@ -37,8 +37,9 @@ Usage: scripts/package-dmg.sh [options]
 By default this builds a signed, notarized, stapled distribution DMG that is safe
 to upload and download on another Mac. Use --local for a non-notarized smoke-test
 image; local images are written under dist/local/ and must not be distributed.
-Local mode includes external_generated_packs by default for internal pet-pack
-smoke testing. Distribution mode excludes them unless explicitly overridden.
+Local and distribution modes exclude external_generated_packs by default so
+third-party pet assets are not bundled into the DMG. Pass
+--include-local-test-pets only for internal pet-pack smoke testing.
 
 Options:
   --local                         Build a local-only DMG with ad-hoc signing
@@ -153,6 +154,15 @@ verify_dmg_signature() {
         xcrun stapler validate "$dmg_path"
         spctl -a -t open --context context:primary-signature -vv "$dmg_path"
     fi
+}
+
+verify_dmg_background_asset() {
+    local image_path="$1"
+    local image_size
+
+    test -f "$image_path" || die "DMG background asset is missing: $image_path"
+    image_size="$(sips -g pixelWidth -g pixelHeight "$image_path" 2>/dev/null | awk '/pixelWidth/ { width = $2 } /pixelHeight/ { height = $2 } END { print width "x" height }')"
+    [[ "$image_size" == "1440x920" ]] || die "DMG background asset must be 1440x920 Retina PNG for a ${WINDOW_WIDTH}x${WINDOW_HEIGHT} Finder window, got $image_size: $image_path"
 }
 
 write_release_manifest() {
@@ -330,8 +340,8 @@ case "$MODE" in
             APP_ARGS+=(--ad-hoc-sign)
         fi
         if [[ "$PET_PACK_MODE_SET" -eq 0 ]]; then
-            APP_ARGS+=(--include-local-test-pets)
-            INCLUDE_LOCAL_TEST_PETS_EFFECTIVE=1
+            APP_ARGS+=(--exclude-local-test-pets)
+            INCLUDE_LOCAL_TEST_PETS_EFFECTIVE=0
         fi
         DIST_OUTPUT_DIR="$LOCAL_DIST_DIR"
         LATEST_DMG="$LOCAL_DIST_DIR/FocusPet-local.dmg"
@@ -374,6 +384,7 @@ fi
 
 rm -rf "$STAGING_DIR" "$MOUNT_POINT" "$VERIFY_MOUNT_POINT" "$APP_ZIP" "$RW_DMG" "$FINAL_DMG" "$LATEST_DMG"
 mkdir -p "$STAGING_DIR/.background" "$MOUNT_POINT" "$VERIFY_MOUNT_POINT"
+verify_dmg_background_asset "$DMG_BACKGROUND_ASSET"
 
 verify_app_signature "$APP_PATH"
 verify_widget_extension "$APP_PATH"
@@ -393,82 +404,7 @@ fi
 
 ditto "$APP_PATH" "$STAGING_DIR/$APP_BUNDLE_NAME"
 ln -s /Applications "$STAGING_DIR/Applications"
-
-cat > "$BACKGROUND_SWIFT" <<'SWIFT'
-import AppKit
-import Foundation
-
-let output = URL(fileURLWithPath: CommandLine.arguments[1])
-let size = NSSize(width: 720, height: 460)
-let image = NSImage(size: size)
-
-func drawText(_ text: String, x: CGFloat, y: CGFloat, size: CGFloat, weight: NSFont.Weight, color: NSColor, alignment: NSTextAlignment = .center) {
-    let paragraph = NSMutableParagraphStyle()
-    paragraph.alignment = alignment
-    let attributes: [NSAttributedString.Key: Any] = [
-        .font: NSFont.systemFont(ofSize: size, weight: weight),
-        .foregroundColor: color,
-        .paragraphStyle: paragraph
-    ]
-    NSString(string: text).draw(in: NSRect(x: x, y: y, width: 720 - x * 2, height: 40), withAttributes: attributes)
-}
-
-image.lockFocus()
-NSColor(calibratedRed: 0.93, green: 0.97, blue: 1.0, alpha: 1).setFill()
-NSRect(origin: .zero, size: size).fill()
-
-let gradient = NSGradient(colors: [
-    NSColor(calibratedRed: 0.90, green: 0.96, blue: 1.0, alpha: 1),
-    NSColor(calibratedRed: 0.98, green: 0.95, blue: 1.0, alpha: 1)
-])!
-gradient.draw(in: NSRect(origin: .zero, size: size), angle: 18)
-
-NSColor.white.withAlphaComponent(0.54).setFill()
-NSBezierPath(roundedRect: NSRect(x: 42, y: 54, width: 636, height: 334), xRadius: 28, yRadius: 28).fill()
-NSColor(calibratedRed: 0.47, green: 0.64, blue: 0.95, alpha: 0.22).setStroke()
-let card = NSBezierPath(roundedRect: NSRect(x: 42, y: 54, width: 636, height: 334), xRadius: 28, yRadius: 28)
-card.lineWidth = 1.4
-card.stroke()
-
-drawText("Focus Pet", x: 0, y: 342, size: 30, weight: .bold, color: NSColor(calibratedRed: 0.12, green: 0.16, blue: 0.24, alpha: 1))
-drawText("拖动应用到 Applications 完成安装", x: 0, y: 302, size: 18, weight: .semibold, color: NSColor(calibratedRed: 0.18, green: 0.24, blue: 0.34, alpha: 1))
-drawText("再次拖动会覆盖同名 /Applications/Focus Pet.app", x: 0, y: 276, size: 13, weight: .medium, color: NSColor(calibratedRed: 0.44, green: 0.50, blue: 0.62, alpha: 1))
-drawText("用户数据保存在 ~/Library/Application Support/Focus Pet", x: 0, y: 76, size: 12, weight: .medium, color: NSColor(calibratedRed: 0.48, green: 0.54, blue: 0.66, alpha: 1))
-
-let arrow = NSBezierPath()
-arrow.move(to: NSPoint(x: 278, y: 214))
-arrow.line(to: NSPoint(x: 442, y: 214))
-arrow.lineWidth = 7
-NSColor(calibratedRed: 0.18, green: 0.52, blue: 0.92, alpha: 0.78).setStroke()
-arrow.stroke()
-
-let head = NSBezierPath()
-head.move(to: NSPoint(x: 442, y: 214))
-head.line(to: NSPoint(x: 416, y: 231))
-head.line(to: NSPoint(x: 416, y: 197))
-head.close()
-NSColor(calibratedRed: 0.18, green: 0.52, blue: 0.92, alpha: 0.78).setFill()
-head.fill()
-
-NSColor(calibratedRed: 0.18, green: 0.52, blue: 0.92, alpha: 0.12).setStroke()
-let ring = NSBezierPath(ovalIn: NSRect(x: 148, y: 150, width: 126, height: 126))
-ring.lineWidth = 2
-ring.stroke()
-let ring2 = NSBezierPath(ovalIn: NSRect(x: 446, y: 150, width: 126, height: 126))
-ring2.lineWidth = 2
-ring2.stroke()
-
-image.unlockFocus()
-
-guard let tiff = image.tiffRepresentation,
-      let bitmap = NSBitmapImageRep(data: tiff),
-      let data = bitmap.representation(using: .png, properties: [:]) else {
-    fatalError("Could not render DMG background")
-}
-try data.write(to: output)
-SWIFT
-
-swift "$BACKGROUND_SWIFT" "$BACKGROUND_PNG"
+ditto "$DMG_BACKGROUND_ASSET" "$BACKGROUND_PNG"
 
 hdiutil create \
     -volname "$VOLUME_NAME" \
@@ -484,11 +420,18 @@ osascript <<OSA
 tell application "Finder"
     activate
     set dmgFolder to (POSIX file "$MOUNT_POINT") as alias
-    set dmgPath to POSIX path of dmgFolder
+    try
+        close (every Finder window whose name is "$VOLUME_NAME")
+    end try
     open dmgFolder
-    delay 0.5
-    set dmgWindow to container window of dmgFolder
-    if POSIX path of ((target of dmgWindow) as alias) is not dmgPath then error "DMG Finder window opened the wrong target"
+    repeat with windowAttempt from 1 to 10
+        delay 0.3
+        try
+            set dmgWindow to container window of dmgFolder
+            exit repeat
+        end try
+        if windowAttempt is 10 then error "DMG Finder window did not open"
+    end repeat
     set dmgWindowID to id of dmgWindow
     set current view of dmgWindow to icon view
     try
@@ -518,8 +461,14 @@ tell application "Finder"
     close Finder window id dmgWindowID
     delay 3
     open dmgFolder
-    delay 0.5
-    set verifyWindow to container window of dmgFolder
+    repeat with verifyAttempt from 1 to 10
+        delay 0.3
+        try
+            set verifyWindow to container window of dmgFolder
+            exit repeat
+        end try
+        if verifyAttempt is 10 then error "DMG Finder verify window did not open"
+    end repeat
     set verifyOptions to icon view options of verifyWindow
     if current view of verifyWindow is not icon view then error "DMG icon view was not persisted"
     if icon size of verifyOptions is not 96 then error "DMG icon size was not persisted"

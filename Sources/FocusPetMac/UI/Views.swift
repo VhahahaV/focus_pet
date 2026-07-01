@@ -1031,8 +1031,8 @@ private struct MenuActionGrid: View {
             }
 
             MenuActionButton(
-                title: model.settings.pet.hidden ? "显示桌宠" : "隐藏桌宠",
-                symbol: model.settings.pet.hidden ? "eye.fill" : "eye.slash.fill",
+                title: petVisibilityActionTitle,
+                symbol: petVisibilityActionSymbol,
                 tint: FPColor.petWarm500
             ) {
                 model.togglePetHidden()
@@ -1048,9 +1048,20 @@ private struct MenuActionGrid: View {
             model.activeBreakSession?.id ?? "no-break",
             model.settings.reminder.pauseUntil.map { String(Int($0.timeIntervalSince1970)) } ?? "reminders-on",
             model.settings.pet.hidden ? "pet-hidden" : "pet-visible",
+            model.hasAvailablePetPacks ? "pet-packs" : "no-pet-packs",
             model.currentStatusDesktopWidgetIsVisible ? "current-widget-visible" : "current-widget-hidden",
             model.recentRhythmDesktopWidgetIsVisible ? "rhythm-widget-visible" : "rhythm-widget-hidden"
         ].joined(separator: "|")
+    }
+
+    private var petVisibilityActionTitle: String {
+        guard model.hasAvailablePetPacks else { return "导入桌宠资源" }
+        return model.settings.pet.hidden ? "显示桌宠" : "隐藏桌宠"
+    }
+
+    private var petVisibilityActionSymbol: String {
+        guard model.hasAvailablePetPacks else { return "square.and.arrow.down" }
+        return model.settings.pet.hidden ? "eye.fill" : "eye.slash.fill"
     }
 }
 
@@ -2432,6 +2443,7 @@ private enum ActivityTimelineWindow: Int, CaseIterable, Hashable, Identifiable {
     case sixHours = 21_600
     case eightHours = 28_800
     case twelveHours = 43_200
+    case twentyFourHours = 86_400
 
     var id: Int { rawValue }
 
@@ -2446,6 +2458,7 @@ private enum ActivityTimelineWindow: Int, CaseIterable, Hashable, Identifiable {
         case .sixHours: "6h"
         case .eightHours: "8h"
         case .twelveHours: "12h"
+        case .twentyFourHours: "24h"
         }
     }
 
@@ -2456,6 +2469,7 @@ private enum ActivityTimelineWindow: Int, CaseIterable, Hashable, Identifiable {
         case .sixHours: "最近 6 小时"
         case .eightHours: "最近 8 小时"
         case .twelveHours: "最近 12 小时"
+        case .twentyFourHours: "最近 24 小时"
         }
     }
 
@@ -2600,7 +2614,7 @@ private struct InputActivityTimelinePanel: View {
                     Spacer(minLength: 10)
 
                     TimelineWindowPicker(selection: $selectedWindow)
-                        .frame(width: 220)
+                        .frame(width: 260)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -2621,7 +2635,7 @@ private struct InputActivityTimelinePanel: View {
                         Spacer(minLength: 12)
 
                         TimelineWindowPicker(selection: $selectedWindow)
-                            .frame(width: 220)
+                            .frame(width: 260)
                     }
 
                     HStack(spacing: 8) {
@@ -4084,13 +4098,21 @@ private struct SlidingSegmentedPicker<Value: Hashable>: View {
                     .padding(.vertical, compact ? 6 : 8)
                     .background {
                         if selected {
-                            FPGlassLayer(
-                                role: .button,
-                                cornerRadius: 7,
-                                tint: option.tint,
-                                isSelected: true,
-                                intensity: 0.96
-                            )
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(option.tint.opacity(0.14))
+                                .overlay {
+                                    FPGlassLayer(
+                                        role: .button,
+                                        cornerRadius: 7,
+                                        tint: option.tint,
+                                        isSelected: true,
+                                        intensity: 1.04
+                                    )
+                                }
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                        .stroke(option.tint.opacity(0.38), lineWidth: 1)
+                                }
                         }
                     }
                     .contentShape(RoundedRectangle(cornerRadius: 7))
@@ -4343,7 +4365,7 @@ struct DistributionView: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 180), spacing: spacing), count: 3), spacing: spacing) {
                     MetricTile(
                         title: "键入估算",
-                        value: "\(FocusPetFormatters.compactCount(model.todayWorkload.estimatedTypedCharacters)) 字",
+                        value: "\(FocusPetFormatters.compactCount(model.todayWorkload.estimatedTypedCharacters)) 次",
                         symbol: "keyboard",
                         tint: DashboardPalette.focusBlue
                     )
@@ -6668,6 +6690,34 @@ private struct DesktopWidgetSettingsPanel: View {
                 }
             }
 
+            VStack(alignment: .leading, spacing: 8) {
+                Text("最近节奏范围")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                SlidingSegmentedPicker(
+                    options: recentRhythmWindowOptions(),
+                    selection: Binding(
+                        get: { model.settings.desktopWidget.recentRhythmWindowHours },
+                        set: { model.setDesktopWidgetRecentRhythmWindowHours($0) }
+                    ),
+                    compact: true
+                )
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("位置模式")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                SlidingSegmentedPicker(
+                    options: movementModeOptions(),
+                    selection: Binding(
+                        get: { model.settings.desktopWidget.movementMode },
+                        set: { model.setDesktopWidgetMovementMode($0) }
+                    ),
+                    compact: true
+                )
+            }
+
             HStack(spacing: 8) {
                 Button {
                     model.showAllDesktopWidgetCards()
@@ -6708,6 +6758,34 @@ private struct DesktopWidgetSettingsPanel: View {
         case .recentRhythm:
             .privacy
         }
+    }
+
+    private func recentRhythmWindowOptions() -> [SlidingSegmentOption<Int>] {
+        DesktopWidgetSettings.supportedRecentRhythmWindowHours.map { hours in
+            SlidingSegmentOption(
+                value: hours,
+                title: "\(hours)h",
+                symbol: "clock",
+                tint: FPColor.focus500
+            )
+        }
+    }
+
+    private func movementModeOptions() -> [SlidingSegmentOption<DesktopWidgetMovementMode>] {
+        [
+            SlidingSegmentOption(
+                value: .fixed,
+                title: "固定位置",
+                symbol: "pin.fill",
+                tint: FPColor.away500
+            ),
+            SlidingSegmentOption(
+                value: .free,
+                title: "自由拖动",
+                symbol: "hand.draw.fill",
+                tint: FPColor.focus500
+            )
+        ]
     }
 }
 
@@ -6855,7 +6933,8 @@ private struct RecognitionSettingsPanel: View {
     }
 
     private func saveCustomJudgment() {
-        selectedPresetOverride = .custom
+        let matchedPreset = JudgmentSensitivityPreset.matching(model.settings.judgment)
+        selectedPresetOverride = matchedPreset == .custom ? .custom : nil
         model.saveSettings()
     }
 }
@@ -6894,12 +6973,10 @@ private struct RecognitionDiagnosticsPanel: View {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 7) {
                     DiagnosticPermissionChip(title: "输入监控", status: diagnostic.inputMonitoringStatus)
-                    DiagnosticPermissionChip(title: "辅助功能", status: diagnostic.accessibilityStatus)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
                     DiagnosticPermissionChip(title: "输入监控", status: diagnostic.inputMonitoringStatus)
-                    DiagnosticPermissionChip(title: "辅助功能", status: diagnostic.accessibilityStatus)
                 }
             }
 
@@ -6987,7 +7064,6 @@ private struct RecognitionDiagnosticSummaryRow: View {
 
     private var allPermissionsAllowed: Bool {
         diagnostic.inputMonitoringStatus == "已允许"
-            && diagnostic.accessibilityStatus == "已允许"
     }
 
     var body: some View {
@@ -7091,6 +7167,13 @@ private struct PetSettingsPanel: View {
     @EnvironmentObject private var model: FocusPetModel
     @State private var selectedIntent: PetIntentKind = .quietCompanion
     @State private var previewSourceActionID: String?
+    private let randomActionOptions: [SlidingSegmentOption<Int>] = [
+        SlidingSegmentOption(value: 30, title: "30 秒", symbol: "timer", tint: FPColor.petWarm500),
+        SlidingSegmentOption(value: 60, title: "1 分钟", symbol: "timer", tint: FPColor.petWarm500),
+        SlidingSegmentOption(value: 90, title: "90 秒", symbol: "timer", tint: FPColor.petWarm500),
+        SlidingSegmentOption(value: 120, title: "2 分钟", symbol: "timer", tint: FPColor.petWarm500),
+        SlidingSegmentOption(value: 300, title: "5 分钟", symbol: "timer", tint: FPColor.petWarm500)
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -7124,6 +7207,7 @@ private struct PetSettingsPanel: View {
                     .foregroundStyle(FPColor.error)
             }
 
+            let hasPetPacks = !model.availablePetPacks.isEmpty
             if let record = model.availablePetPacks.first(where: { $0.id == model.settings.pet.selectedPackID }) {
                 PetPackSummaryView(record: record)
                 IntentActionMappingPanel(
@@ -7140,12 +7224,14 @@ private struct PetSettingsPanel: View {
                     isOn: Binding(
                         get: { !model.settings.pet.hidden },
                         set: { value in
+                            guard hasPetPacks else { return }
                             model.settings.pet.hidden = !value
                             model.saveSettings()
                         }
                     ),
                     status: .rest
                 )
+                .disabled(!hasPetPacks)
                 TogglePillButton(title: "动画", symbol: "sparkles", isOn: $model.settings.pet.animationEnabled, status: .pet)
                     .onChange(of: model.settings.pet.animationEnabled) { _, _ in model.saveSettings() }
                 TogglePillButton(title: "音效", symbol: "speaker.wave.2.fill", isOn: $model.settings.pet.audioEnabled, status: .neutral)
@@ -7153,6 +7239,8 @@ private struct PetSettingsPanel: View {
                 TogglePillButton(title: "悬浮状态弹窗", symbol: "text.bubble.fill", isOn: $model.settings.pet.hoverStatusEnabled, status: .focus)
                     .onChange(of: model.settings.pet.hoverStatusEnabled) { _, _ in model.saveSettings() }
             }
+
+            RandomActionSwitchPanel(options: randomActionOptions)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("位置")
@@ -7178,6 +7266,82 @@ private struct PetSettingsPanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .fpSemanticCard(status: .pet, padding: 12, radius: FPRadius.large)
         .dashboardPetAnchor(.settingsPetPanel)
+    }
+}
+
+private struct RandomActionSwitchPanel: View {
+    @EnvironmentObject private var model: FocusPetModel
+    var options: [SlidingSegmentOption<Int>]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 10) {
+                toggle
+                    .frame(minWidth: 176)
+                intervalPicker
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                toggle
+                intervalPicker
+            }
+        }
+    }
+
+    private var toggle: some View {
+        TogglePillButton(
+            title: "随机换动作",
+            symbol: "shuffle",
+            isOn: $model.settings.pet.randomActionSwitchEnabled,
+            status: .pet
+        )
+        .onChange(of: model.settings.pet.randomActionSwitchEnabled) { _, _ in
+            model.saveSettings()
+        }
+    }
+
+    private var intervalPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("切换间隔", systemImage: "timer")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(model.settings.pet.randomActionSwitchEnabled ? FPColor.textSecondary : FPColor.textTertiary)
+                Spacer(minLength: 0)
+                Text(randomActionIntervalTitle)
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(model.settings.pet.randomActionSwitchEnabled ? DashboardPalette.primaryText : FPColor.textTertiary)
+            }
+            SlidingSegmentedPicker(
+                options: options,
+                selection: Binding(
+                    get: { model.settings.pet.randomActionSwitchSeconds },
+                    set: { seconds in
+                        model.settings.pet.randomActionSwitchSeconds = seconds
+                        model.saveSettings()
+                    }
+                ),
+                compact: true
+            )
+            .disabled(!model.settings.pet.randomActionSwitchEnabled)
+            .opacity(model.settings.pet.randomActionSwitchEnabled ? 1 : 0.48)
+        }
+        .padding(10)
+        .background(FPColor.cardSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(FPColor.petWarm500.opacity(model.settings.pet.randomActionSwitchEnabled ? 0.22 : 0.12), lineWidth: 1)
+        }
+    }
+
+    private var randomActionIntervalTitle: String {
+        let seconds = model.settings.pet.randomActionSwitchSeconds
+        if seconds < 60 {
+            return "\(seconds) 秒"
+        }
+        if seconds % 60 != 0 {
+            return "\(seconds) 秒"
+        }
+        return "\(seconds / 60) 分钟"
     }
 }
 
@@ -7506,12 +7670,6 @@ private struct PermissionSettingsPanel: View {
             canRequest: true
         ),
         PermissionSettingsItem(
-            destination: .accessibility,
-            subtitle: "前台窗口与交互状态",
-            status: .warning,
-            canRequest: false
-        ),
-        PermissionSettingsItem(
             destination: .notifications,
             subtitle: "系统提醒横幅",
             status: .warning,
@@ -7604,8 +7762,6 @@ private struct PermissionSettingsRow: View {
             return "keyboard"
         case .notifications:
             return "bell.badge.fill"
-        case .accessibility:
-            return "figure.wave"
         case .privacySecurity:
             return "lock.shield.fill"
         }
@@ -7789,6 +7945,7 @@ private struct AboutSettingsPanel: View {
 
 private struct PetPackSelectionGrid: View {
     @EnvironmentObject private var model: FocusPetModel
+    @State private var pendingDeletion: PetPackRecord?
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: 188), spacing: 8)]
@@ -7800,10 +7957,55 @@ private struct PetPackSelectionGrid: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(model.availablePetPacks) { record in
-                    PetPackSelectionCard(record: record)
+                if model.availablePetPacks.isEmpty {
+                    HStack(spacing: 10) {
+                        Image(systemName: "tray.and.arrow.down")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(FPColor.textSecondary)
+                            .frame(width: 38, height: 38)
+                            .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("暂无桌宠资源包")
+                                .font(.caption.weight(.semibold))
+                            Text("导入单个 .zip 或包含 pet.json 的文件夹后再显示桌宠")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .frame(minHeight: 54)
+                    .fpInsetCard(status: .neutral)
+                } else {
+                    ForEach(model.availablePetPacks) { record in
+                        PetPackSelectionCard(record: record) {
+                            pendingDeletion = record
+                        }
+                    }
                 }
             }
+        }
+        .confirmationDialog(
+            "删除桌宠资源包？",
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingDeletion = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let pendingDeletion {
+                Button("删除 \(pendingDeletion.pack.name)", role: .destructive) {
+                    model.deletePetPack(pendingDeletion)
+                    self.pendingDeletion = nil
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("会从本机移除已导入副本，并在列表中隐藏同 ID 的随应用资源。重新导入资源包可恢复。")
         }
     }
 }
@@ -7811,35 +8013,51 @@ private struct PetPackSelectionGrid: View {
 private struct PetPackSelectionCard: View {
     @EnvironmentObject private var model: FocusPetModel
     var record: PetPackRecord
+    var onDelete: () -> Void
 
     private var isSelected: Bool {
         model.settings.pet.selectedPackID == record.id
     }
 
     var body: some View {
-        Button {
-            model.settings.pet.selectedPackID = record.id
-            model.saveSettings()
-        } label: {
-            HStack(spacing: 10) {
-                PetPackThumbnail(record: record)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(record.pack.name)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                    Text(record.pack.style)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+        HStack(spacing: 8) {
+            Button {
+                model.selectPetPack(record)
+            } label: {
+                HStack(spacing: 10) {
+                    PetPackThumbnail(record: record)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(record.pack.name)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                        Text(record.pack.style)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(isSelected ? FPColor.rest500 : FPColor.textTertiary)
                 }
-                Spacer(minLength: 0)
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? FPColor.rest500 : FPColor.textTertiary)
             }
-            .frame(minHeight: 54)
-            .fpInsetCard(status: .focus, isSelected: isSelected)
+            .buttonStyle(.plain)
+
+            if model.canDeletePetPack(record) {
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(FPColor.error)
+                        .frame(width: 30, height: 30)
+                        .background(FPColor.error.opacity(0.08), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help("删除资源包")
+            }
         }
-        .buttonStyle(.plain)
+        .frame(minHeight: 54)
+        .fpInsetCard(status: .focus, isSelected: isSelected)
     }
 }
 

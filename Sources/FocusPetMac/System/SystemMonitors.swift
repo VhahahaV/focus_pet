@@ -273,6 +273,7 @@ final class InputActivityMonitor: @unchecked Sendable {
     private var runLoopSource: CFRunLoopSource?
     private var keyboardCount = 0
     private var pointerCount = 0
+    private var lastKeyboardEvent: KeyboardEventFingerprint?
 
     var isRunning: Bool {
         lock.withLock { eventTap != nil }
@@ -324,6 +325,7 @@ final class InputActivityMonitor: @unchecked Sendable {
         eventTap = nil
         keyboardCount = 0
         pointerCount = 0
+        lastKeyboardEvent = nil
         lock.unlock()
 
         if let source {
@@ -358,6 +360,7 @@ final class InputActivityMonitor: @unchecked Sendable {
         lock.withLock {
             keyboardCount = 0
             pointerCount = 0
+            lastKeyboardEvent = nil
         }
     }
 
@@ -365,8 +368,12 @@ final class InputActivityMonitor: @unchecked Sendable {
         switch eventType {
         case .keyDown:
             guard Self.isEstimatedTextInput(event) else { return }
+            let fingerprint = Self.keyboardEventFingerprint(for: event)
             lock.withLock {
-                keyboardCount += 1
+                if !Self.isDuplicateKeyboardEvent(fingerprint, previous: lastKeyboardEvent) {
+                    keyboardCount += 1
+                }
+                lastKeyboardEvent = fingerprint
             }
         case .leftMouseDown,
              .rightMouseDown,
@@ -392,6 +399,10 @@ final class InputActivityMonitor: @unchecked Sendable {
     }
 
     private static func isEstimatedTextInput(_ event: CGEvent) -> Bool {
+        if event.getIntegerValueField(.keyboardEventAutorepeat) != 0 {
+            return false
+        }
+
         let flags = event.flags
         if flags.contains(.maskCommand) || flags.contains(.maskControl) {
             return false
@@ -399,6 +410,40 @@ final class InputActivityMonitor: @unchecked Sendable {
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         return !nonTextKeyCodes.contains(keyCode)
+    }
+
+    private static func keyboardEventFingerprint(for event: CGEvent) -> KeyboardEventFingerprint {
+        let timestamp = event.timestamp == 0 ? DispatchTime.now().uptimeNanoseconds : event.timestamp
+        let textModifierFlags: CGEventFlags = [.maskShift, .maskAlphaShift, .maskAlternate]
+        return KeyboardEventFingerprint(
+            keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+            modifierFlags: event.flags.intersection(textModifierFlags).rawValue,
+            timestamp: timestamp
+        )
+    }
+
+    private static func isDuplicateKeyboardEvent(
+        _ event: KeyboardEventFingerprint,
+        previous: KeyboardEventFingerprint?
+    ) -> Bool {
+        guard let previous,
+              previous.keyCode == event.keyCode,
+              previous.modifierFlags == event.modifierFlags else {
+            return false
+        }
+
+        let elapsed = event.timestamp >= previous.timestamp
+            ? event.timestamp - previous.timestamp
+            : previous.timestamp - event.timestamp
+        return elapsed <= duplicateKeyboardEventThresholdNanoseconds
+    }
+
+    private static let duplicateKeyboardEventThresholdNanoseconds: UInt64 = 12_000_000
+
+    private struct KeyboardEventFingerprint {
+        var keyCode: Int64
+        var modifierFlags: UInt64
+        var timestamp: UInt64
     }
 
     private static let nonTextKeyCodes: Set<Int64> = [

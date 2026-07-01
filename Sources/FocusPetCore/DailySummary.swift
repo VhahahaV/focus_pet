@@ -73,6 +73,7 @@ public struct DailySummaryBuilder: Sendable {
             result, segment in
             result[segment.state, default: 0] += segment.durationSeconds
         }
+        let breakSessionSeconds = Self.breakSessionSeconds(from: breakSessions, bounds: bounds, now: date)
 
         let appUsageInDay = appUsage.filter { overlaps($0.start, $0.end, bounds: bounds) }
         let appSummary = makeAppSummary(from: clipped, appUsage: appUsageInDay)
@@ -82,7 +83,7 @@ public struct DailySummaryBuilder: Sendable {
             date: Self.dateString(from: date),
             focusSeconds: durations[.focus, default: 0],
             distractedSeconds: durations[.distracted, default: 0],
-            breakSeconds: durations[.breakTime, default: 0],
+            breakSeconds: max(durations[.breakTime, default: 0], breakSessionSeconds),
             awaySeconds: durations[.away, default: 0],
             longestFocusSeconds: clipped.filter { $0.state == .focus }.map(\.durationSeconds).max() ?? 0,
             focusSessionCount: focusSessions.filter { overlaps($0.start, $0.end ?? bounds.end, bounds: bounds) }.count,
@@ -93,6 +94,19 @@ public struct DailySummaryBuilder: Sendable {
             appUsage: appSummary,
             categoryUsage: categorySummary
         )
+    }
+
+    private static func breakSessionSeconds(
+        from breakSessions: [BreakSession],
+        bounds: (start: Date, end: Date),
+        now: Date
+    ) -> Int {
+        breakSessions.reduce(0) { total, session in
+            let sessionEnd = min(session.end ?? now, bounds.end)
+            let start = max(session.start, bounds.start)
+            guard sessionEnd > start else { return total }
+            return total + Int(sessionEnd.timeIntervalSince(start))
+        }
     }
 
     private func makeAppSummary(

@@ -12,7 +12,10 @@ public struct PetPackCatalog: Sendable {
         []
     }
 
-    public func availablePacks(userRootURL: URL = PetPackLibrary.defaultInstallRootURL()) -> [PetPackRecord] {
+    public func availablePacks(
+        userRootURL: URL = PetPackLibrary.defaultInstallRootURL(),
+        hiddenPackIDs: Set<String> = []
+    ) -> [PetPackRecord] {
         var result: [PetPackRecord] = []
 
         result.append(contentsOf: records(in: userRootURL, isBundled: false))
@@ -23,7 +26,8 @@ public struct PetPackCatalog: Sendable {
 
         var seen = Set<String>()
         return result.filter { record in
-            guard !seen.contains(record.id) else { return false }
+            guard !hiddenPackIDs.contains(record.id),
+                  !seen.contains(record.id) else { return false }
             seen.insert(record.id)
             return true
         }
@@ -61,7 +65,6 @@ public struct PetPackCatalog: Sendable {
 
     private func localGeneratedPackRoots() -> [URL] {
         let fileManager = FileManager.default
-        let workingDirectory = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
         let environmentRoot = ProcessInfo.processInfo.environment["FOCUS_PET_LOCAL_PACKS_ROOT"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
         let packagedResourceRoot = FocusPetPackagedResources.bundle(
@@ -72,10 +75,6 @@ public struct PetPackCatalog: Sendable {
             Bundle.main.resourceURL?
                 .appendingPathComponent("LocalPetPacks", isDirectory: true),
             packagedResourceRoot?
-                .appendingPathComponent("LocalPetPacks", isDirectory: true),
-            workingDirectory
-                .appendingPathComponent("external_generated_packs", isDirectory: true),
-            workingDirectory
                 .appendingPathComponent("LocalPetPacks", isDirectory: true),
             environmentRoot
         ]

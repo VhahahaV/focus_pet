@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import CoreGraphics
 import Foundation
 import IOKit.hid
@@ -19,7 +18,6 @@ struct SystemPermissionStatus: Equatable, Sendable {
 enum SystemSettingsDestination: String, CaseIterable, Identifiable {
     case inputMonitoring
     case notifications
-    case accessibility
     case privacySecurity
 
     var id: String { rawValue }
@@ -28,7 +26,6 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .inputMonitoring: "输入监控"
         case .notifications: "通知"
-        case .accessibility: "辅助功能"
         case .privacySecurity: "隐私与安全"
         }
     }
@@ -41,8 +38,6 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .inputMonitoring:
             return Self.inputMonitoringStatus()
-        case .accessibility:
-            return Self.accessibilityStatus()
         case .notifications, .privacySecurity:
             return nil
         }
@@ -55,8 +50,6 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
             rawValue = "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
         case .notifications:
             rawValue = "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
-        case .accessibility:
-            rawValue = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         case .privacySecurity:
             rawValue = "x-apple.systempreferences:com.apple.preference.security"
         }
@@ -72,7 +65,7 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .inputMonitoring:
             return IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) || CGRequestListenEventAccess()
-        case .accessibility, .notifications, .privacySecurity:
+        case .notifications, .privacySecurity:
             return nil
         }
     }
@@ -89,18 +82,6 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
 
         if canCreatePassiveInputEventTap() {
             return .permission(true, detail: "已通过输入事件监听确认")
-        }
-
-        return .permission(false, detail: currentAppIdentityHint)
-    }
-
-    private static func accessibilityStatus() -> SystemPermissionStatus {
-        if AXIsProcessTrusted() {
-            return .permission(true)
-        }
-
-        if canReadAccessibilityFocusedApplication() {
-            return .permission(true, detail: "已通过辅助功能读取确认")
         }
 
         return .permission(false, detail: currentAppIdentityHint)
@@ -145,14 +126,4 @@ enum SystemSettingsDestination: String, CaseIterable, Identifiable {
         }
     }
 
-    private static func canReadAccessibilityFocusedApplication() -> Bool {
-        let systemWideElement = AXUIElementCreateSystemWide()
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(
-            systemWideElement,
-            kAXFocusedApplicationAttribute as CFString,
-            &value
-        )
-        return result == .success
-    }
 }

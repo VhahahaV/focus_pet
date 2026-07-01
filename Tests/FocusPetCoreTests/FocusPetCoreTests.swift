@@ -598,7 +598,16 @@ struct FocusPetMVPProbe {
             && settings.customOriginX == nil
             && settings.customOriginY == nil
             && settings.hoverStatusEnabled
+            && settings.randomActionSwitchEnabled
+            && settings.randomActionSwitchSeconds == 90
             && settings.intentSourceActionIDByPack.isEmpty
+    }
+
+    func petSettingsClampRandomActionSwitchInterval() -> Bool {
+        let fast = PetSettings(randomActionSwitchSeconds: 3)
+        let slow = PetSettings(randomActionSwitchSeconds: 2_400)
+        return fast.randomActionSwitchSeconds == 15
+            && slow.randomActionSwitchSeconds == 600
     }
 
     func legacyAppSettingsDefaultJudgmentParameters() -> Bool {
@@ -623,6 +632,8 @@ struct FocusPetMVPProbe {
             && !settings.desktopWidgetVisible
             && !settings.desktopWidget.currentStatusVisible
             && !settings.desktopWidget.recentRhythmVisible
+            && settings.desktopWidget.recentRhythmWindowHours == 4
+            && settings.desktopWidget.movementMode == .free
     }
 
     func legacyDesktopWidgetVisibleMigratesToBothCards() -> Bool {
@@ -651,7 +662,9 @@ struct FocusPetMVPProbe {
                 currentStatusVisible: true,
                 recentRhythmVisible: true,
                 currentStatusOrigin: DesktopWidgetPosition(x: 120, y: 760),
-                recentRhythmOrigin: DesktopWidgetPosition(x: 320, y: 760)
+                recentRhythmOrigin: DesktopWidgetPosition(x: 320, y: 760),
+                recentRhythmWindowHours: 12,
+                movementMode: .fixed
             )
         )
 
@@ -665,6 +678,8 @@ struct FocusPetMVPProbe {
             && settings.desktopWidget.recentRhythmVisible
             && settings.desktopWidget.currentStatusOrigin == DesktopWidgetPosition(x: 120, y: 760)
             && settings.desktopWidget.recentRhythmOrigin == DesktopWidgetPosition(x: 320, y: 760)
+            && settings.desktopWidget.recentRhythmWindowHours == 12
+            && settings.desktopWidget.movementMode == .fixed
     }
 
     func focusSessionReportsCompletionAndDecodesLegacyJSON() -> Bool {
@@ -1344,7 +1359,7 @@ struct FocusPetMVPProbe {
             && summary.totalInputActions == 25
             && summary.totalWorkloadEvents == 30
             && summary.activeMinutes == 2
-            && FocusPetFormatters.estimatedTypedCharacters(summary.estimatedTypedCharacters) == "键入约 20 字"
+            && FocusPetFormatters.estimatedTypedCharacters(summary.estimatedTypedCharacters) == "键入约 20 次"
             && FocusPetFormatters.contextSwitches(summary.contextSwitchCount) == "切换 5 次"
     }
 
@@ -1443,6 +1458,7 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.timelineTracksFourStateTotals(), "daily summary should aggregate all four states")
     precondition(probe.appUsageRankingHidesSystemPseudoAppsButKeepsUnclassifiedApps(), "app usage should hide pseudo system activity but keep unclassified real apps")
     precondition(probe.legacyPetSettingsDefaultToInteractivePlacement(), "legacy pet settings should decode with interaction defaults")
+    precondition(probe.petSettingsClampRandomActionSwitchInterval(), "pet settings should clamp random action switching interval")
     precondition(probe.legacyAppSettingsDefaultJudgmentParameters(), "legacy app settings should decode judgment defaults")
     precondition(probe.legacyDesktopWidgetVisibleMigratesToBothCards(), "legacy desktop widget visibility should migrate to both cards")
     precondition(probe.desktopWidgetVisibilityChangesPreserveStoredOrigins(), "desktop widget visibility changes should preserve stored origins")

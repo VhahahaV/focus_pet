@@ -76,6 +76,8 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
     func show(
         _ kind: DesktopWidgetCardKind,
         snapshot: FocusPetWidgetSnapshot,
+        recentRhythmWindowHours: Int,
+        cardsMovable: Bool,
         preferredOrigin: NSPoint?,
         onMoveEnded: @escaping (NSPoint) -> Void,
         onClose: @escaping () -> Void,
@@ -88,7 +90,11 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
             onClose: nil,
             onCommand: nil
         )
-        record.state.snapshot = snapshot
+        record.state.apply(
+            snapshot: snapshot,
+            recentRhythmWindowHours: recentRhythmWindowHours,
+            cardsMovable: cardsMovable
+        )
         record.onMoveEnded = onMoveEnded
         record.onClose = onClose
         record.onCommand = onCommand
@@ -110,9 +116,18 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
         panel.orderFrontRegardless()
     }
 
-    func update(snapshot: FocusPetWidgetSnapshot, visibleKinds: Set<DesktopWidgetCardKind>) {
+    func update(
+        snapshot: FocusPetWidgetSnapshot,
+        visibleKinds: Set<DesktopWidgetCardKind>,
+        recentRhythmWindowHours: Int,
+        cardsMovable: Bool
+    ) {
         for kind in visibleKinds {
-            records[kind]?.state.snapshot = snapshot
+            records[kind]?.state.apply(
+                snapshot: snapshot,
+                recentRhythmWindowHours: recentRhythmWindowHours,
+                cardsMovable: cardsMovable
+            )
         }
     }
 
@@ -149,6 +164,7 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
         let size = kind.panelSize
         let panel = DesktopWidgetPanel(
             kind: kind,
+            state: state,
             contentRect: NSRect(origin: defaultOrigin(for: kind), size: size),
             styleMask: [.borderless],
             backing: .buffered,
@@ -220,21 +236,24 @@ final class DesktopWidgetPanelController: NSObject, NSWindowDelegate {
 
 private final class DesktopWidgetPanel: NSPanel {
     let kind: DesktopWidgetCardKind
+    private let state: DesktopWidgetPanelState
     var onMoveEnded: ((NSPoint) -> Void)?
     var onCommand: ((DesktopWidgetPanelCommand) -> Void)?
     private var dragStartMouseLocation: NSPoint?
     private var dragStartWindowOrigin: NSPoint?
     private var isDraggingWidget = false
-    private let dragThreshold: CGFloat = 3
+    private let dragThreshold: CGFloat = 1
 
     init(
         kind: DesktopWidgetCardKind,
+        state: DesktopWidgetPanelState,
         contentRect: NSRect,
         styleMask: NSWindow.StyleMask,
         backing: NSWindow.BackingStoreType,
         defer flag: Bool
     ) {
         self.kind = kind
+        self.state = state
         super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
     }
 
@@ -256,9 +275,15 @@ private final class DesktopWidgetPanel: NSPanel {
                 resetDragState()
                 return
             }
-            dragStartMouseLocation = NSEvent.mouseLocation
-            dragStartWindowOrigin = frame.origin
-            isDraggingWidget = false
+            if state.cardsMovable {
+                state.isDragSelected = true
+                dragStartMouseLocation = NSEvent.mouseLocation
+                dragStartWindowOrigin = frame.origin
+                isDraggingWidget = false
+                return
+            }
+            resetDragState()
+            state.isDragSelected = false
             super.sendEvent(event)
         case .leftMouseDragged:
             guard updateDragPosition(mouseLocation: NSEvent.mouseLocation) else {
@@ -266,7 +291,7 @@ private final class DesktopWidgetPanel: NSPanel {
                 return
             }
         case .leftMouseUp:
-            if isDraggingWidget {
+            if state.cardsMovable && state.isDragSelected && isDraggingWidget {
                 onMoveEnded?(frame.origin)
                 resetDragState()
                 return
@@ -282,6 +307,9 @@ private final class DesktopWidgetPanel: NSPanel {
 
     @discardableResult
     private func updateDragPosition(mouseLocation: NSPoint) -> Bool {
+        guard state.cardsMovable, state.isDragSelected else {
+            return false
+        }
         guard let dragStartMouseLocation,
               let dragStartWindowOrigin else {
             return false
@@ -341,6 +369,7 @@ private final class DesktopWidgetPanel: NSPanel {
         guard let box = sender.representedObject as? DesktopWidgetPanelCommandBox else { return }
         onCommand?(box.command)
     }
+
 }
 
 private final class DesktopWidgetPanelCommandBox: NSObject {
@@ -354,9 +383,28 @@ private final class DesktopWidgetPanelCommandBox: NSObject {
 
 private final class DesktopWidgetPanelState: ObservableObject {
     @Published var snapshot: FocusPetWidgetSnapshot
+    @Published var recentRhythmWindowHours: Int
+    @Published var cardsMovable: Bool
+    @Published var isDragSelected: Bool
 
     init(snapshot: FocusPetWidgetSnapshot) {
         self.snapshot = snapshot
+        self.recentRhythmWindowHours = 4
+        self.cardsMovable = true
+        self.isDragSelected = false
+    }
+
+    func apply(
+        snapshot: FocusPetWidgetSnapshot,
+        recentRhythmWindowHours: Int,
+        cardsMovable: Bool
+    ) {
+        self.snapshot = snapshot
+        self.recentRhythmWindowHours = recentRhythmWindowHours
+        self.cardsMovable = cardsMovable
+        if !cardsMovable {
+            isDragSelected = false
+        }
     }
 }
 
@@ -370,6 +418,20 @@ private struct DesktopWidgetPanelView: View {
             .frame(width: kind.cardSize.width, height: kind.cardSize.height)
             .padding(DesktopWidgetCardKind.panelShadowPadding)
             .background(Color.clear)
+            .overlay {
+                if state.isDragSelected {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(Color.black.opacity(0.18))
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay {
+                if state.isDragSelected {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(Color.black.opacity(0.32), lineWidth: 1.2)
+                        .allowsHitTesting(false)
+                }
+            }
             .contentShape(Rectangle())
     }
 
@@ -379,7 +441,11 @@ private struct DesktopWidgetPanelView: View {
         case .currentStatus:
             FocusPetCurrentStatusWidgetView(snapshot: state.snapshot)
         case .recentRhythm:
-            FocusPetRecentRhythmWidgetView(snapshot: state.snapshot, selectedWindowHours: 4)
+            FocusPetRecentRhythmWidgetView(
+                snapshot: state.snapshot,
+                selectedWindowHours: state.recentRhythmWindowHours,
+                showsWindowSwitcher: false
+            )
         }
     }
 }

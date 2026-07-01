@@ -193,7 +193,7 @@ public struct PetRenderState: Hashable, Sendable {
         frameURLs: [],
         framesPerSecond: 8,
         loops: true,
-        hoverIntent: PetIntentKind.welcomeBack,
+        hoverIntent: nil,
         hoverFrameURLs: [],
         hoverFramesPerSecond: 8,
         hoverLoops: false,
@@ -202,7 +202,7 @@ public struct PetRenderState: Hashable, Sendable {
     )
 
     public func displayIntent(isHovering: Bool) -> PetIntentKind {
-        isHovering ? (hoverIntent ?? intent) : intent
+        intent
     }
 
     public func displayAction(isHovering: Bool) -> PetAction {
@@ -210,15 +210,15 @@ public struct PetRenderState: Hashable, Sendable {
     }
 
     public func displayFrameURLs(isHovering: Bool) -> [URL] {
-        isHovering && !hoverFrameURLs.isEmpty ? hoverFrameURLs : frameURLs
+        frameURLs
     }
 
     public func displayFramesPerSecond(isHovering: Bool) -> Double {
-        isHovering && !hoverFrameURLs.isEmpty ? hoverFramesPerSecond : framesPerSecond
+        framesPerSecond
     }
 
     public func displayLoops(isHovering: Bool) -> Bool {
-        isHovering && !hoverFrameURLs.isEmpty ? hoverLoops : loops
+        loops
     }
 
     public func frameURL(at date: Date, isHovering: Bool) -> URL? {
@@ -998,14 +998,6 @@ private struct PetRendererView: View {
             .contentShape(Rectangle())
             .gesture(tapGesture)
             .simultaneousGesture(dragGesture)
-            .overlay(alignment: .center) {
-                if usesHoverPresentation {
-                    Circle()
-                        .stroke(Color.accentColor.opacity(0.22), lineWidth: 3)
-                        .frame(width: renderState.size * 1.08, height: renderState.size * 1.08)
-                        .allowsHitTesting(false)
-                }
-            }
         }
         .frame(width: panelWidth, height: panelHeight, alignment: .bottom)
         .onHover { inside in
@@ -1101,7 +1093,6 @@ private struct PetRendererView: View {
                     .animation(renderState.animationEnabled ? .easeInOut(duration: 0.28) : nil, value: displayIntent)
             }
         }
-        .shadow(color: isHovering ? Color.accentColor.opacity(0.12) : .clear, radius: isHovering ? 3 : 0)
     }
 
     private var tapGesture: some Gesture {

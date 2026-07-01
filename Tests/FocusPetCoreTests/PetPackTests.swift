@@ -201,6 +201,112 @@ struct PetPackMVPProbe {
         }
     }
 
+    func libraryImportsMultiPackZip() -> Bool {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-pack-zip-test-\(UUID().uuidString)", isDirectory: true)
+        let collection = tempRoot.appendingPathComponent("FocusPetLocalPetPacks", isDirectory: true)
+        let install = tempRoot.appendingPathComponent("Installed", isDirectory: true)
+        let archive = tempRoot.appendingPathComponent("FocusPetLocalPetPacks.zip")
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let firstPack = importablePack(id: "zip_pack_a", name: "Zip Pack A")
+        let secondPack = importablePack(id: "zip_pack_b", name: "Zip Pack B")
+
+        do {
+            try writeImportablePack(firstPack, to: collection.appendingPathComponent("ZipPackA", isDirectory: true))
+            try writeImportablePack(secondPack, to: collection.appendingPathComponent("ZipPackB", isDirectory: true))
+            try archiveDirectory(collection, to: archive)
+
+            let imported = try PetPackLibrary(installRootURL: install).importPacks(from: archive)
+            let importedIDs = Set(imported.map(\.record.id))
+            return importedIDs == Set(["zip_pack_a", "zip_pack_b"])
+                && fileManager.fileExists(atPath: install.appendingPathComponent("zip_pack_a/pet.json").path)
+                && fileManager.fileExists(atPath: install.appendingPathComponent("zip_pack_b/pet.json").path)
+        } catch {
+            return false
+        }
+    }
+
+    func libraryImportsSinglePackZip() -> Bool {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-single-pack-zip-test-\(UUID().uuidString)", isDirectory: true)
+        let source = tempRoot.appendingPathComponent("SinglePack", isDirectory: true)
+        let install = tempRoot.appendingPathComponent("Installed", isDirectory: true)
+        let archive = tempRoot.appendingPathComponent("SinglePack.zip")
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let pack = importablePack(id: "single_zip_pack", name: "Single Zip Pack")
+
+        do {
+            try writeImportablePack(pack, to: source)
+            try archiveDirectory(source, to: archive)
+
+            let imported = try PetPackLibrary(installRootURL: install).importPacks(from: archive)
+            return imported.map(\.record.id) == ["single_zip_pack"]
+                && fileManager.fileExists(atPath: install.appendingPathComponent("single_zip_pack/pet.json").path)
+        } catch {
+            return false
+        }
+    }
+
+    func libraryDeletesImportedPack() -> Bool {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-pack-delete-test-\(UUID().uuidString)", isDirectory: true)
+        let source = tempRoot.appendingPathComponent("SourcePack", isDirectory: true)
+        let install = tempRoot.appendingPathComponent("Installed", isDirectory: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let pack = importablePack(id: "delete_test", name: "Delete Test")
+
+        do {
+            try writeImportablePack(pack, to: source)
+            _ = try PetPackLibrary(installRootURL: install).importPack(from: source)
+            try PetPackLibrary(installRootURL: install).deletePack(id: pack.id)
+            let records = PetPackCatalog().availablePacks(userRootURL: install, hiddenPackIDs: [pack.id])
+            return !fileManager.fileExists(atPath: install.appendingPathComponent("delete_test").path)
+                && !records.contains { $0.id == pack.id }
+        } catch {
+            return false
+        }
+    }
+
+    func catalogEmptyAfterDeletingEveryImportedPack() -> Bool {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-delete-all-test-\(UUID().uuidString)", isDirectory: true)
+        let source = tempRoot.appendingPathComponent("Source", isDirectory: true)
+        let install = tempRoot.appendingPathComponent("Installed", isDirectory: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        do {
+            let first = importablePack(id: "delete_all_one", name: "Delete All One")
+            let second = importablePack(id: "delete_all_two", name: "Delete All Two")
+            try writeImportablePack(first, to: source.appendingPathComponent("One", isDirectory: true))
+            try writeImportablePack(second, to: source.appendingPathComponent("Two", isDirectory: true))
+
+            let library = PetPackLibrary(installRootURL: install)
+            let imported = try library.importPacks(from: source)
+            guard Set(imported.map(\.record.id)) == Set(["delete_all_one", "delete_all_two"]) else {
+                return false
+            }
+            try library.deletePack(id: first.id)
+            try library.deletePack(id: second.id)
+
+            let records = PetPackCatalog().availablePacks(
+                userRootURL: install,
+                hiddenPackIDs: [first.id, second.id]
+            )
+            return records.isEmpty
+                && !fileManager.fileExists(atPath: install.appendingPathComponent(first.id).path)
+                && !fileManager.fileExists(atPath: install.appendingPathComponent(second.id).path)
+        } catch {
+            return false
+        }
+    }
+
     func playableActionsDeduplicateIdenticalFolders() -> Bool {
         let pack = PetPack(
             schemaVersion: 1,
@@ -224,6 +330,50 @@ struct PetPackMVPProbe {
         return record.previewSourceActions.map(\.id) == ["default", "up", "down", "sleep"]
             && record.playableSourceActions.map(\.id) == ["default", "sleep"]
     }
+
+    private func importablePack(id: String, name: String) -> PetPack {
+        PetPack(
+            schemaVersion: 1,
+            id: id,
+            name: name,
+            author: "Focus Pet",
+            style: "minimal_2d",
+            license: "original",
+            distribution: "localOnly",
+            defaultSize: PetPackSize(width: 160, height: 160),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
+            animations: [
+                .idle: PetAnimationSpec(folder: "idle", fps: 6, loop: true, frameCount: 1),
+                .sleep: PetAnimationSpec(folder: "sleep", fps: 4, loop: true, frameCount: 1),
+                .nudgeGentle: PetAnimationSpec(folder: "nudgeGentle", fps: 8, loop: false, frameCount: 1),
+                .welcomeBack: PetAnimationSpec(folder: "welcomeBack", fps: 8, loop: false, frameCount: 1),
+                .breakRelax: PetAnimationSpec(folder: "breakRelax", fps: 6, loop: true, frameCount: 1)
+            ]
+        )
+    }
+
+    private func writeImportablePack(_ pack: PetPack, to root: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONEncoder().encode(pack).write(to: root.appendingPathComponent("pet.json"))
+        try Data([0]).write(to: root.appendingPathComponent("preview.png"))
+        for animation in pack.animations.values {
+            let folder = root.appendingPathComponent(animation.folder, isDirectory: true)
+            try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data([0]).write(to: folder.appendingPathComponent("000.png"))
+        }
+    }
+
+    private func archiveDirectory(_ directory: URL, to archive: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-c", "-k", "--keepParent", directory.path, archive.path]
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw PetPackImportError.archiveExtractionFailed("ditto 退出码 \(process.terminationStatus)")
+        }
+    }
 }
 
 private let runPetPackMVPProbe: Void = {
@@ -238,5 +388,9 @@ private let runPetPackMVPProbe: Void = {
     )
     precondition(probe.manifestDecodesOptionalActionAudio(), "pet pack manifest should decode optional action audio")
     precondition(probe.libraryImportsValidPack(), "pet pack library should import valid local packs")
+    precondition(probe.libraryImportsMultiPackZip(), "pet pack library should import a zip containing multiple packs")
+    precondition(probe.libraryImportsSinglePackZip(), "pet pack library should import a zip containing one pack")
+    precondition(probe.libraryDeletesImportedPack(), "pet pack library should delete imported packs")
+    precondition(probe.catalogEmptyAfterDeletingEveryImportedPack(), "pet pack catalog should be empty after every imported pack is deleted")
     precondition(probe.playableActionsDeduplicateIdenticalFolders(), "playable action list should hide duplicate render folders")
 }()

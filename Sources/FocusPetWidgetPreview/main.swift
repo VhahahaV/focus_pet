@@ -66,7 +66,11 @@ private struct FocusPetWidgetPreviewBoard: View {
 
                 HStack(alignment: .top, spacing: 18) {
                     FocusPetCurrentStatusWidgetView(snapshot: snapshot)
-                    FocusPetRecentRhythmWidgetView(snapshot: snapshot, selectedWindowHours: 4)
+                    FocusPetRecentRhythmWidgetView(
+                        snapshot: snapshot,
+                        selectedWindowHours: 4,
+                        showsWindowSwitcher: false
+                    )
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

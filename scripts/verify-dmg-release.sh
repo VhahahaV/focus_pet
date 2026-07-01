@@ -10,6 +10,7 @@ INSTALL_TO=""
 REPLACE_INSTALL=0
 QUARANTINE=1
 EXPECT_LOCAL_TEST_PETS=0
+EXPECT_NO_LOCAL_TEST_PETS=1
 LAUNCHED_EXECUTABLE=""
 REPORT_PATH=""
 EXPECTED_LOCAL_PET_PACK_DIRS=(
@@ -32,6 +33,8 @@ Options:
   --open-smoke            Launch the mounted or installed app and confirm it runs
   --expect-local-test-pets
                           Require bundled LocalPetPacks to contain pet manifests
+  --expect-no-local-test-pets
+                          Require LocalPetPacks to be absent. Default
   --install-to DIR        Copy the app into DIR and verify the copied app
   --replace               Replace an existing app at --install-to
   --no-quarantine         Local mode only: skip downloaded-file simulation
@@ -104,6 +107,16 @@ verify_local_test_pets() {
     echo "Found expected packaged local pet packs: ${EXPECTED_LOCAL_PET_PACK_DIRS[*]}."
 }
 
+verify_no_local_test_pets() {
+    local app_path="$1"
+    local packs_dir="$app_path/Contents/Resources/LocalPetPacks"
+
+    if [[ -e "$packs_dir" ]]; then
+        die "LocalPetPacks is present in a build that should exclude local-only pet assets: $packs_dir"
+    fi
+    echo "Confirmed no bundled LocalPetPacks in app resources."
+}
+
 verify_install_link() {
     local mount_point="$1"
     local link_path="$mount_point/Applications"
@@ -163,6 +176,12 @@ while [[ $# -gt 0 ]]; do
             ;;
         --expect-local-test-pets)
             EXPECT_LOCAL_TEST_PETS=1
+            EXPECT_NO_LOCAL_TEST_PETS=0
+            shift
+            ;;
+        --expect-no-local-test-pets)
+            EXPECT_LOCAL_TEST_PETS=0
+            EXPECT_NO_LOCAL_TEST_PETS=1
             shift
             ;;
         --install-to)
@@ -288,6 +307,8 @@ verify_install_link "$MOUNT_POINT"
 verify_app "$MOUNTED_APP"
 if [[ "$EXPECT_LOCAL_TEST_PETS" -eq 1 ]]; then
     verify_local_test_pets "$MOUNTED_APP"
+elif [[ "$EXPECT_NO_LOCAL_TEST_PETS" -eq 1 ]]; then
+    verify_no_local_test_pets "$MOUNTED_APP"
 fi
 
 LAUNCH_APP="$MOUNTED_APP"
@@ -305,6 +326,8 @@ if [[ -n "$INSTALL_TO" ]]; then
     verify_app "$INSTALLED_APP"
     if [[ "$EXPECT_LOCAL_TEST_PETS" -eq 1 ]]; then
         verify_local_test_pets "$INSTALLED_APP"
+    elif [[ "$EXPECT_NO_LOCAL_TEST_PETS" -eq 1 ]]; then
+        verify_no_local_test_pets "$INSTALLED_APP"
     fi
     LAUNCH_APP="$INSTALLED_APP"
 fi

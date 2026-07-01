@@ -15,10 +15,10 @@ Builds a reproducible local-only Focus Pet DMG and verifies the full local
 packaging chain:
   1. script syntax
   2. release Swift build
-  3. local DMG packaging with exactly the three bundled pet packs
+  3. local DMG packaging with no bundled pet packs
   4. DMG checksum
   5. mounted DMG layout and Finder installer window metadata
-  6. downloaded-copy verifier with exact pet-pack checks
+  6. downloaded-copy verifier confirming pet packs are excluded
   7. installed-copy launch smoke test
 
 Options:
@@ -77,6 +77,7 @@ verify_finder_layout() {
     local report_path="$2"
     local tmp_dir
     local mount_point
+    local background_size
     local status=0
 
     tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/focuspet-finder-layout.XXXXXX")"
@@ -90,16 +91,27 @@ verify_finder_layout() {
         rm -rf "$tmp_dir" >/dev/null 2>&1 || true
         return 1
     fi
+    background_size="$(sips -g pixelWidth -g pixelHeight "$mount_point/.background/background.png" 2>/dev/null | awk '/pixelWidth/ { width = $2 } /pixelHeight/ { height = $2 } END { print width "x" height }')"
+    if [[ "$background_size" != "1440x920" ]]; then
+        echo "DMG background image has unexpected size: $background_size" > "$report_path"
+        hdiutil detach "$mount_point" >/dev/null 2>&1 || hdiutil detach -force "$mount_point" >/dev/null 2>&1 || true
+        rm -rf "$tmp_dir" >/dev/null 2>&1 || true
+        return 1
+    fi
 
     osascript > "$report_path" <<OSA || status=$?
 tell application "Finder"
     activate
     set dmgFolder to (POSIX file "$mount_point") as alias
-    set dmgPath to POSIX path of dmgFolder
     open dmgFolder
-    delay 0.8
-    set dmgWindow to container window of dmgFolder
-    if POSIX path of ((target of dmgWindow) as alias) is not dmgPath then error "Finder opened the wrong DMG target"
+    repeat with windowAttempt from 1 to 10
+        delay 0.3
+        try
+            set dmgWindow to container window of dmgFolder
+            exit repeat
+        end try
+        if windowAttempt is 10 then error "Finder did not open the Focus Pet Installer window"
+    end repeat
     repeat with attempt from 1 to 5
         set currentDmgView to current view of dmgWindow
         set viewOptions to icon view options of dmgWindow
@@ -117,7 +129,7 @@ tell application "Finder"
     if position of item "Applications" of dmgFolder is not {510, 230} then error "Applications icon position is wrong"
     close dmgWindow
 end tell
-return "Finder layout passed for $dmg_path; background.png exists; app icon at {210, 230}; Applications icon at {510, 230}"
+return "Finder layout passed for $dmg_path; background.png is 1440x920 Retina; app icon at {210, 230}; Applications icon at {510, 230}"
 OSA
 
     hdiutil detach "$mount_point" >/dev/null 2>&1 || hdiutil detach -force "$mount_point" >/dev/null 2>&1 || true
@@ -136,7 +148,7 @@ PACKAGE_OUTPUT="$(
     scripts/package-dmg.sh \
         --local \
         --build "$BUILD_NUMBER" \
-        --include-local-test-pets \
+        --exclude-local-test-pets \
         "${ARCH_ARGS[@]}"
 )"
 printf '%s\n' "$PACKAGE_OUTPUT"
@@ -154,8 +166,8 @@ fi
 echo "Verifying DMG checksum..."
 hdiutil verify "$FINAL_DMG"
 
-echo "Verifying mounted DMG and exact local pet packs..."
-scripts/verify-dmg-release.sh --local --expect-local-test-pets "$FINAL_DMG"
+echo "Verifying mounted DMG excludes local pet packs..."
+scripts/verify-dmg-release.sh --local --expect-no-local-test-pets "$FINAL_DMG"
 
 FINDER_REPORT="$FINAL_DMG.finder-layout.txt"
 echo "Verifying Finder installer layout..."
@@ -170,7 +182,7 @@ if [[ "$OPEN_SMOKE" -eq 1 ]]; then
         --local \
         --no-quarantine \
         --open-smoke \
-        --expect-local-test-pets \
+        --expect-no-local-test-pets \
         --install-to "$INSTALL_SMOKE_DIR" \
         --replace \
         --report "$FINAL_DMG.install-open-smoke.txt" \

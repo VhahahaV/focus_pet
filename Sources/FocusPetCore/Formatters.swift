@@ -47,7 +47,7 @@ public enum FocusPetFormatters {
     }
 
     public static func estimatedTypedCharacters(_ value: Int) -> String {
-        "键入约 \(compactCount(value)) 字"
+        "键入约 \(compactCount(value)) 次"
     }
 
     public static func pointerActions(_ value: Int) -> String {

@@ -54,7 +54,7 @@ The script performs the release gates in order:
   `--configuration release` by default;
 - creates a stable `Focus Pet.app` bundle;
 - places SwiftPM resource bundles under `Contents/Resources`;
-- excludes `external_generated_packs` by default in distribution mode so
+- excludes `external_generated_packs` and `LocalPetPacks` by default so
   local-only or third-party test pet assets are not redistributed accidentally;
 - signs the app with hardened runtime;
 - verifies the embedded WidgetKit extension as gallery-ready, which requires
@@ -88,8 +88,9 @@ scripts/build-verified-local-dmg.sh
 ```
 
 This script builds a timestamped local DMG, checks the release build, verifies
-the mounted app, confirms the Finder installer window metadata, requires exactly
-the three bundled local pet packs, and runs an installed-copy launch smoke test.
+the mounted app, confirms the Finder installer window metadata, requires that
+no local pet packs are bundled in the app, and runs an installed-copy launch
+smoke test.
 
 Build a local-only DMG:
 
@@ -97,16 +98,23 @@ Build a local-only DMG:
 scripts/package-dmg.sh --local
 ```
 
-Local mode includes exactly these three bundled local pet packs by default:
+Local mode excludes pet packs by default, matching the distribution asset
+policy. Build the separate resource zip folder when you want to hand pet packs
+to users for optional import:
+
+```bash
+scripts/build-local-pet-packs.py
+```
+
+This writes individual archives under `dist/local/PetPacks/`, including:
 
 - `LuoXiaoHeiLocal`
 - `PixelCatMemeLocal`
 - `XiaoDaiLocal`
+- `UNIkeNLocal.zip` when `dist/local/UNIkeNLocal.zip` exists
 
-Both packaging and verification fail if any of these packs is missing from the
-bundle or if an unexpected extra pack is bundled. Pass
-`--exclude-local-test-pets` only when you need a local DMG that mirrors the
-distribution asset policy exactly.
+Pass `--include-local-test-pets` only for internal smoke testing of bundled
+resource behavior; user-facing DMGs should not use that flag.
 
 Pass `--native` only for fast local iteration. Uploadable builds should keep the
 default universal executable so Apple Silicon and Intel Macs are both covered.
@@ -159,6 +167,22 @@ The DMG volume contains:
 
 - `Focus Pet.app`
 - `Applications -> /Applications`
+
+The Finder installer window uses a compact drag-and-drop layout with a
+pre-rendered Retina background:
+
+```text
+scripts/dmg-assets/background.png
+```
+
+Regenerate it after visual changes with:
+
+```bash
+swift scripts/dmg-assets/render-background.swift scripts/dmg-assets/background.png "$PWD"
+```
+
+The packaging and local verification scripts require this image to be
+`1440x920`, matching the `720x460` Finder window at 2x scale.
 
 Repeated drag installs target:
 

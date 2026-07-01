@@ -384,20 +384,8 @@ public struct PetPackRecord: Identifiable, Codable, Hashable, Sendable {
         let actions = playableSourceActions
         guard !actions.isEmpty else { return nil }
 
-        let normalizedPreferred = intent.preferredSourceActionIDs.map(Self.normalizedActionKey)
-        for preferred in normalizedPreferred {
-            if let exact = actions.first(where: { Self.normalizedActionKey($0.id) == preferred }) {
-                return exact
-            }
-        }
-
-        for preferred in normalizedPreferred {
-            if let titleMatch = actions.first(where: {
-                Self.normalizedActionKey($0.title).contains(preferred)
-                    || preferred.contains(Self.normalizedActionKey($0.title))
-            }) {
-                return titleMatch
-            }
+        if let preferred = preferredSourceActions(for: intent).first {
+            return preferred
         }
 
         switch intent {
@@ -414,6 +402,39 @@ public struct PetPackRecord: Identifiable, Codable, Hashable, Sendable {
         default:
             return actions.first
         }
+    }
+
+    public func randomizableSourceActions(
+        for intent: PetIntentKind,
+        mappedSourceActionID: String?
+    ) -> [PetSourceActionSpec] {
+        let playableActions = playableSourceActions
+        guard !playableActions.isEmpty else { return [] }
+
+        var candidates = preferredSourceActions(for: intent).filter(\.loop)
+        if let mappedSourceActionID,
+           let mapped = sourceAction(id: mappedSourceActionID),
+           !frameURLs(forSourceActionID: mapped.id).isEmpty,
+           mapped.loop {
+            candidates.insert(mapped, at: 0)
+        }
+
+        let deduplicated = deduplicatedSourceActions(candidates)
+        if deduplicated.count >= 2 {
+            return deduplicated
+        }
+
+        if intent == .quietCompanion, !pack.idleSourceActionIDs.isEmpty {
+            let idleCandidates = idleSourceActions.filter {
+                $0.loop && !frameURLs(forSourceActionID: $0.id).isEmpty
+            }
+            let deduplicatedIdle = deduplicatedSourceActions(idleCandidates)
+            if deduplicatedIdle.count >= 2 {
+                return deduplicatedIdle
+            }
+        }
+
+        return deduplicated.isEmpty ? [defaultSourceAction(for: intent)].compactMap { $0 } : deduplicated
     }
 
     public func sourceAction(
@@ -447,6 +468,29 @@ public struct PetPackRecord: Identifiable, Codable, Hashable, Sendable {
         }
 
         return PetPackFrameURLCache.frameURLs(rootURL: rootURL, folder: folder)
+    }
+
+    private func preferredSourceActions(for intent: PetIntentKind) -> [PetSourceActionSpec] {
+        let actions = playableSourceActions
+        guard !actions.isEmpty else { return [] }
+
+        let normalizedPreferred = intent.preferredSourceActionIDs.map(Self.normalizedActionKey)
+        var matches: [PetSourceActionSpec] = []
+
+        for preferred in normalizedPreferred {
+            matches.append(contentsOf: actions.filter {
+                Self.normalizedActionKey($0.id) == preferred
+            })
+        }
+
+        for preferred in normalizedPreferred {
+            matches.append(contentsOf: actions.filter {
+                Self.normalizedActionKey($0.title).contains(preferred)
+                    || preferred.contains(Self.normalizedActionKey($0.title))
+            })
+        }
+
+        return deduplicatedSourceActions(matches)
     }
 
     private func deduplicatedSourceActions(_ actions: [PetSourceActionSpec]) -> [PetSourceActionSpec] {
