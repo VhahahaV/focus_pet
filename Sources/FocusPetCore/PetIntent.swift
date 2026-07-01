@@ -48,6 +48,18 @@ public enum PetIntentKind: String, Codable, Hashable, Sendable, CaseIterable, Id
         .sleep
     ]
 
+    public static let advancedMappingCases: [PetIntentKind] = [
+        .welcomeBack,
+        .mouseSummon,
+        .dragged,
+        .landing,
+        .moveLeft,
+        .moveRight,
+        .moveUp,
+        .moveDown,
+        .dashboardGuide
+    ]
+
     public var title: String {
         switch self {
         case .quietCompanion: "安静陪伴"

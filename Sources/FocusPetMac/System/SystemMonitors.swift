@@ -274,6 +274,9 @@ final class InputActivityMonitor: @unchecked Sendable {
     private var keyboardCount = 0
     private var pointerCount = 0
     private var lastKeyboardEvent: KeyboardEventFingerprint?
+    private var pressedTextKeys: [PressedTextKey: UInt64] = [:]
+    private var lastFallbackKeyboardBucket: Int64?
+    private var lastFallbackPointerBucket: Int64?
 
     var isRunning: Bool {
         lock.withLock { eventTap != nil }
@@ -287,6 +290,7 @@ final class InputActivityMonitor: @unchecked Sendable {
 
         let mask = Self.eventMask(for: [
             .keyDown,
+            .keyUp,
             .leftMouseDown,
             .rightMouseDown,
             .otherMouseDown
@@ -326,6 +330,9 @@ final class InputActivityMonitor: @unchecked Sendable {
         keyboardCount = 0
         pointerCount = 0
         lastKeyboardEvent = nil
+        pressedTextKeys = [:]
+        lastFallbackKeyboardBucket = nil
+        lastFallbackPointerBucket = nil
         lock.unlock()
 
         if let source {
@@ -338,19 +345,21 @@ final class InputActivityMonitor: @unchecked Sendable {
 
     func drainCounts(fallbackWindowSeconds: TimeInterval?) -> InputEventCounts {
         var counts: InputEventCounts
+        let shouldUseFallback: Bool
         lock.lock()
         counts = InputEventCounts(keyboardCount: keyboardCount, pointerCount: pointerCount)
         keyboardCount = 0
         pointerCount = 0
+        shouldUseFallback = eventTap == nil
         lock.unlock()
 
-        if let fallbackWindowSeconds {
+        if shouldUseFallback, let fallbackWindowSeconds {
             let fallback = IdleMonitor.fallbackInputCounts(seconds: fallbackWindowSeconds)
             if counts.keyboardCount == 0 {
-                counts.keyboardCount = fallback.keyboardCount
+                counts.keyboardCount = throttledFallbackKeyboardCount(fallback.keyboardCount)
             }
             if counts.pointerCount == 0 {
-                counts.pointerCount = fallback.pointerCount
+                counts.pointerCount = throttledFallbackPointerCount(fallback.pointerCount)
             }
         }
         return counts
@@ -361,6 +370,9 @@ final class InputActivityMonitor: @unchecked Sendable {
             keyboardCount = 0
             pointerCount = 0
             lastKeyboardEvent = nil
+            pressedTextKeys = [:]
+            lastFallbackKeyboardBucket = nil
+            lastFallbackPointerBucket = nil
         }
     }
 
@@ -369,11 +381,24 @@ final class InputActivityMonitor: @unchecked Sendable {
         case .keyDown:
             guard Self.isEstimatedTextInput(event) else { return }
             let fingerprint = Self.keyboardEventFingerprint(for: event)
+            let pressedKey = Self.pressedTextKey(for: event)
             lock.withLock {
-                if !Self.isDuplicateKeyboardEvent(fingerprint, previous: lastKeyboardEvent) {
+                let isAlreadyPressed = Self.isPressedTextKeyStillDown(
+                    pressedKey,
+                    at: fingerprint.timestamp,
+                    pressedTextKeys: pressedTextKeys
+                )
+                if !isAlreadyPressed,
+                   !Self.isDuplicateKeyboardEvent(fingerprint, previous: lastKeyboardEvent) {
                     keyboardCount += 1
                 }
+                pressedTextKeys[pressedKey] = fingerprint.timestamp
                 lastKeyboardEvent = fingerprint
+            }
+        case .keyUp:
+            let pressedKey = Self.pressedTextKey(for: event)
+            lock.withLock {
+                _ = pressedTextKeys.removeValue(forKey: pressedKey)
             }
         case .leftMouseDown,
              .rightMouseDown,
@@ -422,6 +447,52 @@ final class InputActivityMonitor: @unchecked Sendable {
         )
     }
 
+    private static func pressedTextKey(for event: CGEvent) -> PressedTextKey {
+        PressedTextKey(
+            keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+            keyboardType: event.getIntegerValueField(.keyboardEventKeyboardType)
+        )
+    }
+
+    private static func isPressedTextKeyStillDown(
+        _ key: PressedTextKey,
+        at timestamp: UInt64,
+        pressedTextKeys: [PressedTextKey: UInt64]
+    ) -> Bool {
+        guard let previousTimestamp = pressedTextKeys[key] else {
+            return false
+        }
+
+        let elapsed = timestamp >= previousTimestamp
+            ? timestamp - previousTimestamp
+            : previousTimestamp - timestamp
+        return elapsed <= maxPressedKeyDurationNanoseconds
+    }
+
+    private func throttledFallbackKeyboardCount(_ count: Int) -> Int {
+        throttledFallbackCount(count) { bucket in
+            let shouldRecord = lastFallbackKeyboardBucket != bucket
+            lastFallbackKeyboardBucket = bucket
+            return shouldRecord
+        }
+    }
+
+    private func throttledFallbackPointerCount(_ count: Int) -> Int {
+        throttledFallbackCount(count) { bucket in
+            let shouldRecord = lastFallbackPointerBucket != bucket
+            lastFallbackPointerBucket = bucket
+            return shouldRecord
+        }
+    }
+
+    private func throttledFallbackCount(_ count: Int, markBucket: (Int64) -> Bool) -> Int {
+        guard count > 0 else { return 0 }
+        let bucket = Int64(Date().timeIntervalSince1970 / Self.fallbackBucketSeconds)
+        return lock.withLock {
+            markBucket(bucket) ? 1 : 0
+        }
+    }
+
     private static func isDuplicateKeyboardEvent(
         _ event: KeyboardEventFingerprint,
         previous: KeyboardEventFingerprint?
@@ -439,6 +510,8 @@ final class InputActivityMonitor: @unchecked Sendable {
     }
 
     private static let duplicateKeyboardEventThresholdNanoseconds: UInt64 = 12_000_000
+    private static let maxPressedKeyDurationNanoseconds: UInt64 = 30_000_000_000
+    private static let fallbackBucketSeconds: TimeInterval = 60
 
     private struct KeyboardEventFingerprint {
         var keyCode: Int64
@@ -446,9 +519,16 @@ final class InputActivityMonitor: @unchecked Sendable {
         var timestamp: UInt64
     }
 
+    private struct PressedTextKey: Hashable {
+        var keyCode: Int64
+        var keyboardType: Int64
+    }
+
     private static let nonTextKeyCodes: Set<Int64> = [
-        36, 48, 51, 53, 71, 76, 114, 115, 116, 117, 118, 119, 120, 121,
-        122, 123, 124, 125, 126
+        36, 48, 51, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+        64, 71, 72, 73, 74, 76, 79, 80, 90, 96, 97, 98, 99, 100,
+        101, 103, 105, 107, 109, 111, 113, 114, 115, 116, 117,
+        118, 119, 120, 121, 122, 123, 124, 125, 126
     ]
 }
 

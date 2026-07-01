@@ -610,6 +610,28 @@ struct FocusPetMVPProbe {
             && slow.randomActionSwitchSeconds == 600
     }
 
+    func petSettingsClampSizeToDesktopFriendlyRange() -> Bool {
+        let tiny = PetSettings(size: 24)
+        let huge = PetSettings(size: 320)
+        return tiny.size == PetSettings.minSize
+            && huge.size == PetSettings.maxSize
+    }
+
+    func petIntentMappingCasesExposeAdvancedInteractions() -> Bool {
+        let advanced = Set(PetIntentKind.advancedMappingCases)
+        return advanced.isSuperset(of: [
+            .dragged,
+            .landing,
+            .mouseSummon,
+            .moveLeft,
+            .moveRight,
+            .moveUp,
+            .moveDown,
+            .dashboardGuide
+        ])
+            && Set(PetIntentKind.userMappingCases).isDisjoint(with: advanced)
+    }
+
     func legacyAppSettingsDefaultJudgmentParameters() -> Bool {
         let legacyJSON = """
         {
@@ -1459,6 +1481,8 @@ private let runFocusPetMVPProbe: Void = {
     precondition(probe.appUsageRankingHidesSystemPseudoAppsButKeepsUnclassifiedApps(), "app usage should hide pseudo system activity but keep unclassified real apps")
     precondition(probe.legacyPetSettingsDefaultToInteractivePlacement(), "legacy pet settings should decode with interaction defaults")
     precondition(probe.petSettingsClampRandomActionSwitchInterval(), "pet settings should clamp random action switching interval")
+    precondition(probe.petSettingsClampSizeToDesktopFriendlyRange(), "pet settings should clamp size to desktop friendly range")
+    precondition(probe.petIntentMappingCasesExposeAdvancedInteractions(), "pet intent mapping cases should expose advanced interaction intents")
     precondition(probe.legacyAppSettingsDefaultJudgmentParameters(), "legacy app settings should decode judgment defaults")
     precondition(probe.legacyDesktopWidgetVisibleMigratesToBothCards(), "legacy desktop widget visibility should migrate to both cards")
     precondition(probe.desktopWidgetVisibilityChangesPreserveStoredOrigins(), "desktop widget visibility changes should preserve stored origins")

@@ -411,29 +411,22 @@ public struct PetPackRecord: Identifiable, Codable, Hashable, Sendable {
         let playableActions = playableSourceActions
         guard !playableActions.isEmpty else { return [] }
 
-        var candidates = preferredSourceActions(for: intent).filter(\.loop)
+        var candidates: [PetSourceActionSpec] = []
         if let mappedSourceActionID,
            let mapped = sourceAction(id: mappedSourceActionID),
            !frameURLs(forSourceActionID: mapped.id).isEmpty,
            mapped.loop {
-            candidates.insert(mapped, at: 0)
+            candidates.append(mapped)
         }
+
+        candidates.append(contentsOf: preferredSourceActions(for: intent).filter(\.loop))
+
+        let loopActions = playableActions.filter {
+            $0.loop && !frameURLs(forSourceActionID: $0.id).isEmpty
+        }
+        candidates.append(contentsOf: loopActions)
 
         let deduplicated = deduplicatedSourceActions(candidates)
-        if deduplicated.count >= 2 {
-            return deduplicated
-        }
-
-        if intent == .quietCompanion, !pack.idleSourceActionIDs.isEmpty {
-            let idleCandidates = idleSourceActions.filter {
-                $0.loop && !frameURLs(forSourceActionID: $0.id).isEmpty
-            }
-            let deduplicatedIdle = deduplicatedSourceActions(idleCandidates)
-            if deduplicatedIdle.count >= 2 {
-                return deduplicatedIdle
-            }
-        }
-
         return deduplicated.isEmpty ? [defaultSourceAction(for: intent)].compactMap { $0 } : deduplicated
     }
 

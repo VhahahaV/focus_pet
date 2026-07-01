@@ -331,6 +331,61 @@ struct PetPackMVPProbe {
             && record.playableSourceActions.map(\.id) == ["default", "sleep"]
     }
 
+    func randomizableActionsIncludeEveryPlayableLoopAction() -> Bool {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory
+            .appendingPathComponent("focus-pet-random-actions-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let sourceActions = [
+            PetSourceActionSpec(id: "default", title: "default", folder: "default", fps: 5, loop: true, frameCount: 1),
+            PetSourceActionSpec(id: "focus", title: "focus", folder: "focus", fps: 5, loop: true, frameCount: 1),
+            PetSourceActionSpec(id: "sleep", title: "sleep", folder: "sleep", fps: 5, loop: true, frameCount: 1)
+        ] + (1...10).map { index in
+            PetSourceActionSpec(
+                id: "action\(index)",
+                title: "Action \(index)",
+                folder: "action\(index)",
+                fps: 5,
+                loop: true,
+                frameCount: 1
+            )
+        } + [
+            PetSourceActionSpec(id: "wave", title: "Wave", folder: "wave", fps: 5, loop: false, frameCount: 1)
+        ]
+
+        let pack = PetPack(
+            schemaVersion: 1,
+            id: "wide_random_pack",
+            name: "Wide Random Pack",
+            author: "Focus Pet",
+            style: "pixel",
+            license: "local",
+            distribution: "localOnly",
+            defaultSize: PetPackSize(width: 128, height: 128),
+            anchor: PetPackAnchor(x: 0.5, y: 1.0),
+            animations: [:],
+            sourceActions: sourceActions
+        )
+
+        do {
+            try writeSourceActionFrames(for: pack, to: root)
+            let record = PetPackRecord(pack: pack, rootURL: root, isBundled: false)
+            let actions = record.randomizableSourceActions(
+                for: .quietCompanion,
+                mappedSourceActionID: "action8"
+            )
+            let actionIDs = actions.map(\.id)
+            let expectedLoopIDs = Set(sourceActions.filter(\.loop).map(\.id))
+            return actionIDs.first == "action8"
+                && Set(actionIDs) == expectedLoopIDs
+                && !actionIDs.contains("wave")
+                && actions.count == expectedLoopIDs.count
+        } catch {
+            return false
+        }
+    }
+
     private func importablePack(id: String, name: String) -> PetPack {
         PetPack(
             schemaVersion: 1,
@@ -359,6 +414,16 @@ struct PetPackMVPProbe {
         try Data([0]).write(to: root.appendingPathComponent("preview.png"))
         for animation in pack.animations.values {
             let folder = root.appendingPathComponent(animation.folder, isDirectory: true)
+            try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data([0]).write(to: folder.appendingPathComponent("000.png"))
+        }
+    }
+
+    private func writeSourceActionFrames(for pack: PetPack, to root: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        for action in pack.sourceActions {
+            let folder = root.appendingPathComponent(action.folder, isDirectory: true)
             try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
             try Data([0]).write(to: folder.appendingPathComponent("000.png"))
         }
@@ -393,4 +458,5 @@ private let runPetPackMVPProbe: Void = {
     precondition(probe.libraryDeletesImportedPack(), "pet pack library should delete imported packs")
     precondition(probe.catalogEmptyAfterDeletingEveryImportedPack(), "pet pack catalog should be empty after every imported pack is deleted")
     precondition(probe.playableActionsDeduplicateIdenticalFolders(), "playable action list should hide duplicate render folders")
+    precondition(probe.randomizableActionsIncludeEveryPlayableLoopAction(), "random action list should include every playable looping source action")
 }()

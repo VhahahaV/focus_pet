@@ -239,6 +239,8 @@ public struct JudgmentSettings: Codable, Hashable, Sendable {
 
 public struct PetSettings: Codable, Hashable, Sendable {
     public static let defaultSelectedPackID = ""
+    public static let minSize: Double = 64
+    public static let maxSize: Double = 220
 
     public var opacity: Double
     public var size: Double
@@ -274,7 +276,7 @@ public struct PetSettings: Codable, Hashable, Sendable {
         hiddenPackIDs: Set<String> = []
     ) {
         self.opacity = min(1, max(0.35, opacity))
-        self.size = min(260, max(96, size))
+        self.size = min(Self.maxSize, max(Self.minSize, size))
         self.animationEnabled = animationEnabled
         self.audioEnabled = audioEnabled
         self.hidden = hidden

@@ -2556,6 +2556,35 @@ private func todayWindowClippedSeconds(start: Date, end: Date, bounds: (start: D
     max(0, Int(min(end, bounds.end).timeIntervalSince(max(start, bounds.start)).rounded()))
 }
 
+private func todayWindowIncludedSeconds(
+    start: Date,
+    end: Date,
+    bounds: (start: Date, end: Date),
+    calendar: Calendar,
+    includedDate: ((Date) -> Bool)?
+) -> Int {
+    guard let includedDate else {
+        return todayWindowClippedSeconds(start: start, end: end, bounds: bounds)
+    }
+
+    let clippedStart = max(start, bounds.start)
+    let clippedEnd = min(end, bounds.end)
+    guard clippedEnd > clippedStart else { return 0 }
+
+    var cursor = clippedStart
+    var seconds = 0
+    while cursor < clippedEnd {
+        let dayStart = calendar.startOfDay(for: cursor)
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart.addingTimeInterval(86_400)
+        let next = min(dayEnd, clippedEnd)
+        if includedDate(cursor) {
+            seconds += max(0, Int(next.timeIntervalSince(cursor).rounded()))
+        }
+        cursor = next
+    }
+    return seconds
+}
+
 private func todayWindowNormalizedCategory(_ category: ActivityCategory) -> ActivityCategory {
     category == .neutral ? .ignore : category
 }
@@ -4664,7 +4693,9 @@ private struct AppUsageDisplayItem: Identifiable {
     static func windowed(
         from stateSegments: [StateSegment],
         appUsage: [AppUsageSegment],
-        bounds: (start: Date, end: Date)
+        bounds: (start: Date, end: Date),
+        calendar: Calendar = Calendar(identifier: .gregorian),
+        includedDate: ((Date) -> Bool)? = nil
     ) -> [AppUsageDisplayItem] {
         struct Accumulator {
             var appName: String
@@ -4678,7 +4709,13 @@ private struct AppUsageDisplayItem: Identifiable {
         var grouped: [String: Accumulator] = [:]
         for usage in appUsage where todayWindowOverlaps(usage.start, usage.end, bounds: bounds) {
             let category = todayWindowNormalizedCategory(usage.category)
-            let seconds = todayWindowClippedSeconds(start: usage.start, end: usage.end, bounds: bounds)
+            let seconds = todayWindowIncludedSeconds(
+                start: usage.start,
+                end: usage.end,
+                bounds: bounds,
+                calendar: calendar,
+                includedDate: includedDate
+            )
             guard seconds > 0,
                   !todayWindowIsHiddenSystemUsage(appName: usage.appName, bundleID: usage.bundleID) else { continue }
             let key = todayWindowAppKey(appName: usage.appName, bundleID: usage.bundleID)
@@ -4692,7 +4729,13 @@ private struct AppUsageDisplayItem: Identifiable {
 
         for segment in orderedStateSegments(stateSegments) where todayWindowOverlaps(segment.start, segment.end, bounds: bounds) {
             let category = todayWindowNormalizedCategory(segment.category)
-            let seconds = todayWindowClippedSeconds(start: segment.start, end: segment.end, bounds: bounds)
+            let seconds = todayWindowIncludedSeconds(
+                start: segment.start,
+                end: segment.end,
+                bounds: bounds,
+                calendar: calendar,
+                includedDate: includedDate
+            )
             guard seconds > 0,
                   !todayWindowIsHiddenSystemUsage(appName: segment.appName, bundleID: segment.bundleID) else { continue }
             let key = todayWindowAppKey(appName: segment.appName, bundleID: segment.bundleID)
@@ -4933,7 +4976,11 @@ struct SessionsView: View {
     @EnvironmentObject private var model: FocusPetModel
 
     var body: some View {
-        let historyData = SessionsHistoryData(segments: model.stateSegments)
+        let historyData = SessionsHistoryData(
+            segments: model.stateSegments,
+            appUsage: model.appUsage,
+            inputActivity: model.inputActivity
+        )
 
         ScrollView {
             VStack(alignment: .leading, spacing: DashboardLayout.cardGap) {
@@ -4941,7 +4988,7 @@ struct SessionsView: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .zIndex(10)
 
-                FocusHistorySegmentsPanel(snapshot: historyData.workTimeline)
+                ActivityHistoryPanel(snapshot: historyData.activity)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .zIndex(0)
             }
@@ -4952,12 +4999,22 @@ struct SessionsView: View {
 
 private struct SessionsHistoryData {
     var snapshot: AttentionHistorySnapshot
-    var workTimeline: WorkTimelineSnapshot
+    var activity: ActivityHistoryCollection
 
-    init(segments: [StateSegment], now: Date = Date()) {
+    init(
+        segments: [StateSegment],
+        appUsage: [AppUsageSegment],
+        inputActivity: [InputActivityBucket],
+        now: Date = Date()
+    ) {
         let orderedSegments = orderedStateSegments(segments)
         snapshot = AttentionHistorySnapshot(orderedSegments: orderedSegments, now: now)
-        workTimeline = WorkTimelineSnapshot(orderedSegments: orderedSegments, now: now)
+        activity = ActivityHistoryCollection(
+            orderedSegments: orderedSegments,
+            appUsage: appUsage,
+            inputActivity: inputActivity,
+            now: now
+        )
     }
 }
 
@@ -5894,502 +5951,976 @@ private struct HeatmapLegend: View {
     }
 }
 
-private typealias WorkTimelineSnapshot = RecentWorkTimelineSnapshot
-private typealias WorkTimelineInterval = FocusPetCore.WorkTimelineInterval
-private typealias WorkTimelineRange = FocusPetCore.WorkTimelineRange
+private enum ActivityHistoryRange: Int, CaseIterable, Identifiable, Hashable {
+    case threeDays = 3
+    case sevenDays = 7
+    case fifteenDays = 15
+    case thirtyDays = 30
+    case sixtyDays = 60
 
-private struct FocusHistorySegmentsPanel: View {
-    var snapshot: WorkTimelineSnapshot
+    var id: Int { rawValue }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center) {
-                Label("近24小时工作段", systemImage: "waveform.path.ecg")
-                    .font(.headline.weight(.semibold))
-                Spacer()
-                StatusPill(statusCaption, symbol: "number")
+    var title: String {
+        switch self {
+        case .threeDays: "3天"
+        case .sevenDays: "7天"
+        case .fifteenDays: "15天"
+        case .thirtyDays: "30天"
+        case .sixtyDays: "60天"
+        }
+    }
+
+    var heading: String {
+        "最近 \(rawValue) 天"
+    }
+}
+
+private struct ActivityHistoryCollection {
+    private var snapshots: [ActivityHistorySnapshotKey: ActivityHistorySnapshot]
+
+    init(
+        orderedSegments: [StateSegment],
+        appUsage: [AppUsageSegment],
+        inputActivity: [InputActivityBucket],
+        now: Date = Date()
+    ) {
+        snapshots = Dictionary(
+            uniqueKeysWithValues: ActivityHistoryRange.allCases.flatMap { range in
+                [false, true].map { skipsWeekends in
+                    (
+                        ActivityHistorySnapshotKey(range: range, skipsWeekends: skipsWeekends),
+                        ActivityHistorySnapshot(
+                            range: range,
+                            skipsWeekends: skipsWeekends,
+                            orderedSegments: orderedSegments,
+                            appUsage: appUsage,
+                            inputActivity: inputActivity,
+                            now: now
+                        )
+                    )
+                }
+            }
+        )
+    }
+
+    subscript(range: ActivityHistoryRange, skipsWeekends: Bool) -> ActivityHistorySnapshot {
+        snapshots[ActivityHistorySnapshotKey(range: range, skipsWeekends: skipsWeekends)]
+            ?? ActivityHistorySnapshot.empty(range: range, skipsWeekends: skipsWeekends)
+    }
+}
+
+private struct ActivityHistorySnapshotKey: Hashable {
+    var range: ActivityHistoryRange
+    var skipsWeekends: Bool
+}
+
+private struct ActivityHistorySnapshot {
+    var range: ActivityHistoryRange
+    var skipsWeekends: Bool
+    var start: Date
+    var end: Date
+    var dayCount: Int
+    var focusSeconds: Int
+    var distractedSeconds: Int
+    var inputSummary: InputWorkloadSummary
+    var appItems: [AppUsageDisplayItem]
+    var hourlyBuckets: [ActivityHourBucket]
+    var activeDayCount: Int
+    var averageFocusSecondsPerActiveDay: Int
+    var peakFocusSeconds: Int
+
+    var attentionSeconds: Int {
+        focusSeconds + distractedSeconds
+    }
+
+    var focusRatio: Double {
+        guard attentionSeconds > 0 else { return 0 }
+        return Double(focusSeconds) / Double(attentionSeconds)
+    }
+
+    var distractedRatio: Double {
+        guard attentionSeconds > 0 else { return 0 }
+        return Double(distractedSeconds) / Double(attentionSeconds)
+    }
+
+    var hasActivity: Bool {
+        attentionSeconds > 0 || inputSummary.totalWorkloadEvents > 0 || !appItems.isEmpty
+    }
+
+    var rangeLabel: String {
+        "\(shortDate(start)) - \(shortDate(end.addingTimeInterval(-1)))"
+    }
+
+    var topAppCount: Int {
+        appItems.count
+    }
+
+    var animationKey: String {
+        let hourlyFingerprint = hourlyBuckets
+            .map { "\($0.hour):\($0.focusSeconds):\($0.distractedSeconds)" }
+            .joined(separator: "|")
+        let appFingerprint = appItems.prefix(8)
+            .map { "\($0.id):\($0.seconds)" }
+            .joined(separator: "|")
+        return "\(range.id)-\(focusSeconds)-\(distractedSeconds)-\(inputSummary.totalWorkloadEvents)-\(hourlyFingerprint)-\(appFingerprint)"
+    }
+
+    init(
+        range: ActivityHistoryRange,
+        skipsWeekends: Bool,
+        orderedSegments: [StateSegment],
+        appUsage: [AppUsageSegment],
+        inputActivity: [InputActivityBucket],
+        now: Date = Date()
+    ) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "zh_CN")
+
+        let today = calendar.startOfDay(for: now)
+        let days = max(1, range.rawValue)
+        let windowStart = calendar.date(byAdding: .day, value: -(days - 1), to: today) ?? today
+        let windowEnd = min(now, calendar.date(byAdding: .day, value: 1, to: today) ?? now)
+        let bounds = (start: windowStart, end: max(windowEnd, windowStart))
+        let includedDayStarts = Self.includedDayStarts(
+            bounds: bounds,
+            calendar: calendar,
+            skipsWeekends: skipsWeekends
+        )
+        let includedDayCount = max(1, includedDayStarts.count)
+        let includedDate: (Date) -> Bool = { date in
+            guard skipsWeekends else { return true }
+            return includedDayStarts.contains(calendar.startOfDay(for: date))
+        }
+
+        var focusSeconds = 0
+        var distractedSeconds = 0
+        var hourly = Dictionary(
+            uniqueKeysWithValues: (0..<24).map {
+                ($0, ActivityHourBucket(hour: $0, focusSeconds: 0, distractedSeconds: 0, dayCount: includedDayCount))
+            }
+        )
+        var dayBreakdowns: [Date: AttentionDurationBreakdown] = [:]
+
+        for segment in orderedSegments.reversed() {
+            if segment.end <= bounds.start { break }
+            guard activityHistoryOverlaps(segment.start, segment.end, bounds: bounds),
+                  segment.state == .focus || segment.state == .distracted else {
+                continue
             }
 
+            var cursor = max(segment.start, bounds.start)
+            let segmentEnd = min(segment.end, bounds.end)
+            while cursor < segmentEnd {
+                let hourStart = calendar.dateInterval(of: .hour, for: cursor)?.start ?? cursor
+                let hourEnd = calendar.date(byAdding: .hour, value: 1, to: hourStart) ?? hourStart.addingTimeInterval(3_600)
+                let clippedEnd = min(hourEnd, segmentEnd)
+                guard clippedEnd > cursor else { break }
+                guard includedDate(cursor) else {
+                    cursor = clippedEnd
+                    continue
+                }
+
+                let seconds = max(0, Int(clippedEnd.timeIntervalSince(cursor).rounded()))
+                let hour = calendar.component(.hour, from: cursor)
+                var bucket = hourly[hour] ?? ActivityHourBucket(hour: hour, focusSeconds: 0, distractedSeconds: 0, dayCount: includedDayCount)
+                bucket.add(state: segment.state, seconds: seconds)
+                hourly[hour] = bucket
+
+                let day = calendar.startOfDay(for: cursor)
+                var breakdown = dayBreakdowns[day] ?? AttentionDurationBreakdown()
+                breakdown.add(state: segment.state, seconds: seconds)
+                dayBreakdowns[day] = breakdown
+
+                switch segment.state {
+                case .focus:
+                    focusSeconds += seconds
+                case .distracted:
+                    distractedSeconds += seconds
+                case .breakTime, .away:
+                    break
+                }
+
+                cursor = clippedEnd
+            }
+        }
+
+        let activeDays = dayBreakdowns.values.filter { $0.attentionSeconds > 0 }.count
+        let peakFocus = dayBreakdowns.values.map(\.focusSeconds).max() ?? 0
+
+        self.range = range
+        self.skipsWeekends = skipsWeekends
+        self.start = bounds.start
+        self.end = bounds.end
+        self.dayCount = includedDayCount
+        self.focusSeconds = focusSeconds
+        self.distractedSeconds = distractedSeconds
+        self.inputSummary = Self.inputSummary(
+            inputActivity: inputActivity,
+            start: bounds.start,
+            end: bounds.end,
+            calendar: calendar,
+            includedDate: includedDate
+        )
+        self.appItems = AppUsageDisplayItem.windowed(
+            from: orderedSegments,
+            appUsage: appUsage,
+            bounds: bounds,
+            calendar: calendar,
+            includedDate: includedDate
+        )
+        self.hourlyBuckets = (0..<24).map {
+            hourly[$0] ?? ActivityHourBucket(hour: $0, focusSeconds: 0, distractedSeconds: 0, dayCount: includedDayCount)
+        }
+        self.activeDayCount = activeDays
+        self.averageFocusSecondsPerActiveDay = activeDays > 0 ? focusSeconds / activeDays : 0
+        self.peakFocusSeconds = peakFocus
+    }
+
+    private init(range: ActivityHistoryRange, skipsWeekends: Bool) {
+        let now = Date()
+        self.range = range
+        self.skipsWeekends = skipsWeekends
+        self.start = now
+        self.end = now
+        self.dayCount = range.rawValue
+        self.focusSeconds = 0
+        self.distractedSeconds = 0
+        self.inputSummary = InputWorkloadSummary(start: now, end: now)
+        self.appItems = []
+        self.hourlyBuckets = (0..<24).map {
+            ActivityHourBucket(hour: $0, focusSeconds: 0, distractedSeconds: 0, dayCount: range.rawValue)
+        }
+        self.activeDayCount = 0
+        self.averageFocusSecondsPerActiveDay = 0
+        self.peakFocusSeconds = 0
+    }
+
+    static func empty(range: ActivityHistoryRange, skipsWeekends: Bool) -> ActivityHistorySnapshot {
+        ActivityHistorySnapshot(range: range, skipsWeekends: skipsWeekends)
+    }
+
+    private func shortDate(_ date: Date) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "zh_CN")
+        let components = calendar.dateComponents([.month, .day], from: date)
+        return "\(components.month ?? 0)/\(components.day ?? 0)"
+    }
+
+    private static func includedDayStarts(
+        bounds: (start: Date, end: Date),
+        calendar: Calendar,
+        skipsWeekends: Bool
+    ) -> Set<Date> {
+        var result: Set<Date> = []
+        var day = calendar.startOfDay(for: bounds.start)
+        while day < bounds.end {
+            if !skipsWeekends || !calendar.isDateInWeekend(day) {
+                result.insert(day)
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        return result
+    }
+
+    private static func inputSummary(
+        inputActivity: [InputActivityBucket],
+        start: Date,
+        end: Date,
+        calendar: Calendar,
+        includedDate: (Date) -> Bool
+    ) -> InputWorkloadSummary {
+        var typed = 0
+        var pointer = 0
+        var switches = 0
+        var activeSeconds = 0
+        let boundedEnd = max(end, start)
+
+        for bucket in inputActivity where bucket.end > start && bucket.start < boundedEnd {
+            let clippedStart = max(bucket.start, start)
+            let clippedEnd = min(bucket.end, boundedEnd)
+            guard clippedEnd > clippedStart else { continue }
+
+            var cursor = clippedStart
+            var includedSeconds = 0
+            while cursor < clippedEnd {
+                let dayStart = calendar.startOfDay(for: cursor)
+                let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart.addingTimeInterval(86_400)
+                let next = min(dayEnd, clippedEnd)
+                if includedDate(cursor) {
+                    includedSeconds += max(0, Int(next.timeIntervalSince(cursor).rounded()))
+                }
+                cursor = next
+            }
+
+            guard includedSeconds > 0 else { continue }
+            let ratio = Double(includedSeconds) / max(1, clippedEnd.timeIntervalSince(clippedStart))
+            typed += Int((Double(bucket.estimatedTypedCharacters) * ratio).rounded())
+            pointer += Int((Double(bucket.pointerActionCount) * ratio).rounded())
+            switches += Int((Double(bucket.contextSwitchCount) * ratio).rounded())
+            if bucket.hasActivity {
+                activeSeconds += includedSeconds
+            }
+        }
+
+        return InputWorkloadSummary(
+            start: start,
+            end: boundedEnd,
+            estimatedTypedCharacters: typed,
+            pointerActionCount: pointer,
+            contextSwitchCount: switches,
+            activeSeconds: activeSeconds
+        )
+    }
+}
+
+private struct ActivityHourBucket: Identifiable, Hashable {
+    var hour: Int
+    var focusSeconds: Int
+    var distractedSeconds: Int
+    var dayCount: Int
+
+    var id: Int { hour }
+
+    var totalSeconds: Int {
+        focusSeconds + distractedSeconds
+    }
+
+    var averageFocusMinutes: Double {
+        Double(focusSeconds) / Double(max(1, dayCount)) / 60
+    }
+
+    var averageDistractedMinutes: Double {
+        Double(distractedSeconds) / Double(max(1, dayCount)) / 60
+    }
+
+    var averageTotalMinutes: Double {
+        averageFocusMinutes + averageDistractedMinutes
+    }
+
+    var focusRatio: Double {
+        guard totalSeconds > 0 else { return 0 }
+        return Double(focusSeconds) / Double(totalSeconds)
+    }
+
+    var label: String {
+        String(format: "%02d", hour)
+    }
+
+    mutating func add(state: FocusPetCore.FocusState, seconds: Int) {
+        switch state {
+        case .focus:
+            focusSeconds += max(0, seconds)
+        case .distracted:
+            distractedSeconds += max(0, seconds)
+        case .breakTime, .away:
+            break
+        }
+    }
+}
+
+private struct ActivityHistoryPanel: View {
+    var snapshot: ActivityHistoryCollection
+    @State private var selectedRange: ActivityHistoryRange = .sevenDays
+    @State private var skipsWeekends = false
+
+    private var selectedSnapshot: ActivityHistorySnapshot {
+        snapshot[selectedRange, skipsWeekends]
+    }
+
+    var body: some View {
+        let selectedSnapshot = selectedSnapshot
+        VStack(alignment: .leading, spacing: 14) {
+            header(snapshot: selectedSnapshot)
+
             LazyVGrid(columns: summaryColumns, spacing: 10) {
-                AttentionSummaryPill(
-                    title: "工作总计",
-                    value: FocusPetFormatters.duration(snapshot.summary.workSeconds),
-                    symbol: "clock.badge.checkmark",
+                ActivityMetricTile(
+                    title: "活跃总计",
+                    value: FocusPetFormatters.duration(selectedSnapshot.attentionSeconds),
+                    detail: "\(selectedSnapshot.activeDayCount) 天有记录",
+                    symbol: "bolt.fill",
                     tint: DashboardPalette.focusBlue
                 )
-                AttentionSummaryPill(
+                ActivityMetricTile(
                     title: "专注占比",
-                    value: FocusPetFormatters.percentage(snapshot.summary.focusRatio),
+                    value: FocusPetFormatters.percentage(selectedSnapshot.focusRatio),
+                    detail: "走神 \(FocusPetFormatters.percentage(selectedSnapshot.distractedRatio))",
                     symbol: "percent",
                     tint: DashboardPalette.focusBlue
                 )
-                AttentionSummaryPill(
-                    title: "走神",
-                    value: FocusPetFormatters.duration(snapshot.summary.distractedSeconds),
-                    symbol: FocusPetCore.FocusState.distracted.symbolName,
-                    tint: FocusPetCore.FocusState.distracted.timelineColor
+                ActivityMetricTile(
+                    title: "总输入",
+                    value: FocusPetFormatters.compactCount(selectedSnapshot.inputSummary.totalInputActions),
+                    detail: "键盘 \(FocusPetFormatters.compactCount(selectedSnapshot.inputSummary.estimatedTypedCharacters)) · 鼠标 \(FocusPetFormatters.compactCount(selectedSnapshot.inputSummary.pointerActionCount))",
+                    symbol: "keyboard",
+                    tint: FPChartPalette.inputKeyboardStrong
                 )
-                AttentionSummaryPill(
-                    title: "休息",
-                    value: FocusPetFormatters.duration(snapshot.summary.breakSeconds),
-                    symbol: FocusPetCore.FocusState.breakTime.symbolName,
+                ActivityMetricTile(
+                    title: "平均专注",
+                    value: FocusPetFormatters.duration(selectedSnapshot.averageFocusSecondsPerActiveDay),
+                    detail: "峰值 \(FocusPetFormatters.duration(selectedSnapshot.peakFocusSeconds))",
+                    symbol: "chart.line.uptrend.xyaxis",
                     tint: DashboardPalette.restGreen
                 )
             }
 
-            if snapshot.hasData {
-                FocusSegmentDurationChart(snapshot: snapshot)
-            } else {
-                Text(emptyStateText)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(DashboardPalette.secondaryText)
-                    .frame(maxWidth: .infinity, minHeight: 132, alignment: .center)
-                    .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(DashboardPalette.innerStroke, lineWidth: 1)
-                    }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    ActivityHourlyChartPanel(snapshot: selectedSnapshot)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 304)
+                        .layoutPriority(1)
+
+                    ActivityAppSummaryPanel(snapshot: selectedSnapshot)
+                        .frame(width: 320)
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    ActivityHourlyChartPanel(snapshot: selectedSnapshot)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 304)
+
+                    ActivityAppSummaryPanel(snapshot: selectedSnapshot)
+                        .frame(maxWidth: .infinity)
+                }
             }
         }
         .fpSemanticCard(status: .focus, padding: 14, radius: FPRadius.large)
         .dashboardPetAnchor(.historyWorkTimeline)
+        .animation(.snappy(duration: 0.30, extraBounce: 0.02), value: selectedSnapshot.animationKey)
     }
 
-    private var summaryColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 150), spacing: 10)]
-    }
+    private func header(snapshot: ActivityHistorySnapshot) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 12) {
+                titleBlock(snapshot: snapshot)
+                Spacer(minLength: 12)
+                ActivityWeekendFilterToggle(isOn: $skipsWeekends)
+                ActivityRangePicker(selection: $selectedRange)
+                    .frame(width: 360)
+            }
 
-    private var statusCaption: String {
-        if snapshot.discardedShortIntervalCount > 0 {
-            return "\(snapshot.intervals.count) 段 · 已降噪"
-        }
-        return "\(snapshot.intervals.count) 段 · 仅工作段"
-    }
-
-    private var emptyStateText: String {
-        if snapshot.discardedShortIntervalCount > 0 {
-            return "最近 24 小时暂无有效工作时间，短暂片段已自动过滤。"
-        }
-        return "最近 24 小时暂无工作时间。"
-    }
-}
-
-private struct FocusSegmentDurationChart: View {
-    var snapshot: WorkTimelineSnapshot
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            WorkSessionOverviewStrip(snapshot: snapshot)
-                .frame(height: 66)
-
-            LazyVGrid(columns: sessionColumns, spacing: 10) {
-                ForEach(displayIntervals) { interval in
-                    WorkSessionCard(interval: interval)
+            VStack(alignment: .leading, spacing: 10) {
+                titleBlock(snapshot: snapshot)
+                HStack(spacing: 10) {
+                    ActivityWeekendFilterToggle(isOn: $skipsWeekends)
+                    ActivityRangePicker(selection: $selectedRange)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }
+    }
+
+    private func titleBlock(snapshot: ActivityHistorySnapshot) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Label("活跃统计", systemImage: "chart.bar.xaxis")
+                .font(.headline.weight(.semibold))
+            StatusPill(snapshot.range.heading, symbol: "calendar.badge.clock")
+            StatusPill(snapshot.rangeLabel, symbol: "calendar")
+            if snapshot.skipsWeekends {
+                StatusPill("跳过周末", symbol: "calendar.badge.minus")
+            }
+            StatusPill("\(snapshot.topAppCount) 个应用", symbol: "apps.iphone")
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.82)
+    }
+
+    private var summaryColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 178), spacing: 10)]
+    }
+}
+
+private struct ActivityWeekendFilterToggle: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "calendar.badge.minus")
+                    .font(.system(size: 11, weight: .bold))
+                Text("跳过周末")
+                    .font(.caption2.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+            .foregroundStyle(isOn ? DashboardPalette.focusBlue : DashboardPalette.secondaryText)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background(isOn ? FPColor.focus050 : DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(isOn ? FPColor.focus300.opacity(0.48) : DashboardPalette.border, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .help("开启后，周六和周日不参与当前模块的统计计算")
+    }
+}
+
+private struct ActivityRangePicker: View {
+    @Binding var selection: ActivityHistoryRange
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(ActivityHistoryRange.allCases) { range in
+                let selected = selection == range
+                Button {
+                    selection = range
+                } label: {
+                    Text(range.title)
+                        .font(.caption2.monospacedDigit().weight(.bold))
+                        .foregroundStyle(selected ? DashboardPalette.focusBlue : DashboardPalette.secondaryText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background {
+                            if selected {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(FPColor.focus050)
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .stroke(FPColor.focus300.opacity(0.48), lineWidth: 1)
+                                    }
+                            }
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help(range.heading)
+            }
+        }
+        .padding(3)
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(DashboardPalette.border, lineWidth: 1)
+        }
+        .liquidGlassSurface(cornerRadius: 9)
+    }
+}
+
+private struct ActivityMetricTile: View {
+    var title: String
+    var value: String
+    var detail: String
+    var symbol: String
+    var tint: Color
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 38, height: 38)
+                .background(tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .lineLimit(1)
+                Text(value)
+                    .font(.title3.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(DashboardPalette.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.70)
+                Text(detail)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 78, alignment: .leading)
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(tint.opacity(0.18), lineWidth: 1)
+        }
+    }
+}
+
+private struct ActivityHourlyChartPanel: View {
+    var snapshot: ActivityHistorySnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                Label("全天每小时活跃", systemImage: "chart.bar.fill")
+                    .font(.subheadline.weight(.semibold))
+                Spacer(minLength: 8)
+                ActivityLegendDot(title: "专注", tint: FocusPetCore.FocusState.focus.timelineColor)
+                ActivityLegendDot(title: "走神", tint: FocusPetCore.FocusState.distracted.timelineColor)
+                StatusPill("日均分钟", symbol: "clock")
+            }
+
+            if snapshot.hourlyBuckets.allSatisfy({ $0.totalSeconds == 0 }) {
+                ActivityEmptyState(
+                    title: "暂无专注或走神记录",
+                    detail: "所选范围内没有可用于按小时统计的活跃片段。"
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ActivityHourlyBarChart(buckets: snapshot.hourlyBuckets)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
         .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(DashboardPalette.innerStroke, lineWidth: 1)
         }
     }
-
-    private var displayIntervals: [WorkTimelineInterval] {
-        snapshot.intervals
-    }
-
-    private var sessionColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 245), spacing: 10)]
-    }
 }
 
-private struct WorkSessionOverviewStrip: View {
-    var snapshot: WorkTimelineSnapshot
+private struct ActivityHourlyBarChart: View {
+    var buckets: [ActivityHourBucket]
+    @State private var hoverBucket: ActivityHourBucket?
+
+    private let axisWidth: CGFloat = 38
+    private let axisHeight: CGFloat = 22
 
     var body: some View {
         GeometryReader { proxy in
-            let total = max(1, snapshot.intervals.reduce(0) { $0 + $1.totalSeconds })
-            let ranges = layoutRanges(total: total, width: proxy.size.width)
+            let chartWidth = max(1, proxy.size.width - axisWidth)
+            let chartHeight = max(1, proxy.size.height - axisHeight)
             ZStack(alignment: .topLeading) {
-                HStack {
-                    Spacer()
-                    Text("压缩工作段")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(DashboardPalette.secondaryText)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(.white.opacity(0.62), in: Capsule())
-                }
+                yAxisLabels(height: chartHeight)
 
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(DashboardPalette.trackFill.opacity(0.34))
-                        .frame(height: 18)
+                ZStack(alignment: .topLeading) {
+                    chartGrid(width: chartWidth, height: chartHeight)
 
-                    ForEach(ranges) { range in
-                        Capsule()
-                            .fill(range.tint.gradient)
-                            .frame(width: range.width, height: 18)
-                            .offset(x: range.x)
+                    HStack(alignment: .bottom, spacing: barSpacing(for: chartWidth)) {
+                        ForEach(buckets) { bucket in
+                            ActivityHourlyBar(bucket: bucket, chartHeight: chartHeight)
+                                .onContinuousHover { phase in
+                                    switch phase {
+                                    case .active:
+                                        hoverBucket = bucket
+                                    case .ended:
+                                        if hoverBucket?.id == bucket.id {
+                                            hoverBucket = nil
+                                        }
+                                    }
+                                }
+                                .help(helpText(for: bucket))
+                        }
+                    }
+                    .frame(width: chartWidth, height: chartHeight, alignment: .bottom)
+
+                    xAxis(width: chartWidth, y: chartHeight + 5)
+
+                    if let hoverBucket {
+                        ActivityHourHoverCard(bucket: hoverBucket)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .offset(x: hoverX(for: hoverBucket, chartWidth: chartWidth), y: 6)
+                            .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topLeading)))
+                            .zIndex(20)
                     }
                 }
-                .offset(y: 24)
+                .frame(width: chartWidth, height: proxy.size.height, alignment: .topLeading)
+                .offset(x: axisWidth)
+            }
+        }
+        .animation(.snappy(duration: 0.16, extraBounce: 0), value: hoverBucket?.id)
+    }
 
-                ForEach(ranges) { range in
-                    if range.showsTimeLabel {
-                        Text(range.timeLabel)
-                            .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(DashboardPalette.secondaryText)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.72)
-                            .frame(width: range.width, alignment: .center)
-                            .offset(x: range.x, y: 48)
-                    }
-                }
+    private func yAxisLabels(height: CGFloat) -> some View {
+        ZStack(alignment: .topTrailing) {
+            ForEach([60, 45, 30, 15, 0], id: \.self) { value in
+                Text("\(value)")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .frame(width: axisWidth - 8, alignment: .trailing)
+                    .offset(y: labelY(for: value, height: height))
+            }
+        }
+        .frame(width: axisWidth, height: height, alignment: .topTrailing)
+    }
+
+    private func chartGrid(width: CGFloat, height: CGFloat) -> some View {
+        Path { path in
+            for value in [60, 45, 30, 15, 0] {
+                let y = gridY(for: value, height: height)
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: width, y: y))
+            }
+        }
+        .stroke(FPChartPalette.gridLine, style: StrokeStyle(lineWidth: 1, dash: [4, 8]))
+    }
+
+    private func xAxis(width: CGFloat, y: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(0..<24, id: \.self) { hour in
+                Text(String(format: "%02d", hour))
+                    .font(.system(size: width < 560 ? 7 : 8, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(DashboardPalette.secondaryText)
+                    .frame(width: hourLabelWidth(for: width))
+                    .offset(x: xLabelOffset(for: hour, width: width), y: y)
             }
         }
     }
 
-    private func layoutRanges(total: Int, width: CGFloat) -> [CompressedWorkSessionRange] {
-        var cursor: CGFloat = 0
-        let gap: CGFloat = snapshot.intervals.count > 1 ? 4 : 0
-        let intervalCount = CGFloat(snapshot.intervals.count)
-        let usableWidth = max(0, width - gap * CGFloat(max(0, snapshot.intervals.count - 1)))
-        let minimumSegmentWidth: CGFloat = 12
-        let canUseMinimumWidth = intervalCount * minimumSegmentWidth <= usableWidth
-        let remainingWidth = canUseMinimumWidth ? usableWidth - intervalCount * minimumSegmentWidth : usableWidth
-        return snapshot.intervals.map { interval in
-            let proportionalWidth = usableWidth * CGFloat(interval.totalSeconds) / CGFloat(max(1, total))
-            let segmentWidth = canUseMinimumWidth
-                ? minimumSegmentWidth + remainingWidth * CGFloat(interval.totalSeconds) / CGFloat(max(1, total))
-                : proportionalWidth
-            defer { cursor += segmentWidth + gap }
-            return CompressedWorkSessionRange(
-                x: cursor,
-                width: segmentWidth,
-                tint: interval.focusRatio >= 0.72 ? DashboardPalette.focusBlue : FocusPetCore.FocusState.distracted.timelineColor,
-                timeLabel: "\(FocusPetFormatters.clock(interval.start))-\(FocusPetFormatters.clock(interval.end))",
-                showsTimeLabel: segmentWidth >= 78
-            )
-        }
+    private func barSpacing(for width: CGFloat) -> CGFloat {
+        width < 560 ? 4 : 7
+    }
+
+    private func labelY(for value: Int, height: CGFloat) -> CGFloat {
+        max(0, min(height - 12, gridY(for: value, height: height) - 6))
+    }
+
+    private func gridY(for value: Int, height: CGFloat) -> CGFloat {
+        height * (1 - CGFloat(value) / 60)
+    }
+
+    private func xLabelOffset(for hour: Int, width: CGFloat) -> CGFloat {
+        let slotWidth = width / CGFloat(max(1, buckets.count))
+        let labelWidth = hourLabelWidth(for: width)
+        return max(0, min(width - labelWidth, slotWidth * CGFloat(hour) + slotWidth / 2 - labelWidth / 2))
+    }
+
+    private func hourLabelWidth(for width: CGFloat) -> CGFloat {
+        width < 560 ? 18 : 22
+    }
+
+    private func hoverX(for bucket: ActivityHourBucket, chartWidth: CGFloat) -> CGFloat {
+        let step = chartWidth / CGFloat(max(1, buckets.count))
+        return min(max(0, step * CGFloat(bucket.hour) + 8), max(0, chartWidth - 176))
+    }
+
+    private func helpText(for bucket: ActivityHourBucket) -> String {
+        "\(bucket.label):00 · 日均 \(String(format: "%.1f", bucket.averageTotalMinutes)) 分钟 · 专注 \(FocusPetFormatters.duration(bucket.focusSeconds)) · 走神 \(FocusPetFormatters.duration(bucket.distractedSeconds))"
     }
 }
 
-private struct CompressedWorkSessionRange: Identifiable {
-    var x: CGFloat
-    var width: CGFloat
-    var tint: Color
-    var timeLabel: String
-    var showsTimeLabel: Bool
-
-    var id: String {
-        "\(Int((x * 10).rounded()))-\(Int((width * 10).rounded()))-\(timeLabel)"
-    }
-}
-
-private struct WorkSessionCard: View {
-    var interval: WorkTimelineInterval
+private struct ActivityHourlyBar: View {
+    var bucket: ActivityHourBucket
+    var chartHeight: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("\(FocusPetFormatters.clock(interval.start))-\(FocusPetFormatters.clock(interval.end))")
-                    .font(.caption.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(DashboardPalette.secondaryText)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Text(FocusPetFormatters.percentage(interval.focusRatio))
-                    .font(.caption.monospacedDigit().weight(.bold))
-                    .foregroundStyle(interval.focusRatio >= 0.72 ? DashboardPalette.focusBlue : DashboardPalette.distractedRed)
-            }
+        let totalHeight = max(0, min(chartHeight, chartHeight * CGFloat(bucket.averageTotalMinutes / 60)))
+        let focusHeight = totalHeight * CGFloat(bucket.focusRatio)
+        let distractedHeight = totalHeight - focusHeight
 
-            Text(FocusPetFormatters.duration(interval.totalSeconds))
-                .font(.title3.monospacedDigit().weight(.semibold))
-                .foregroundStyle(DashboardPalette.primaryText)
+        ZStack(alignment: .bottom) {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(DashboardPalette.trackFill.opacity(0.40))
 
-            WorkSessionRangeBar(interval: interval)
-                .frame(height: 12)
-
-            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 5) {
-                ForEach(metrics) { metric in
-                    WorkSessionMetric(title: metric.title, seconds: metric.seconds, tint: metric.tint)
+            VStack(spacing: 0) {
+                if distractedHeight > 0 {
+                    UnevenRoundedRectangle(topLeadingRadius: 5, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 5, style: .continuous)
+                        .fill(FocusPetCore.FocusState.distracted.timelineColor.gradient)
+                        .frame(height: max(2, distractedHeight))
+                }
+                if focusHeight > 0 {
+                    UnevenRoundedRectangle(topLeadingRadius: distractedHeight > 0 ? 0 : 5, bottomLeadingRadius: 5, bottomTrailingRadius: 5, topTrailingRadius: distractedHeight > 0 ? 0 : 5, style: .continuous)
+                        .fill(FocusPetCore.FocusState.focus.timelineColor.gradient)
+                        .frame(height: max(2, focusHeight))
                 }
             }
+            .frame(maxWidth: .infinity)
+            .frame(height: totalHeight, alignment: .bottom)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: chartHeight)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct ActivityHourHoverCard: View {
+    var bucket: ActivityHourBucket
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(bucket.label):00-\(String(format: "%02d", (bucket.hour + 1) % 24)):00")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(DashboardPalette.primaryText)
+            HeatmapHoverLine(title: "日均活跃", value: String(format: "%.1f分钟", bucket.averageTotalMinutes), tint: DashboardPalette.focusBlue)
+            HeatmapHoverLine(title: "专注累计", value: FocusPetFormatters.duration(bucket.focusSeconds), tint: FocusPetCore.FocusState.focus.timelineColor)
+            HeatmapHoverLine(title: "走神累计", value: FocusPetFormatters.duration(bucket.distractedSeconds), tint: FocusPetCore.FocusState.distracted.timelineColor)
         }
         .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(interval.focusRatio >= 0.72 ? DashboardPalette.focusBlue.opacity(0.20) : DashboardPalette.distractedRed.opacity(0.18), lineWidth: 1)
+        .frame(width: 168, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.94))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(DashboardPalette.focusBlue.opacity(0.18), lineWidth: 1)
+                }
+                .shadow(color: DashboardPalette.shadow.opacity(0.18), radius: 8, x: 0, y: 4)
         }
     }
-
-    private var metrics: [WorkSessionMetricItem] {
-        [
-            WorkSessionMetricItem(title: "专注", seconds: interval.breakdown.focusSeconds, tint: DashboardPalette.focusBlue),
-            WorkSessionMetricItem(title: "走神", seconds: interval.breakdown.distractedSeconds, tint: FocusPetCore.FocusState.distracted.timelineColor),
-            WorkSessionMetricItem(title: "休息", seconds: interval.breakdown.breakSeconds, tint: DashboardPalette.restGreen),
-            WorkSessionMetricItem(title: "暂离", seconds: interval.breakdown.awaySeconds, tint: FocusPetCore.FocusState.away.timelineColor)
-        ]
-        .filter { $0.seconds > 0 }
-    }
-
-    private var metricColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 86), spacing: 6, alignment: .leading)]
-    }
 }
 
-private struct WorkSessionMetricItem: Identifiable {
-    var title: String
-    var seconds: Int
-    var tint: Color
+private struct ActivityAppSummaryPanel: View {
+    var snapshot: ActivityHistorySnapshot
 
-    var id: String { title }
-}
+    private var items: [AppUsageDisplayItem] {
+        Array(snapshot.appItems.prefix(5))
+    }
 
-private struct WorkSessionRangeBar: View {
-    var interval: WorkTimelineInterval
+    private var maxSeconds: Int {
+        max(1, items.map(\.seconds).max() ?? 1)
+    }
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(DashboardPalette.trackFill.opacity(0.42))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Label("应用活跃", systemImage: "square.stack.3d.up.fill")
+                    .font(.subheadline.weight(.semibold))
+                Spacer(minLength: 8)
+                StatusPill("Top \(items.count)", symbol: "number")
+            }
 
-                ForEach(interval.ranges) { range in
-                    let x = rangeOffset(range, width: proxy.size.width)
-                    let width = rangeWidth(range, width: proxy.size.width)
-                    Capsule()
-                        .fill(range.state.timelineColor.gradient)
-                        .frame(width: max(3, width), height: proxy.size.height)
-                        .offset(x: x)
+            if items.isEmpty {
+                ActivityEmptyState(
+                    title: "暂无应用记录",
+                    detail: "所选范围内还没有可展示的应用活跃数据。"
+                )
+                .frame(maxWidth: .infinity, minHeight: 178)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        ActivityAppUsageRow(item: item, rank: index + 1, maxSeconds: maxSeconds)
+                    }
                 }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    ActivityInputMiniRow(title: "活跃输入", value: "\(snapshot.inputSummary.activeMinutes) 分钟", symbol: "waveform.path.ecg", tint: DashboardPalette.focusBlue)
+                    ActivityInputMiniRow(title: "上下文切换", value: FocusPetFormatters.compactCount(snapshot.inputSummary.contextSwitchCount), symbol: "arrow.triangle.2.circlepath", tint: FPChartPalette.inputSwitch)
+                }
+                .padding(.top, 2)
             }
-            .clipShape(Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(Color.white.opacity(0.40), lineWidth: 0.8)
-            }
         }
-        .help(helpText)
-    }
-
-    private var helpText: String {
-        var parts = [
-            "专注 \(FocusPetFormatters.duration(interval.breakdown.focusSeconds))",
-            "走神 \(FocusPetFormatters.duration(interval.breakdown.distractedSeconds))"
-        ]
-        if interval.breakdown.breakSeconds > 0 {
-            parts.append("休息 \(FocusPetFormatters.duration(interval.breakdown.breakSeconds))")
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(DashboardPalette.rowFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(DashboardPalette.innerStroke, lineWidth: 1)
         }
-        if interval.breakdown.awaySeconds > 0 {
-            parts.append("暂离 \(FocusPetFormatters.duration(interval.breakdown.awaySeconds))")
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    private var span: TimeInterval {
-        max(1, interval.end.timeIntervalSince(interval.start))
-    }
-
-    private func rangeOffset(_ range: WorkTimelineRange, width: CGFloat) -> CGFloat {
-        width * CGFloat(max(0, range.start.timeIntervalSince(interval.start) / span))
-    }
-
-    private func rangeWidth(_ range: WorkTimelineRange, width: CGFloat) -> CGFloat {
-        let clippedStart = max(range.start, interval.start)
-        let clippedEnd = min(range.end, interval.end)
-        return width * CGFloat(max(0, clippedEnd.timeIntervalSince(clippedStart) / span))
     }
 }
 
-private struct WorkSessionMetric: View {
+private struct ActivityAppUsageRow: View {
+    var item: AppUsageDisplayItem
+    var rank: Int
+    var maxSeconds: Int
+
+    private var ratio: Double {
+        Double(item.seconds) / Double(max(1, maxSeconds))
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Text("\(rank)")
+                .font(.caption2.monospacedDigit().weight(.bold))
+                .foregroundStyle(DashboardPalette.secondaryText)
+                .frame(width: 18, alignment: .leading)
+
+            AppIconView(appName: item.appName, bundleID: item.bundleID, category: item.category, size: 24)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(item.appName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(DashboardPalette.primaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text(FocusPetFormatters.duration(item.seconds))
+                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(DashboardPalette.primaryText)
+                        .lineLimit(1)
+                }
+                MiniMeter(ratio: ratio, tint: item.category.tint, breakdown: item.stateBreakdown, total: item.seconds)
+                    .frame(height: 10)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(rank <= 3 ? DashboardPalette.controlFill : FPColor.card.opacity(0.48), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(rank <= 3 ? DashboardPalette.border : DashboardPalette.innerStroke, lineWidth: 1)
+        }
+    }
+}
+
+private struct ActivityInputMiniRow: View {
     var title: String
-    var seconds: Int
+    var value: String
+    var symbol: String
+    var tint: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(tint)
+                .frame(width: 22, height: 22)
+                .background(tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(DashboardPalette.secondaryText)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.caption2.monospacedDigit().weight(.bold))
+                .foregroundStyle(DashboardPalette.primaryText)
+        }
+    }
+}
+
+private struct ActivityLegendDot: View {
+    var title: String
     var tint: Color
 
     var body: some View {
         HStack(spacing: 4) {
             Circle()
                 .fill(tint)
-                .frame(width: 6, height: 6)
-            Text(title)
-            Text(FocusPetFormatters.duration(seconds))
-                .monospacedDigit()
-        }
-        .font(.caption2.weight(.semibold))
-        .foregroundStyle(DashboardPalette.secondaryText)
-        .lineLimit(1)
-        .minimumScaleFactor(0.78)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct FocusSegmentTimelineOverview: View {
-    var snapshot: WorkTimelineSnapshot
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(Color.white.opacity(0.34))
-
-                timelineGrid(width: proxy.size.width, height: proxy.size.height)
-
-                Capsule()
-                    .fill(DashboardPalette.trackFill.opacity(0.34))
-                    .frame(height: 24)
-                    .offset(y: 48)
-
-                ForEach(snapshot.intervals) { interval in
-                    let intervalX = xOffset(for: interval.start, width: proxy.size.width)
-                    let intervalWidth = max(4, xOffset(for: interval.end, width: proxy.size.width) - intervalX)
-                    ZStack(alignment: .leading) {
-                        ForEach(interval.ranges) { range in
-                            let rangeX = rangeOffset(range, interval: interval, width: intervalWidth)
-                            let rangeWidth = rangeWidth(range, interval: interval, width: intervalWidth)
-                            Rectangle()
-                                .fill(range.state.timelineColor.gradient)
-                                .frame(width: max(2, rangeWidth), height: 24)
-                                .offset(x: rangeX)
-                        }
-                    }
-                    .frame(width: intervalWidth, height: 24, alignment: .leading)
-                    .clipShape(Capsule())
-                    .overlay {
-                        Capsule().stroke(Color.white.opacity(0.48), lineWidth: 0.7)
-                    }
-                    .offset(x: intervalX, y: 48)
-                    .help("\(FocusPetFormatters.clock(interval.start))-\(FocusPetFormatters.clock(interval.end)) · 工作 \(FocusPetFormatters.duration(interval.totalSeconds))")
-                }
-
-                ForEach(axisTicks, id: \.offset) { tick in
-                    VStack(spacing: 3) {
-                        Rectangle()
-                            .fill(DashboardPalette.innerStroke.opacity(0.85))
-                            .frame(width: 1, height: 36)
-                        Text(axisLabel(tick.date))
-                            .font(.caption2.monospacedDigit().weight(.medium))
-                            .foregroundStyle(DashboardPalette.secondaryText)
-                            .fixedSize()
-                    }
-                    .offset(x: max(0, min(proxy.size.width - 34, proxy.size.width * tick.offset - 17)), y: 76)
-                }
-
-                HStack(spacing: 10) {
-                    FocusTimelineLegendDot(title: "专注", tint: FocusPetCore.FocusState.focus.timelineColor)
-                    FocusTimelineLegendDot(title: "走神", tint: FocusPetCore.FocusState.distracted.timelineColor)
-                    if snapshot.summary.breakSeconds > 0 {
-                        FocusTimelineLegendDot(title: "休息", tint: FocusPetCore.FocusState.breakTime.timelineColor)
-                    }
-                    Spacer(minLength: 8)
-                    Text(summaryCaption)
-                        .font(.caption2.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(DashboardPalette.secondaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 10)
-            }
-        }
-    }
-
-    private var span: TimeInterval {
-        max(1, snapshot.end.timeIntervalSince(snapshot.start))
-    }
-
-    private var axisTicks: [(offset: Double, date: Date)] {
-        (0...6).map { index in
-            let ratio = Double(index) / 6
-            return (ratio, snapshot.start.addingTimeInterval(span * ratio))
-        }
-    }
-
-    private var summaryCaption: String {
-        let focus = FocusPetFormatters.duration(snapshot.summary.focusSeconds)
-        let distracted = FocusPetFormatters.duration(snapshot.summary.distractedSeconds)
-        let rest = FocusPetFormatters.duration(snapshot.summary.breakSeconds)
-        return snapshot.summary.breakSeconds > 0 ? "专注 \(focus) · 走神 \(distracted) · 休息 \(rest)" : "专注 \(focus) · 走神 \(distracted)"
-    }
-
-    private func xOffset(for date: Date, width: CGFloat) -> CGFloat {
-        CGFloat(max(0, min(1, date.timeIntervalSince(snapshot.start) / span))) * width
-    }
-
-    private func rangeOffset(_ range: WorkTimelineRange, interval: WorkTimelineInterval, width: CGFloat) -> CGFloat {
-        let intervalSpan = max(1, interval.end.timeIntervalSince(interval.start))
-        return width * CGFloat(max(0, range.start.timeIntervalSince(interval.start) / intervalSpan))
-    }
-
-    private func rangeWidth(_ range: WorkTimelineRange, interval: WorkTimelineInterval, width: CGFloat) -> CGFloat {
-        let intervalSpan = max(1, interval.end.timeIntervalSince(interval.start))
-        return width * CGFloat(max(0, min(range.end, interval.end).timeIntervalSince(max(range.start, interval.start)) / intervalSpan))
-    }
-
-    private func timelineGrid(width: CGFloat, height: CGFloat) -> some View {
-        Path { path in
-            for tick in axisTicks {
-                let x = width * tick.offset
-                path.move(to: CGPoint(x: x, y: 34))
-                path.addLine(to: CGPoint(x: x, y: height - 20))
-            }
-        }
-        .stroke(DashboardPalette.innerStroke, style: StrokeStyle(lineWidth: 1, dash: [3, 7]))
-    }
-
-    private func axisLabel(_ date: Date) -> String {
-        FocusPetFormatters.clock(date)
-    }
-}
-
-private struct FocusTimelineLegendDot: View {
-    var title: String
-    var tint: Color
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(tint)
                 .frame(width: 7, height: 7)
             Text(title)
-                .font(.caption2.weight(.medium))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(DashboardPalette.secondaryText)
         }
     }
 }
 
-private struct FocusSegmentHighlightChip: View {
-    var interval: WorkTimelineInterval
+private struct ActivityEmptyState: View {
+    var title: String
+    var detail: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text("\(FocusPetFormatters.clock(interval.start))-\(FocusPetFormatters.clock(interval.end))")
-                    .font(.caption2.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(DashboardPalette.secondaryText)
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-                Text(FocusPetFormatters.percentage(interval.focusRatio))
-                    .font(.caption2.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(interval.focusRatio >= 0.6 ? DashboardPalette.focusBlue : DashboardPalette.distractedRed)
-            }
-            Text(FocusPetFormatters.duration(interval.totalSeconds))
-                .font(.subheadline.monospacedDigit().weight(.semibold))
-                .lineLimit(1)
+        VStack(spacing: 5) {
+            Image(systemName: "chart.bar.doc.horizontal")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(DashboardPalette.focusBlue.opacity(0.82))
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(DashboardPalette.primaryText)
+            Text(detail)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(DashboardPalette.secondaryText)
+                .multilineTextAlignment(.center)
         }
-        .padding(9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .background(Color.white.opacity(0.34), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(interval.focusRatio >= 0.6 ? DashboardPalette.focusBlue.opacity(0.18) : DashboardPalette.distractedRed.opacity(0.18), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(DashboardPalette.innerStroke.opacity(0.88), lineWidth: 1)
         }
     }
+}
+
+private func activityHistoryOverlaps(_ start: Date, _ end: Date, bounds: (start: Date, end: Date)) -> Bool {
+    end > bounds.start && start < bounds.end
 }
 
 private struct RestControlPanel: View {
@@ -7176,7 +7707,7 @@ private struct PetSettingsPanel: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("桌宠设置", systemImage: "pawprint.fill")
                     .font(.headline)
@@ -7194,58 +7725,61 @@ private struct PetSettingsPanel: View {
             }
             .liquidGlassButtonStyle()
 
-            PetPackSelectionGrid()
+            petSettingsSection(title: "资源包", symbol: "tray.and.arrow.down", status: .pet) {
+                PetPackSelectionGrid()
 
-            if let message = model.petImportMessage {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let message = model.petImportErrorMessage {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(FPColor.error)
+                if let message = model.petImportMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let message = model.petImportErrorMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(FPColor.error)
+                }
             }
 
             let hasPetPacks = !model.availablePetPacks.isEmpty
             if let record = model.availablePetPacks.first(where: { $0.id == model.settings.pet.selectedPackID }) {
-                PetPackSummaryView(record: record)
-                IntentActionMappingPanel(
-                    record: record,
-                    selectedIntent: $selectedIntent,
-                    previewSourceActionID: $previewSourceActionID
-                )
+                petSettingsSection(title: "动作映射", symbol: "link", status: .focus) {
+                    PetPackSummaryView(record: record)
+                    IntentActionMappingPanel(
+                        record: record,
+                        selectedIntent: $selectedIntent,
+                        previewSourceActionID: $previewSourceActionID
+                    )
+                }
             }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
-                TogglePillButton(
-                    title: "显示桌宠",
-                    symbol: "pawprint.fill",
-                    isOn: Binding(
-                        get: { !model.settings.pet.hidden },
-                        set: { value in
-                            guard hasPetPacks else { return }
-                            model.settings.pet.hidden = !value
-                            model.saveSettings()
-                        }
-                    ),
-                    status: .rest
-                )
-                .disabled(!hasPetPacks)
-                TogglePillButton(title: "动画", symbol: "sparkles", isOn: $model.settings.pet.animationEnabled, status: .pet)
-                    .onChange(of: model.settings.pet.animationEnabled) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "音效", symbol: "speaker.wave.2.fill", isOn: $model.settings.pet.audioEnabled, status: .neutral)
-                    .onChange(of: model.settings.pet.audioEnabled) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "悬浮状态弹窗", symbol: "text.bubble.fill", isOn: $model.settings.pet.hoverStatusEnabled, status: .focus)
-                    .onChange(of: model.settings.pet.hoverStatusEnabled) { _, _ in model.saveSettings() }
+            petSettingsSection(title: "显示与行为", symbol: "sparkles", status: .pet) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
+                    TogglePillButton(
+                        title: "显示桌宠",
+                        symbol: "pawprint.fill",
+                        isOn: Binding(
+                            get: { !model.settings.pet.hidden },
+                            set: { value in
+                                guard hasPetPacks else { return }
+                                model.settings.pet.hidden = !value
+                                model.saveSettings()
+                            }
+                        ),
+                        status: .rest
+                    )
+                    .disabled(!hasPetPacks)
+                    TogglePillButton(title: "动画", symbol: "sparkles", isOn: $model.settings.pet.animationEnabled, status: .pet)
+                        .onChange(of: model.settings.pet.animationEnabled) { _, _ in model.saveSettings() }
+                    TogglePillButton(title: "音效", symbol: "speaker.wave.2.fill", isOn: $model.settings.pet.audioEnabled, status: .neutral)
+                        .onChange(of: model.settings.pet.audioEnabled) { _, _ in model.saveSettings() }
+                    TogglePillButton(title: "悬浮状态弹窗", symbol: "text.bubble.fill", isOn: $model.settings.pet.hoverStatusEnabled, status: .focus)
+                        .onChange(of: model.settings.pet.hoverStatusEnabled) { _, _ in model.saveSettings() }
+                }
+
+                RandomActionSwitchPanel(options: randomActionOptions)
             }
 
-            RandomActionSwitchPanel(options: randomActionOptions)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("位置")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+            petSettingsSection(title: "位置与外观", symbol: "slider.horizontal.3", status: .neutral) {
                 SlidingSegmentedPicker(
                     options: petPlacementOptions(),
                     selection: Binding(
@@ -7254,18 +7788,44 @@ private struct PetSettingsPanel: View {
                     ),
                     compact: true
                 )
-            }
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 8)], spacing: 8) {
-                ControlSliderRow(title: "大小", value: $model.settings.pet.size, range: 96...260, suffix: "px", status: .pet)
-                    .onChange(of: model.settings.pet.size) { _, _ in model.saveSettings() }
-                ControlSliderRow(title: "透明度", value: $model.settings.pet.opacity, range: 0.35...1, suffix: "%", status: .focus)
-                    .onChange(of: model.settings.pet.opacity) { _, _ in model.saveSettings() }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 8)], spacing: 8) {
+                    ControlSliderRow(
+                        title: "大小",
+                        value: $model.settings.pet.size,
+                        range: PetSettings.minSize...PetSettings.maxSize,
+                        suffix: "px",
+                        status: .pet
+                    )
+                        .onChange(of: model.settings.pet.size) { _, _ in model.saveSettings() }
+                    ControlSliderRow(title: "透明度", value: $model.settings.pet.opacity, range: 0.35...1, suffix: "%", status: .focus)
+                        .onChange(of: model.settings.pet.opacity) { _, _ in model.saveSettings() }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .fpSemanticCard(status: .pet, padding: 12, radius: FPRadius.large)
         .dashboardPetAnchor(.settingsPetPanel)
+    }
+
+    private func petSettingsSection<Content: View>(
+        title: String,
+        symbol: String,
+        status: FPStatus,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label(title, systemImage: symbol)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(status.strongText)
+            content()
+        }
+        .padding(10)
+        .background(DashboardPalette.controlFill.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(status.border.opacity(0.52), lineWidth: 1)
+        }
     }
 }
 
@@ -7350,6 +7910,7 @@ private struct IntentActionMappingPanel: View {
     var record: PetPackRecord
     @Binding var selectedIntent: PetIntentKind
     @Binding var previewSourceActionID: String?
+    @State private var showsAdvancedIntents = true
 
     private var actions: [PetSourceActionSpec] {
         record.playableSourceActions
@@ -7368,72 +7929,83 @@ private struct IntentActionMappingPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("意图映射台")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    if let selectedAction {
-                        model.setSourceAction(selectedAction.id, for: selectedIntent)
-                    }
-                } label: {
-                    Label(isApplied ? "已映射" : "映射", systemImage: isApplied ? "checkmark.circle.fill" : "link")
-                }
-                .liquidGlassButtonStyle(prominent: true)
-                .disabled(selectedAction == nil)
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            mappingHeader
+
+            mappingControls
 
             SourceActionStageCard(record: record, action: selectedAction)
                 .dashboardPetAnchor(.petPreviewStage)
+        }
+        .padding(10)
+        .background(FPColor.cardSoft.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(FPColor.petWarm300.opacity(0.36), lineWidth: 1)
+        }
+    }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(PetIntentKind.userMappingCases) { intent in
-                        let selected = intent == selectedIntent
-                        Button {
-                            selectedIntent = intent
-                            previewSourceActionID = model.resolvedSourceAction(for: intent, in: record)?.id
-                                ?? record.defaultSourceAction(for: intent)?.id
-                                ?? actions.first?.id
-                        } label: {
-                            FPBadge(title: intent.title, systemImage: intent.symbolName, status: intent.fpStatus, filled: selected)
-                        }
-                        .buttonStyle(.plain)
-                        .help(intent.title)
-                    }
+    private var mappingHeader: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Label("意图映射台", systemImage: "link")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(FPColor.textSecondary)
+                Text(intentTriggerDescription(selectedIntent))
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(FPColor.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            FPBadge(title: "\(selectedIntent.title) -> \(selectedAction?.title ?? "未选择")", systemImage: selectedIntent.symbolName, status: selectedIntent.fpStatus)
+            Spacer(minLength: 0)
+            Button {
+                if let selectedAction {
+                    model.setSourceAction(selectedAction.id, for: selectedIntent)
                 }
-                .padding(3)
+            } label: {
+                Label(isApplied ? "已映射" : "映射", systemImage: isApplied ? "checkmark.circle.fill" : "link")
             }
-            .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(DashboardPalette.border, lineWidth: 1)
-            }
-            .liquidGlassSurface(cornerRadius: 9)
+            .liquidGlassButtonStyle(prominent: true)
+            .disabled(selectedAction == nil)
+        }
+    }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(actions) { action in
-                        let selected = action.id == selectedAction?.id
-                        Button {
-                            previewSourceActionID = action.id
-                        } label: {
-                            FPBadge(title: action.title, systemImage: "play.fill", status: selected ? .focus : .neutral, filled: selected)
-                        }
-                        .buttonStyle(.plain)
-                        .help(action.title)
+    private var mappingControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            mappingRow(
+                title: "触发场景",
+                symbol: "sparkle.magnifyingglass",
+                detail: "选择桌宠在什么情况下切换动作",
+                status: selectedIntent.fpStatus
+            ) {
+                VStack(alignment: .leading, spacing: 7) {
+                    intentHelpStrip
+                    intentChips(PetIntentKind.userMappingCases)
+                    if showsAdvancedIntents {
+                        intentChips(PetIntentKind.advancedMappingCases, compact: true)
                     }
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            showsAdvancedIntents.toggle()
+                        }
+                    } label: {
+                        Label(showsAdvancedIntents ? "收起进阶动作" : "显示进阶动作", systemImage: showsAdvancedIntents ? "chevron.up" : "wand.and.stars")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(FPColor.textSecondary)
+                    .help("映射拖拽、落地、鼠标召回和跨屏移动等隐藏动作")
                 }
-                .padding(3)
             }
-            .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(DashboardPalette.border, lineWidth: 1)
+
+            mappingRow(
+                title: "动作资源",
+                symbol: "play.rectangle.fill",
+                detail: "选择上方场景要播放资源包里的哪段动作",
+                status: selectedAction == nil ? .neutral : .focus
+            ) {
+                actionChips
             }
-            .liquidGlassSurface(cornerRadius: 9)
             .onAppear {
                 syncPreviewSelection()
             }
@@ -7446,6 +8018,107 @@ private struct IntentActionMappingPanel: View {
                 syncPreviewSelection()
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var intentHelpStrip: some View {
+        HStack(spacing: 6) {
+            MappingHintChip(
+                title: "走神观察",
+                detail: "状态进入走神时出现",
+                status: .distracted,
+                isActive: selectedIntent == .distractedObserve
+            )
+            MappingHintChip(
+                title: "专注休息提示",
+                detail: "长专注提醒/会话完成时出现",
+                status: .rest,
+                isActive: selectedIntent == .focusRestHint
+            )
+        }
+    }
+
+    private func mappingRow<Content: View>(
+        title: String,
+        symbol: String,
+        detail: String,
+        status: FPStatus,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Label(title, systemImage: symbol)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(status.strongText)
+                Text(detail)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(FPColor.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                Spacer(minLength: 0)
+            }
+            content()
+        }
+        .padding(9)
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(status.border.opacity(0.78), lineWidth: 1)
+        }
+        .liquidGlassSurface(cornerRadius: 9)
+    }
+
+    private func intentChips(_ intents: [PetIntentKind], compact: Bool = false) -> some View {
+        LazyVGrid(columns: intentColumns(compact: compact), alignment: .leading, spacing: 6) {
+            ForEach(intents) { intent in
+                let selected = intent == selectedIntent
+                Button {
+                    selectedIntent = intent
+                    previewSourceActionID = model.resolvedSourceAction(for: intent, in: record)?.id
+                        ?? record.defaultSourceAction(for: intent)?.id
+                        ?? actions.first?.id
+                } label: {
+                    MappingChip(
+                        title: intent.title,
+                        systemImage: intent.symbolName,
+                        status: intent.fpStatus,
+                        isSelected: selected,
+                        compact: compact
+                    )
+                }
+                .buttonStyle(.plain)
+                .help(intent.title)
+            }
+        }
+    }
+
+    private var actionChips: some View {
+        LazyVGrid(columns: actionColumns, alignment: .leading, spacing: 6) {
+            ForEach(actions) { action in
+                let selected = action.id == selectedAction?.id
+                Button {
+                    previewSourceActionID = action.id
+                } label: {
+                    MappingChip(
+                        title: action.title,
+                        systemImage: action.loop ? "repeat" : "play.fill",
+                        status: selected ? .focus : .neutral,
+                        isSelected: selected,
+                        footnote: action.loop ? "循环" : "一次"
+                    )
+                }
+                .buttonStyle(.plain)
+                .help(action.title)
+            }
+        }
+    }
+
+    private var actionColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 116), spacing: 6)]
+    }
+
+    private func intentColumns(compact: Bool) -> [GridItem] {
+        [GridItem(.adaptive(minimum: compact ? 116 : 132), spacing: 6)]
     }
 
     private var isApplied: Bool {
@@ -7461,6 +8134,116 @@ private struct IntentActionMappingPanel: View {
         previewSourceActionID = model.resolvedSourceAction(for: selectedIntent, in: record)?.id
             ?? record.defaultSourceAction(for: selectedIntent)?.id
             ?? actions.first?.id
+    }
+
+    private func intentTriggerDescription(_ intent: PetIntentKind) -> String {
+        switch intent {
+        case .quietCompanion:
+            return "基础状态：当前判断为专注时播放；随机换动作也从这个动作池开始。"
+        case .focusRestHint:
+            return "提醒事件：连续专注达到设置里的长专注/超长专注阈值，或专注会话完成时播放。"
+        case .distractedObserve:
+            return "基础状态：状态判断进入走神时播放；走神提醒阈值另见提醒设置。"
+        case .nudgeGentle:
+            return "提醒事件：走神持续达到设置里的温和走神阈值时播放。"
+        case .nudgeStrong:
+            return "提醒事件：走神持续达到设置里的强提醒阈值时播放。"
+        case .breakCompanion:
+            return "基础状态：手动休息或自动休息进行中播放。"
+        case .breakEnding:
+            return "提醒事件：休息结束时播放。"
+        case .sleep:
+            return "基础状态：状态判断为暂离时播放。"
+        case .welcomeBack:
+            return "进阶事件：电脑从长时间暂离或睡眠回到专注时播放。"
+        case .mouseSummon:
+            return "进阶交互：鼠标召回桌宠时播放。"
+        case .dragged:
+            return "进阶交互：拖动桌宠过程中播放。"
+        case .landing:
+            return "进阶交互：拖动结束落地时播放。"
+        case .moveLeft, .moveRight, .moveUp, .moveDown:
+            return "进阶交互：鼠标切到另一块屏幕，桌宠跨屏跟随时播放。"
+        case .dashboardGuide:
+            return "进阶事件：桌宠进入面板引导位置时播放。"
+        }
+    }
+}
+
+private struct MappingChip: View {
+    var title: String
+    var systemImage: String
+    var status: FPStatus
+    var isSelected: Bool
+    var compact: Bool = false
+    var footnote: String?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : systemImage)
+                .font(.system(size: compact ? 11 : 13, weight: .semibold))
+                .foregroundStyle(isSelected ? status.primary : status.strongText.opacity(0.78))
+                .frame(width: 18, height: 18)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font((compact ? Font.caption2 : Font.caption).weight(.semibold))
+                    .foregroundStyle(isSelected ? status.strongText : DashboardPalette.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
+                if let footnote {
+                    Text(footnote)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(FPColor.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, compact ? 8 : 10)
+        .padding(.vertical, compact ? 7 : 8)
+        .frame(minHeight: footnote == nil ? (compact ? 34 : 38) : 46)
+        .background(status.softBackground.opacity(isSelected ? 0.38 : 0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(isSelected ? status.border : FPColor.borderSoft, lineWidth: isSelected ? 1.2 : 1)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct MappingHintChip: View {
+    var title: String
+    var detail: String
+    var status: FPStatus
+    var isActive: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(status.primary)
+                .frame(width: 6, height: 6)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(status.strongText)
+                Text(detail)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(FPColor.textTertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, minHeight: 38)
+        .background(status.softBackground.opacity(isActive ? 0.38 : 0.16), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(status.border.opacity(isActive ? 0.92 : 0.34), lineWidth: isActive ? 1.2 : 1)
+        }
     }
 }
 
@@ -7552,7 +8335,7 @@ private struct SourceActionStageCard: View {
                 .padding(10)
             }
         }
-        .frame(height: 224)
+        .frame(height: 172)
         .clipShape(RoundedRectangle(cornerRadius: FPRadius.large, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: FPRadius.large, style: .continuous)
@@ -7808,46 +8591,142 @@ private struct ReminderSettingsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            LazyVGrid(columns: settingColumns, spacing: 8) {
-                TogglePillButton(title: "桌宠提醒", symbol: "bubble.left.and.bubble.right.fill", isOn: $model.settings.reminder.enablePetBubbles, status: .focus)
-                    .onChange(of: model.settings.reminder.enablePetBubbles) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "系统通知", symbol: "bell.fill", isOn: $model.settings.reminder.enableSystemNotifications, status: .focus)
-                    .onChange(of: model.settings.reminder.enableSystemNotifications) { _, _ in model.saveSettings() }
-                    .help("系统通知只用于强走神和专注会话完成；长专注和休息结束由桌宠轻提醒。")
-                TogglePillButton(title: "走神提醒", symbol: "eye.trianglebadge.exclamationmark", isOn: $model.settings.reminder.enableDistractedNudges, status: .distracted)
-                    .onChange(of: model.settings.reminder.enableDistractedNudges) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "专注休息提醒", symbol: "figure.cooldown", isOn: $model.settings.reminder.enableFocusRestNudges, status: .rest)
-                    .onChange(of: model.settings.reminder.enableFocusRestNudges) { _, _ in model.saveSettings() }
-                TogglePillButton(title: "回归提醒", symbol: "hand.wave.fill", isOn: $model.settings.reminder.enableWelcomeBackNudges, status: .pet)
-                    .onChange(of: model.settings.reminder.enableWelcomeBackNudges) { _, _ in model.saveSettings() }
-            }
-            LazyVGrid(columns: settingColumns, spacing: 8) {
-                NumberStepperControl(title: "暂停时长", value: $model.settings.reminder.pauseMinutes, range: 5...240, suffix: "分钟", status: .warning)
-                    .onChange(of: model.settings.reminder.pauseMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(title: "温和走神", value: $model.settings.reminder.lightDistractedMinutes, range: 1...60, suffix: "分钟", status: .distracted)
-                    .onChange(of: model.settings.reminder.lightDistractedMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(title: "强提醒", value: $model.settings.reminder.strongDistractedMinutes, range: 2...120, suffix: "分钟", status: .distracted)
-                    .onChange(of: model.settings.reminder.strongDistractedMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(title: "长专注", value: $model.settings.reminder.longFocusMinutes, range: 5...180, suffix: "分钟", status: .focus)
-                    .onChange(of: model.settings.reminder.longFocusMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(title: "超长专注", value: $model.settings.reminder.veryLongFocusMinutes, range: 10...240, suffix: "分钟", status: .focus)
-                    .onChange(of: model.settings.reminder.veryLongFocusMinutes) { _, _ in model.saveSettings() }
-                NumberStepperControl(title: "提醒冷却", value: $model.settings.reminder.cooldownMinutes, range: 1...60, suffix: "分钟", status: .neutral)
-                    .onChange(of: model.settings.reminder.cooldownMinutes) { _, _ in model.saveSettings() }
-            }
-            HStack {
-                Text(model.reminderPauseTitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                if let pauseUntil = model.settings.reminder.pauseUntil, pauseUntil > Date() {
-                    Button("恢复") { model.resumeReminders() }
-                } else {
-                    Button(model.reminderPauseActionTitle) { model.pauseReminders() }
+            reminderSection(title: "提醒通道", symbol: "bubble.left.and.bubble.right.fill", status: .focus) {
+                LazyVGrid(columns: settingColumns, spacing: 8) {
+                    TogglePillButton(title: "桌宠气泡", symbol: "bubble.left.and.bubble.right.fill", isOn: $model.settings.reminder.enablePetBubbles, status: .focus)
+                        .onChange(of: model.settings.reminder.enablePetBubbles) { _, _ in model.saveSettings() }
+                    TogglePillButton(title: "系统通知", symbol: "bell.fill", isOn: $model.settings.reminder.enableSystemNotifications, status: .focus)
+                        .onChange(of: model.settings.reminder.enableSystemNotifications) { _, _ in model.saveSettings() }
+                        .help("系统通知只用于强走神和专注会话完成；长专注和休息结束由桌宠轻提醒。")
+                    TogglePillButton(title: "回归提醒", symbol: "hand.wave.fill", isOn: $model.settings.reminder.enableWelcomeBackNudges, status: .pet)
+                        .onChange(of: model.settings.reminder.enableWelcomeBackNudges) { _, _ in model.saveSettings() }
                 }
             }
-            .liquidGlassButtonStyle()
+
+            reminderSection(title: "触发条件", symbol: "timer", status: .rest) {
+                LazyVGrid(columns: settingColumns, spacing: 8) {
+                    TogglePillButton(title: "走神提醒事件", symbol: "eye.trianglebadge.exclamationmark", isOn: $model.settings.reminder.enableDistractedNudges, status: .distracted)
+                        .onChange(of: model.settings.reminder.enableDistractedNudges) { _, _ in model.saveSettings() }
+                    TogglePillButton(title: "专注休息事件", symbol: "figure.cooldown", isOn: $model.settings.reminder.enableFocusRestNudges, status: .rest)
+                        .onChange(of: model.settings.reminder.enableFocusRestNudges) { _, _ in model.saveSettings() }
+                }
+
+                LazyVGrid(columns: settingColumns, spacing: 8) {
+                    NumberStepperControl(title: "温和走神阈值", value: $model.settings.reminder.lightDistractedMinutes, range: 1...60, suffix: "分钟", status: .distracted)
+                        .onChange(of: model.settings.reminder.lightDistractedMinutes) { _, _ in model.saveSettings() }
+                    NumberStepperControl(title: "强提醒阈值", value: $model.settings.reminder.strongDistractedMinutes, range: 2...120, suffix: "分钟", status: .distracted)
+                        .onChange(of: model.settings.reminder.strongDistractedMinutes) { _, _ in model.saveSettings() }
+                    NumberStepperControl(title: "长专注阈值", value: $model.settings.reminder.longFocusMinutes, range: 5...180, suffix: "分钟", status: .rest)
+                        .onChange(of: model.settings.reminder.longFocusMinutes) { _, _ in model.saveSettings() }
+                    NumberStepperControl(title: "超长专注阈值", value: $model.settings.reminder.veryLongFocusMinutes, range: 10...240, suffix: "分钟", status: .rest)
+                        .onChange(of: model.settings.reminder.veryLongFocusMinutes) { _, _ in model.saveSettings() }
+                    NumberStepperControl(title: "提醒冷却", value: $model.settings.reminder.cooldownMinutes, range: 1...60, suffix: "分钟", status: .neutral)
+                        .onChange(of: model.settings.reminder.cooldownMinutes) { _, _ in model.saveSettings() }
+                }
+
+                ReminderTriggerExplanation(
+                    distractedMinutes: model.settings.reminder.lightDistractedMinutes,
+                    strongDistractedMinutes: model.settings.reminder.strongDistractedMinutes,
+                    longFocusMinutes: model.settings.reminder.longFocusMinutes,
+                    veryLongFocusMinutes: model.settings.reminder.veryLongFocusMinutes
+                )
+            }
+
+            reminderSection(title: "暂停", symbol: "pause.fill", status: .warning) {
+                LazyVGrid(columns: settingColumns, spacing: 8) {
+                    NumberStepperControl(title: "暂停时长", value: $model.settings.reminder.pauseMinutes, range: 5...240, suffix: "分钟", status: .warning)
+                        .onChange(of: model.settings.reminder.pauseMinutes) { _, _ in model.saveSettings() }
+                    HStack {
+                        Text(model.reminderPauseTitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        if let pauseUntil = model.settings.reminder.pauseUntil, pauseUntil > Date() {
+                            Button("恢复") { model.resumeReminders() }
+                        } else {
+                            Button(model.reminderPauseActionTitle) { model.pauseReminders() }
+                        }
+                    }
+                    .liquidGlassButtonStyle()
+                }
+            }
+        }
+    }
+
+    private func reminderSection<Content: View>(
+        title: String,
+        symbol: String,
+        status: FPStatus,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: symbol)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(status.strongText)
+            content()
+        }
+        .padding(10)
+        .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(status.border.opacity(0.58), lineWidth: 1)
+        }
+    }
+}
+
+private struct ReminderTriggerExplanation: View {
+    var distractedMinutes: Int
+    var strongDistractedMinutes: Int
+    var longFocusMinutes: Int
+    var veryLongFocusMinutes: Int
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
+            TriggerExplanationCard(
+                title: "走神观察",
+                detail: "状态判断进入走神时立即作为基础桌宠状态；达到 \(distractedMinutes) 分钟触发温和提醒，达到 \(strongDistractedMinutes) 分钟触发强提醒。",
+                symbol: "eye.trianglebadge.exclamationmark",
+                status: .distracted
+            )
+            TriggerExplanationCard(
+                title: "专注休息提示",
+                detail: "连续专注达到 \(longFocusMinutes) 分钟触发休息提示，达到 \(veryLongFocusMinutes) 分钟升级为超长专注提示；专注会话完成也会使用这个意图。",
+                symbol: "figure.cooldown",
+                status: .rest
+            )
+        }
+    }
+}
+
+private struct TriggerExplanationCard: View {
+    var title: String
+    var detail: String
+    var symbol: String
+    var status: FPStatus
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(status.primary)
+                .frame(width: 26, height: 26)
+                .background(status.softBackground.opacity(0.52), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.bold))
+                Text(detail)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(FPColor.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(9)
+        .background(FPColor.cardSoft.opacity(0.72), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(status.border.opacity(0.44), lineWidth: 1)
         }
     }
 }
