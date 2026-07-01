@@ -679,7 +679,7 @@ private struct DashboardPageHeader: View {
                     .font(.system(size: 31, weight: .semibold, design: .rounded))
                     .lineLimit(1)
                 Text(tab.subtitle)
-                    .font(.subheadline.weight(.medium))
+                    .font(FPTypography.subheadlineFont(weight: .medium))
                     .foregroundStyle(DashboardPalette.secondaryText)
                     .lineLimit(1)
             }
@@ -690,7 +690,7 @@ private struct DashboardPageHeader: View {
                 HeaderSkyMark()
                     .frame(width: 104, height: 44)
                 Label(todayLabel, systemImage: "calendar")
-                    .font(.subheadline.weight(.medium))
+                    .font(FPTypography.subheadlineFont(weight: .medium))
                     .foregroundStyle(DashboardPalette.primaryText)
                     .lineLimit(1)
             }
@@ -767,7 +767,7 @@ struct MenuBarContentView: View {
             MenuGlassDivider()
             HStack {
                 Label(model.reminderPauseTitle, systemImage: "bell.badge")
-                    .font(.caption)
+                    .font(FPTypography.captionFont())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer()
@@ -916,16 +916,16 @@ private struct MenuStatusHeader: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(model.currentDecision.state.title)
-                        .font(.title3.weight(.semibold))
+                        .font(FPTypography.title3Font(weight: .semibold))
                     Spacer()
                     Text(FocusPetFormatters.percentage(model.currentDecision.confidence))
-                        .font(.caption.monospacedDigit().weight(.medium))
+                        .font(FPTypography.captionFont(weight: .medium).monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
                 Text("今日专注 \(FocusPetFormatters.duration(model.summary.focusSeconds))")
-                    .font(.headline)
+                    .font(FPTypography.headlineFont())
                 Text(model.currentSnapshot.appName)
-                    .font(.caption)
+                    .font(FPTypography.captionFont())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .contentTransition(.opacity)
@@ -964,7 +964,7 @@ private struct MenuMetricChip: View {
                 .monospacedDigit()
                 .contentTransition(.numericText())
         }
-        .font(.caption.weight(.medium))
+        .font(FPTypography.captionFont(weight: .medium))
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .frame(maxWidth: .infinity)
@@ -1082,7 +1082,7 @@ private struct MenuActionButton: View {
                     .frame(width: 24, height: 24)
                     .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
                 Text(title)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -1242,7 +1242,7 @@ private struct TodayFocusFeatureCard: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
                     Text(statusSubtitle)
-                        .font(.subheadline.weight(.medium))
+                        .font(FPTypography.subheadlineFont(weight: .medium))
                         .foregroundStyle(FPColor.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
@@ -1258,10 +1258,10 @@ private struct TodayFocusFeatureCard: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.70)
                     Text(statusDurationLabel)
-                        .font(.caption.weight(.semibold))
+                        .font(FPTypography.captionFont(weight: .semibold))
                         .foregroundStyle(FPColor.textSecondary)
                     Text(secondaryDurationLabel)
-                        .font(.caption2.weight(.semibold))
+                        .font(FPTypography.caption2Font(weight: .semibold))
                         .foregroundStyle(secondaryDurationTint)
                         .monospacedDigit()
                         .lineLimit(1)
@@ -1644,11 +1644,11 @@ private struct TodayStateRibbonCard: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.state.title)
-                    .font(.headline.weight(.semibold))
+                    .font(FPTypography.headlineFont(weight: .semibold))
                     .foregroundStyle(DashboardPalette.primaryText)
                     .lineLimit(1)
                 Text(FocusPetFormatters.duration(item.seconds))
-                    .font(.title3.monospacedDigit().weight(.semibold))
+                    .font(FPTypography.title3Font(weight: .semibold).monospacedDigit())
                     .foregroundStyle(DashboardPalette.primaryText)
                     .lineLimit(1)
             }
@@ -1741,7 +1741,7 @@ private struct TodayRhythmSummaryPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 8) {
                 Text("窗口节奏")
-                    .font(.headline.weight(.semibold))
+                    .font(FPTypography.headlineFont(weight: .semibold))
                 Spacer(minLength: 8)
                 StatusPill(snapshot.window.heading, symbol: "clock")
             }
@@ -1796,18 +1796,18 @@ private struct RhythmSignalTile: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: symbol)
-                .font(.caption.weight(.bold))
+                .font(FPTypography.captionFont(weight: .bold))
                 .foregroundStyle(tint)
                 .frame(width: 24, height: 24)
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.caption2.weight(.semibold))
+                    .font(FPTypography.caption2Font(weight: .semibold))
                     .foregroundStyle(DashboardPalette.secondaryText)
                     .lineLimit(1)
                 Text(value)
-                    .font(.caption.monospacedDigit().weight(.bold))
+                    .font(FPTypography.captionFont(weight: .bold).monospacedDigit())
                     .foregroundStyle(DashboardPalette.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
@@ -1848,12 +1848,12 @@ private struct RhythmMetricTile: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 Text(FocusPetFormatters.percentage(ratio))
-                    .font(.caption2.monospacedDigit().weight(.bold))
+                    .font(FPTypography.caption2Font(weight: .bold).monospacedDigit())
                     .foregroundStyle(isDominant ? item.state.timelineColor : DashboardPalette.secondaryText)
             }
 
             Text(FocusPetFormatters.duration(item.seconds))
-                .font(.caption.monospacedDigit().weight(.bold))
+                .font(FPTypography.captionFont(weight: .bold).monospacedDigit())
                 .foregroundStyle(DashboardPalette.primaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.68)
@@ -1886,9 +1886,9 @@ private struct CurrentRhythmPanel: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("当前节奏")
-                        .font(.headline.weight(.semibold))
+                        .font(FPTypography.headlineFont(weight: .semibold))
                     Text(model.currentDecision.state == .focus ? "还不错，保持平稳" : rhythmSubtitle)
-                        .font(.caption)
+                        .font(FPTypography.captionFont())
                         .foregroundStyle(DashboardPalette.secondaryText)
                         .lineLimit(1)
                 }
@@ -1898,13 +1898,13 @@ private struct CurrentRhythmPanel: View {
 
             HStack(spacing: 8) {
                 Text(model.currentDecision.state.title)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .foregroundStyle(model.currentDecision.state.timelineColor)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(model.currentDecision.state.timelineColor.opacity(0.10), in: Capsule())
                 Text(model.currentSnapshot.appName)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .foregroundStyle(DashboardPalette.secondaryText)
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -1969,7 +1969,7 @@ private struct TodayDistributionPanel: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("今日分布")
-                    .font(.headline.weight(.semibold))
+                    .font(FPTypography.headlineFont(weight: .semibold))
 
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(items) { item in
@@ -1983,7 +1983,7 @@ private struct TodayDistributionPanel: View {
                             Text(FocusPetFormatters.percentage(ratio(for: item)))
                                 .monospacedDigit()
                         }
-                        .font(.caption.weight(.medium))
+                        .font(FPTypography.captionFont(weight: .medium))
                         .foregroundStyle(DashboardPalette.secondaryText)
                     }
                 }
@@ -2151,7 +2151,7 @@ private struct BreakRestActionButton: View {
                     }
 
                 Text(isActive ? "结束休息" : "开始恢复")
-                    .font(.subheadline.weight(.semibold))
+                    .font(FPTypography.subheadlineFont(weight: .semibold))
 
                 Spacer(minLength: 0)
 
@@ -2186,7 +2186,7 @@ private struct BreakMinuteKeySelector: View {
                     value = minute
                 } label: {
                     Text("\(minute)m")
-                        .font(.caption2.monospacedDigit().weight(.bold))
+                        .font(FPTypography.caption2Font(weight: .bold).monospacedDigit())
                         .foregroundStyle(selected ? Color.white : DashboardPalette.secondaryText)
                         .frame(maxWidth: .infinity)
                         .frame(height: FPControlMetrics.restMinuteButtonHeight)
@@ -2222,7 +2222,7 @@ private struct HeaderActionButton: View {
                 Image(systemName: symbol)
                     .font(.system(size: 14, weight: .semibold))
                 Text(title)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
             }
             .foregroundStyle(tint)
             .padding(.horizontal, 12)
@@ -2251,7 +2251,7 @@ struct DailyVisualOverviewPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Label("今日状态总览", systemImage: "chart.pie.fill")
-                    .font(.headline)
+                    .font(FPTypography.headlineFont())
                 Spacer()
                 StatusPill(FocusPetFormatters.estimatedTypedCharacters(workload.estimatedTypedCharacters), symbol: "keyboard")
                 StatusPill(FocusPetFormatters.contextSwitches(workload.contextSwitchCount), symbol: "arrow.triangle.2.circlepath")
@@ -2387,10 +2387,10 @@ private struct StateSummaryTile: View {
                 .frame(width: 22, height: 22)
                     .background(item.state.timelineColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
                 Text(item.state.title)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                 Spacer(minLength: 0)
             Text(FocusPetFormatters.percentage(ratio))
-                .font(.caption2.monospacedDigit().weight(.medium))
+                .font(FPTypography.caption2Font(weight: .medium).monospacedDigit())
                 .foregroundStyle(DashboardPalette.secondaryText)
             }
 
@@ -2398,7 +2398,7 @@ private struct StateSummaryTile: View {
                 .frame(maxWidth: 128)
 
             Text(FocusPetFormatters.duration(item.seconds))
-                .font(.headline.monospacedDigit())
+                .font(FPTypography.headlineFont().monospacedDigit())
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 108, alignment: .leading)
@@ -2416,7 +2416,7 @@ struct RestStatusCompactPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("当前节奏", systemImage: "timer")
-                .font(.headline)
+                .font(FPTypography.headlineFont())
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) {
@@ -2442,16 +2442,16 @@ struct RestStatusCompactPanel: View {
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 Image(systemName: "cup.and.saucer.fill")
-                    .font(.title3.weight(.semibold))
+                    .font(FPTypography.title3Font(weight: .semibold))
                 Text(model.activeBreakSession == nil ? "休息 \(model.settings.breakMinutes) 分钟" : "结束休息")
-                    .font(.headline)
+                    .font(FPTypography.headlineFont())
                 if let rest = model.activeBreakSession {
                     Text("剩余 \(FocusPetFormatters.duration(rest.remainingSeconds()))")
-                        .font(.caption)
+                        .font(FPTypography.captionFont())
                         .foregroundStyle(DashboardPalette.secondaryText)
                 } else {
                     Text("休息后自动恢复判断")
-                        .font(.caption)
+                        .font(FPTypography.captionFont())
                         .foregroundStyle(DashboardPalette.secondaryText)
                 }
             }
@@ -2478,16 +2478,16 @@ private struct RestStatusTile: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
-                .font(.headline)
+                .font(FPTypography.headlineFont())
                 .foregroundStyle(tint)
                 .frame(width: 30, height: 30)
                 .background(tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 3) {
                 Text(value)
-                    .font(.headline.monospacedDigit())
+                    .font(FPTypography.headlineFont().monospacedDigit())
                     .lineLimit(1)
                 Text(title)
-                    .font(.caption)
+                    .font(FPTypography.captionFont())
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
@@ -2690,10 +2690,10 @@ private struct InputActivityTimelinePanel: View {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .center, spacing: 10) {
                     Text("活动时间窗")
-                        .font(.headline.weight(.semibold))
+                        .font(FPTypography.headlineFont(weight: .semibold))
 
                     Text("自动记录")
-                        .font(.caption.weight(.semibold))
+                        .font(FPTypography.captionFont(weight: .semibold))
                         .foregroundStyle(DashboardPalette.secondaryText)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
@@ -2714,10 +2714,10 @@ private struct InputActivityTimelinePanel: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .center, spacing: 10) {
                         Text("活动时间窗")
-                            .font(.headline.weight(.semibold))
+                            .font(FPTypography.headlineFont(weight: .semibold))
 
                         Text("自动记录")
-                            .font(.caption.weight(.semibold))
+                            .font(FPTypography.captionFont(weight: .semibold))
                             .foregroundStyle(DashboardPalette.secondaryText)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
@@ -2791,9 +2791,9 @@ private struct TimelineMetricPill: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: symbol)
-                .font(.caption2.weight(.bold))
+                .font(FPTypography.caption2Font(weight: .bold))
             Text(title)
-                .font(.caption2.weight(.semibold))
+                .font(FPTypography.caption2Font(weight: .semibold))
                 .lineLimit(1)
         }
         .foregroundStyle(tint)
@@ -2817,7 +2817,7 @@ private struct TimelineWindowPicker: View {
                     selection = window
                 } label: {
                     Text(window.title)
-                        .font(.caption2.monospacedDigit().weight(.bold))
+                        .font(FPTypography.caption2Font(weight: .bold).monospacedDigit())
                         .foregroundStyle(selected ? DashboardPalette.focusBlue : DashboardPalette.secondaryText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
@@ -2876,7 +2876,7 @@ private struct TimelineHoverBubble: View {
                     .fill(detail.tint)
                     .frame(width: 8, height: 8)
                 Text(detail.title)
-                    .font(.caption.weight(.bold))
+                    .font(FPTypography.captionFont(weight: .bold))
                     .foregroundStyle(DashboardPalette.primaryText)
                     .lineLimit(1)
             }
@@ -2884,7 +2884,7 @@ private struct TimelineHoverBubble: View {
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(detail.lines, id: \.self) { line in
                     Text(line)
-                        .font(.caption2.weight(.medium))
+                        .font(FPTypography.caption2Font(weight: .medium))
                         .foregroundStyle(DashboardPalette.secondaryText)
                         .lineLimit(1)
                 }
@@ -3021,7 +3021,7 @@ private struct InputTimelineChart: View {
             Text("输入")
                 .offset(x: 0, y: inputY + inputHeight * 0.42)
         }
-        .font(.caption.weight(.semibold))
+        .font(FPTypography.captionFont(weight: .semibold))
         .foregroundStyle(DashboardPalette.primaryText)
         .frame(width: labelWidth, alignment: .leading)
     }
@@ -3099,7 +3099,7 @@ private struct InputTimelineChart: View {
 
                     if rangeWidth > 72 {
                         Text(range.state.title)
-                            .font(.caption2.weight(.bold))
+                            .font(FPTypography.caption2Font(weight: .bold))
                             .foregroundStyle(.white.opacity(0.94))
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
@@ -3298,7 +3298,7 @@ private struct InputTimelineChart: View {
                     }
                     if segmentWidth > 104 {
                         Text(segment.appName)
-                            .font(.caption.weight(.bold))
+                            .font(FPTypography.captionFont(weight: .bold))
                             .foregroundStyle(.white.opacity(0.90))
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
@@ -3424,7 +3424,7 @@ struct TimelinePanel: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text("最近 4 小时")
-                    .font(.headline.weight(.semibold))
+                    .font(FPTypography.headlineFont(weight: .semibold))
                 Spacer()
                 HStack(spacing: 14) {
                     ForEach(timeline.legend) { item in
@@ -3432,7 +3432,7 @@ struct TimelinePanel: View {
                             Circle().fill(item.color).frame(width: 8, height: 8)
                             Text(item.title)
                         }
-                        .font(.caption.weight(.medium))
+                        .font(FPTypography.captionFont(weight: .medium))
                         .foregroundStyle(DashboardPalette.secondaryText)
                     }
                 }
@@ -3560,6 +3560,26 @@ private func orderedStateSegments(_ segments: [StateSegment]) -> [StateSegment] 
     return segments
 }
 
+private func orderedAppUsageSegments(_ segments: [AppUsageSegment]) -> [AppUsageSegment] {
+    guard !segments.isEmpty else { return [] }
+    for index in segments.indices.dropFirst() {
+        if segments[index].start < segments[segments.index(before: index)].start {
+            return segments.sorted { $0.start < $1.start }
+        }
+    }
+    return segments
+}
+
+private func orderedInputActivityBuckets(_ buckets: [InputActivityBucket]) -> [InputActivityBucket] {
+    guard !buckets.isEmpty else { return [] }
+    for index in buckets.indices.dropFirst() {
+        if buckets[index].start < buckets[buckets.index(before: index)].start {
+            return buckets.sorted { $0.start < $1.start }
+        }
+    }
+    return buckets
+}
+
 private struct StatusStripSnapshot {
     var start: Date
     var end: Date
@@ -3685,9 +3705,14 @@ private struct TodayTimelineSnapshot {
             FocusPetFormatters.clock(midpoint),
             FocusPetFormatters.clock(end)
         ]
-        let filtered = segments.filter { segment in
-            segment.end > start && segment.start < end
+        var filtered: [StateSegment] = []
+        for segment in orderedStateSegments(segments).reversed() {
+            if segment.end <= start { break }
+            if segment.start < end {
+                filtered.append(segment)
+            }
         }
+        filtered.reverse()
 
         let hasData = !filtered.isEmpty
         if !hasData {
@@ -3709,7 +3734,7 @@ private struct TodayTimelineSnapshot {
             max(0, min(1, date.timeIntervalSince(start) / span))
         }
 
-        for segment in filtered.sorted(by: { $0.start < $1.start }) {
+        for segment in filtered {
             let clippedStart = max(segment.start, start)
             let clippedEnd = min(segment.end, end)
             guard clippedEnd > clippedStart else { continue }
@@ -3827,7 +3852,7 @@ private struct StatusLineChart: View {
                             )
                     } else {
                         Text("暂无今日状态点。")
-                            .font(.caption.weight(.medium))
+                            .font(FPTypography.captionFont(weight: .medium))
                             .foregroundStyle(.secondary)
                             .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
                     }
@@ -3917,7 +3942,7 @@ private struct TimelineTimeChip: View {
 
     var body: some View {
         Text(title)
-            .font(.caption2.monospacedDigit().weight(.medium))
+            .font(FPTypography.caption2Font(weight: .medium).monospacedDigit())
             .foregroundStyle(DashboardPalette.secondaryText)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
@@ -4235,10 +4260,10 @@ private struct NumberStepperControl: View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.caption2)
+                    .font(FPTypography.caption2Font())
                     .foregroundStyle(.secondary)
                 Text("\(value) \(suffix)")
-                    .font(.headline.monospacedDigit())
+                    .font(FPTypography.headlineFont().monospacedDigit())
             }
             Spacer(minLength: 8)
             HStack(spacing: 4) {
@@ -4293,7 +4318,7 @@ private struct TogglePillButton: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(isOn ? tint : DashboardPalette.secondaryText)
                 Text(title)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 Toggle("", isOn: $isOn)
@@ -4329,10 +4354,10 @@ private struct ControlSliderRow: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text(title)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                 Spacer()
                 Text(displayValue)
-                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             Slider(value: $value, in: range)
@@ -4414,7 +4439,7 @@ struct NudgePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("提醒记录", systemImage: "bell.badge.fill")
-                .font(.headline)
+                .font(FPTypography.headlineFont())
             if model.nudges.isEmpty {
                 Text("暂无提醒。")
                     .foregroundStyle(.secondary)
@@ -4526,10 +4551,10 @@ private struct CategoryUsageCard: View {
                     .frame(width: 24, height: 24)
                     .background(category.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
                 Text(category.title)
-                    .font(.headline)
+                    .font(FPTypography.headlineFont())
                 Spacer()
                 Text(FocusPetFormatters.percentage(ratio))
-                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
@@ -4538,10 +4563,10 @@ private struct CategoryUsageCard: View {
 
             HStack {
                 Text(FocusPetFormatters.duration(seconds))
-                    .font(.headline.monospacedDigit())
+                    .font(FPTypography.headlineFont().monospacedDigit())
                 Spacer()
                 Text("\(appCount) App")
-                    .font(.caption.weight(.medium))
+                    .font(FPTypography.captionFont(weight: .medium))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(DashboardPalette.controlFill, in: Capsule())
@@ -4632,7 +4657,7 @@ private struct AppUsageCard: View {
                 AppIconView(appName: item.appName, bundleID: item.bundleID, category: item.category, size: 30)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.appName)
-                        .font(.headline)
+                        .font(FPTypography.headlineFont())
                         .lineLimit(1)
                     AppCategoryCorrectionMenu(
                         appName: item.appName,
@@ -4642,7 +4667,7 @@ private struct AppUsageCard: View {
                 }
                 Spacer(minLength: 0)
                 Text(FocusPetFormatters.duration(item.seconds))
-                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 
@@ -4659,7 +4684,7 @@ private struct AppUsageCard: View {
                                     .frame(width: 6, height: 6)
                                 Text(state.title)
                             }
-                            .font(.caption2)
+                            .font(FPTypography.caption2Font())
                             .foregroundStyle(.secondary)
                         }
                     }
@@ -4696,7 +4721,7 @@ private struct TodayAppUsageBarChartPanel: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text("时间去哪了")
-                        .font(.headline.weight(.semibold))
+                        .font(FPTypography.headlineFont(weight: .semibold))
                     Spacer()
                     StatusPill(snapshot.rangeLabel, symbol: "clock")
                     StatusPill("\(items.count) 个应用", symbol: "number")
@@ -4719,7 +4744,7 @@ private struct TodayAppUsageBarChartPanel: View {
                             Text("时长")
                                 .frame(width: durationColumnWidth, alignment: .trailing)
                         }
-                        .font(.caption2.weight(.semibold))
+                        .font(FPTypography.caption2Font(weight: .semibold))
                         .foregroundStyle(DashboardPalette.secondaryText)
 
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
@@ -4747,7 +4772,7 @@ private struct TodayAppUsageBarChartPanel: View {
     }
 }
 
-private struct AppUsageDisplayItem: Identifiable {
+private struct AppUsageDisplayItem: Identifiable, Sendable {
     var id: String
     var appName: String
     var bundleID: String?
@@ -4762,6 +4787,22 @@ private struct AppUsageDisplayItem: Identifiable {
         calendar: Calendar = Calendar(identifier: .gregorian),
         includedDate: ((Date) -> Bool)? = nil
     ) -> [AppUsageDisplayItem] {
+        windowed(
+            fromOrdered: orderedStateSegments(stateSegments),
+            orderedAppUsage: orderedAppUsageSegments(appUsage),
+            bounds: bounds,
+            calendar: calendar,
+            includedDate: includedDate
+        )
+    }
+
+    static func windowed(
+        fromOrdered stateSegments: [StateSegment],
+        orderedAppUsage appUsage: [AppUsageSegment],
+        bounds: (start: Date, end: Date),
+        calendar: Calendar = Calendar(identifier: .gregorian),
+        includedDate: ((Date) -> Bool)? = nil
+    ) -> [AppUsageDisplayItem] {
         struct Accumulator {
             var appName: String
             var bundleID: String?
@@ -4772,7 +4813,9 @@ private struct AppUsageDisplayItem: Identifiable {
         }
 
         var grouped: [String: Accumulator] = [:]
-        for usage in appUsage where todayWindowOverlaps(usage.start, usage.end, bounds: bounds) {
+        for usage in appUsage.reversed() {
+            if usage.end <= bounds.start { break }
+            guard todayWindowOverlaps(usage.start, usage.end, bounds: bounds) else { continue }
             let category = todayWindowNormalizedCategory(usage.category)
             let seconds = todayWindowIncludedSeconds(
                 start: usage.start,
@@ -4792,7 +4835,9 @@ private struct AppUsageDisplayItem: Identifiable {
             grouped[key] = accumulator
         }
 
-        for segment in orderedStateSegments(stateSegments) where todayWindowOverlaps(segment.start, segment.end, bounds: bounds) {
+        for segment in stateSegments.reversed() {
+            if segment.end <= bounds.start { break }
+            guard todayWindowOverlaps(segment.start, segment.end, bounds: bounds) else { continue }
             let category = todayWindowNormalizedCategory(segment.category)
             let seconds = todayWindowIncludedSeconds(
                 start: segment.start,
@@ -4902,7 +4947,7 @@ private struct TodayAppUsageBarRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Text("\(rank)")
-                .font(.caption.monospacedDigit().weight(.semibold))
+                .font(FPTypography.captionFont(weight: .semibold).monospacedDigit())
                 .foregroundStyle(DashboardPalette.secondaryText)
                 .frame(width: 26, alignment: .leading)
 
@@ -4910,7 +4955,7 @@ private struct TodayAppUsageBarRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.appName)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .lineLimit(1)
                 AppCategoryCorrectionMenu(
                     appName: item.appName,
@@ -4926,7 +4971,7 @@ private struct TodayAppUsageBarRow: View {
                 .frame(height: 16)
 
             Text(FocusPetFormatters.duration(item.seconds))
-                .font(.caption.monospacedDigit().weight(.semibold))
+                .font(FPTypography.captionFont(weight: .semibold).monospacedDigit())
                 .foregroundStyle(DashboardPalette.primaryText)
                 .contentTransition(.numericText())
                 .frame(width: durationColumnWidth, alignment: .trailing)
@@ -5039,30 +5084,176 @@ struct AppUsageChartPanel: View {
 
 struct SessionsView: View {
     @EnvironmentObject private var model: FocusPetModel
+    @State private var historyData: SessionsHistoryData?
+    @State private var isLoadingHistory = false
 
-    var body: some View {
-        let historyData = SessionsHistoryData(
+    private var inputKey: SessionsHistoryInputKey {
+        SessionsHistoryInputKey(
             segments: model.stateSegments,
             appUsage: model.appUsage,
             inputActivity: model.inputActivity
         )
+    }
 
+    var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DashboardLayout.cardGap) {
-                AttentionHeatmapPanel(snapshot: historyData.snapshot)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .zIndex(10)
-
-                ActivityHistoryPanel(snapshot: historyData.activity)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .zIndex(0)
+                if let historyData {
+                    historyContent(historyData)
+                } else {
+                    SessionsHistoryLoadingPanel()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .overlay(alignment: .topTrailing) {
+            if isLoadingHistory, historyData != nil {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(10)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .padding(.top, 4)
+                    .padding(.trailing, 4)
+            }
+        }
+        .task(id: inputKey) {
+            await loadHistoryData(for: inputKey)
+        }
+    }
+
+    @ViewBuilder
+    private func historyContent(_ historyData: SessionsHistoryData) -> some View {
+        AttentionHeatmapPanel(snapshot: historyData.snapshot)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .zIndex(10)
+
+        ActivityHistoryPanel(snapshot: historyData.activity)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .zIndex(0)
+    }
+
+    @MainActor
+    private func loadHistoryData(for key: SessionsHistoryInputKey) async {
+        if let cached = await SessionsHistoryDataCache.shared.cached(for: key) {
+            historyData = cached
+            isLoadingHistory = false
+            return
+        }
+
+        if historyData == nil, let latest = await SessionsHistoryDataCache.shared.latest() {
+            historyData = latest
+        }
+
+        let segments = model.stateSegments
+        let appUsage = model.appUsage
+        let inputActivity = model.inputActivity
+        isLoadingHistory = true
+
+        let data = await SessionsHistoryDataCache.shared.data(
+            for: key,
+            segments: segments,
+            appUsage: appUsage,
+            inputActivity: inputActivity
+        )
+
+        guard !Task.isCancelled, key == inputKey else { return }
+        withAnimation(.snappy(duration: 0.22, extraBounce: 0.02)) {
+            historyData = data
+            isLoadingHistory = false
         }
     }
 }
 
-private struct SessionsHistoryData {
+private struct SessionsHistoryLoadingPanel: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.regular)
+            Text("正在整理历史统计")
+                .font(FPTypography.subheadlineFont(weight: .semibold))
+                .foregroundStyle(DashboardPalette.primaryText)
+            Text("稍后呈现最新结果")
+                .font(FPTypography.captionFont(weight: .medium))
+                .foregroundStyle(DashboardPalette.secondaryText)
+        }
+        .frame(maxWidth: .infinity, minHeight: 280)
+        .dashboardCard(14)
+    }
+}
+
+private struct SessionsHistoryInputKey: Hashable, Sendable {
+    var minuteBucket: Int
+    var dayStart: TimeInterval
+    var segmentCount: Int
+    var lastSegmentID: String
+    var appUsageCount: Int
+    var lastAppUsageID: String
+    var inputActivityCount: Int
+    var lastInputStart: TimeInterval
+
+    init(
+        segments: [StateSegment],
+        appUsage: [AppUsageSegment],
+        inputActivity: [InputActivityBucket],
+        now: Date = Date()
+    ) {
+        let calendar = Calendar(identifier: .gregorian)
+        minuteBucket = Int(now.timeIntervalSince1970 / 60)
+        dayStart = calendar.startOfDay(for: now).timeIntervalSince1970
+        segmentCount = segments.count
+        lastSegmentID = segments.last?.id ?? ""
+        appUsageCount = appUsage.count
+        lastAppUsageID = appUsage.last?.id ?? ""
+        inputActivityCount = inputActivity.count
+        lastInputStart = inputActivity.last?.start.timeIntervalSince1970 ?? 0
+    }
+}
+
+private actor SessionsHistoryDataCache {
+    static let shared = SessionsHistoryDataCache()
+
+    private var cachedData: [SessionsHistoryInputKey: SessionsHistoryData] = [:]
+    private var cacheOrder: [SessionsHistoryInputKey] = []
+    private let limit = 6
+
+    func cached(for key: SessionsHistoryInputKey) -> SessionsHistoryData? {
+        cachedData[key]
+    }
+
+    func latest() -> SessionsHistoryData? {
+        cacheOrder.reversed().lazy.compactMap { self.cachedData[$0] }.first
+    }
+
+    func data(
+        for key: SessionsHistoryInputKey,
+        segments: [StateSegment],
+        appUsage: [AppUsageSegment],
+        inputActivity: [InputActivityBucket]
+    ) -> SessionsHistoryData {
+        if let cached = cachedData[key] {
+            return cached
+        }
+
+        let data = SessionsHistoryData(
+            segments: segments,
+            appUsage: appUsage,
+            inputActivity: inputActivity
+        )
+        cachedData[key] = data
+        cacheOrder.append(key)
+        trimCache()
+        return data
+    }
+
+    private func trimCache() {
+        while cacheOrder.count > limit {
+            let removed = cacheOrder.removeFirst()
+            cachedData[removed] = nil
+        }
+    }
+}
+
+private struct SessionsHistoryData: Sendable {
     var snapshot: AttentionHistorySnapshot
     var activity: ActivityHistoryCollection
 
@@ -5073,22 +5264,24 @@ private struct SessionsHistoryData {
         now: Date = Date()
     ) {
         let orderedSegments = orderedStateSegments(segments)
+        let orderedAppUsage = orderedAppUsageSegments(appUsage)
+        let orderedInputActivity = orderedInputActivityBuckets(inputActivity)
         snapshot = AttentionHistorySnapshot(orderedSegments: orderedSegments, now: now)
         activity = ActivityHistoryCollection(
             orderedSegments: orderedSegments,
-            appUsage: appUsage,
-            inputActivity: inputActivity,
+            orderedAppUsage: orderedAppUsage,
+            orderedInputActivity: orderedInputActivity,
             now: now
         )
     }
 }
 
-private enum AttentionHeatmapScope: Hashable {
+private enum AttentionHeatmapScope: Hashable, Sendable {
     case week
     case month
 }
 
-private struct AttentionDurationBreakdown: Hashable {
+private struct AttentionDurationBreakdown: Hashable, Sendable {
     var focusSeconds = 0
     var distractedSeconds = 0
     var breakSeconds = 0
@@ -5138,7 +5331,7 @@ private struct AttentionDurationBreakdown: Hashable {
     }
 }
 
-private struct AttentionDayBucket: Identifiable, Hashable {
+private struct AttentionDayBucket: Identifiable, Hashable, Sendable {
     var date: Date
     var breakdown: AttentionDurationBreakdown
 
@@ -5147,7 +5340,7 @@ private struct AttentionDayBucket: Identifiable, Hashable {
     var attentionSeconds: Int { breakdown.attentionSeconds }
 }
 
-private struct AttentionWeekBucket: Identifiable {
+private struct AttentionWeekBucket: Identifiable, Sendable {
     var start: Date
     var days: [AttentionDayBucket]
 
@@ -5162,7 +5355,7 @@ private struct AttentionWeekBucket: Identifiable {
     }
 }
 
-private struct AttentionMonthCalendar: Identifiable {
+private struct AttentionMonthCalendar: Identifiable, Sendable {
     var start: Date
     var title: String
     var days: [AttentionDayBucket?]
@@ -5171,7 +5364,7 @@ private struct AttentionMonthCalendar: Identifiable {
     var id: TimeInterval { start.timeIntervalSince1970 }
 }
 
-private struct AttentionHistorySnapshot {
+private struct AttentionHistorySnapshot: Sendable {
     var weeks: [AttentionWeekBucket]
     var months: [AttentionMonthCalendar]
     var days: [AttentionDayBucket]
@@ -5345,7 +5538,7 @@ private struct AttentionHeatmapPanel: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 14) {
                 Label("注意力热力图", systemImage: "square.grid.3x3.fill")
-                    .font(.headline.weight(.semibold))
+                    .font(FPTypography.headlineFont(weight: .semibold))
                 Spacer(minLength: 12)
                 SlidingSegmentedPicker(options: scopeOptions, selection: $scope, compact: true)
                     .frame(width: 190)
@@ -5446,7 +5639,7 @@ private struct AttentionInsightPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("历史洞察", systemImage: "chart.xyaxis.line")
-                .font(.subheadline.weight(.semibold))
+                .font(FPTypography.subheadlineFont(weight: .semibold))
 
             AttentionInsightRow(
                 title: "\(scopeTitle)专注",
@@ -5522,10 +5715,10 @@ private struct AttentionInsightRow: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(value)
-                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .font(FPTypography.subheadlineFont(weight: .semibold).monospacedDigit())
                     .lineLimit(1)
                 Text(title)
-                    .font(.caption2.weight(.medium))
+                    .font(FPTypography.caption2Font(weight: .medium))
                     .foregroundStyle(DashboardPalette.secondaryText)
                     .lineLimit(1)
             }
@@ -5533,7 +5726,7 @@ private struct AttentionInsightRow: View {
             Spacer(minLength: 8)
 
             Text(detail)
-                .font(.caption2.monospacedDigit().weight(.semibold))
+                .font(FPTypography.caption2Font(weight: .semibold).monospacedDigit())
                 .foregroundStyle(DashboardPalette.secondaryText)
                 .lineLimit(1)
         }
@@ -5550,11 +5743,11 @@ private struct AttentionFocusRatioMeter: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text("专注占比")
-                    .font(.caption2.weight(.medium))
+                    .font(FPTypography.caption2Font(weight: .medium))
                     .foregroundStyle(DashboardPalette.secondaryText)
                 Spacer()
                 Text(FocusPetFormatters.percentage(breakdown.focusRatio))
-                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .font(FPTypography.caption2Font(weight: .semibold).monospacedDigit())
                     .foregroundStyle(DashboardPalette.focusBlue)
             }
 
@@ -5587,12 +5780,12 @@ private struct AttentionSummaryPill: View {
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(value)
-                    .font(.headline.monospacedDigit().weight(.semibold))
+                    .font(FPTypography.headlineFont(weight: .semibold).monospacedDigit())
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
                     .allowsTightening(true)
                 Text(title)
-                    .font(.caption.weight(.medium))
+                    .font(FPTypography.captionFont(weight: .medium))
                     .foregroundStyle(DashboardPalette.secondaryText)
                     .lineLimit(1)
             }
@@ -5637,7 +5830,7 @@ private struct WeeklyAttentionHeatmap: View {
                         .frame(width: 24, height: 32)
                     ForEach(weekdayLabels, id: \.self) { label in
                         Text(label)
-                            .font(.caption2.weight(.medium))
+                            .font(FPTypography.caption2Font(weight: .medium))
                             .foregroundStyle(DashboardPalette.secondaryText)
                             .frame(width: 24, height: 22)
                     }
@@ -5671,7 +5864,7 @@ private struct WeeklyAttentionHeatmap: View {
                let last = weeks.last?.days.last?.date {
                 Text("\(dayLabel(first)) - \(dayLabel(last))")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                .font(.caption2.weight(.medium))
+                .font(FPTypography.caption2Font(weight: .medium))
                 .foregroundStyle(DashboardPalette.secondaryText)
             }
         }
@@ -5707,10 +5900,10 @@ private struct MonthlyAttentionHeatmap: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(month.title)
-                            .font(.caption.weight(.semibold))
+                            .font(FPTypography.captionFont(weight: .semibold))
                         Spacer()
                         Text(FocusPetFormatters.duration(month.breakdown.focusSeconds))
-                            .font(.caption2.monospacedDigit().weight(.semibold))
+                            .font(FPTypography.caption2Font(weight: .semibold).monospacedDigit())
                             .foregroundStyle(DashboardPalette.secondaryText)
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
@@ -5873,12 +6066,12 @@ private struct AttentionHeatmapHoverCard: View {
                     .fill(attentionHeatmapColor(for: day.breakdown))
                     .frame(width: 12, height: 12)
                 Text(dayTitle)
-                    .font(.caption.weight(.bold))
+                    .font(FPTypography.captionFont(weight: .bold))
                     .foregroundStyle(DashboardPalette.primaryText)
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 Text(FocusPetFormatters.duration(day.breakdown.workSeconds))
-                    .font(.caption.monospacedDigit().weight(.bold))
+                    .font(FPTypography.captionFont(weight: .bold).monospacedDigit())
                     .foregroundStyle(DashboardPalette.focusBlue)
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
@@ -5925,7 +6118,7 @@ private struct HeatmapHoverRatioRow: View {
                 Text(FocusPetFormatters.percentage(ratio))
                     .monospacedDigit()
             }
-            .font(.caption2.weight(.semibold))
+            .font(FPTypography.caption2Font(weight: .semibold))
             .foregroundStyle(DashboardPalette.secondaryText)
 
             GeometryReader { proxy in
@@ -5961,7 +6154,7 @@ private struct HeatmapHoverLine: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
         }
-        .font(.caption2.weight(.semibold))
+        .font(FPTypography.caption2Font(weight: .semibold))
     }
 }
 
@@ -5985,7 +6178,7 @@ private struct HeatmapLegend: View {
     private var content: some View {
         HStack(spacing: 8) {
             Text("时长")
-                .font(.caption2.weight(.semibold))
+                .font(FPTypography.caption2Font(weight: .semibold))
             HStack(spacing: 3) {
                 ForEach(0..<9, id: \.self) { index in
                     RoundedRectangle(cornerRadius: 2.5, style: .continuous)
@@ -6002,7 +6195,7 @@ private struct HeatmapLegend: View {
             legendItem("波动", color: attentionHeatmapColor(level: 6, focusRatio: 0.48))
             legendItem("偏离", color: attentionHeatmapColor(level: 6, focusRatio: 0.24))
         }
-        .font(.caption2.weight(.medium))
+        .font(FPTypography.caption2Font(weight: .medium))
         .foregroundStyle(DashboardPalette.secondaryText)
     }
 
@@ -6040,13 +6233,13 @@ private enum ActivityHistoryRange: Int, CaseIterable, Identifiable, Hashable {
     }
 }
 
-private struct ActivityHistoryCollection {
+private struct ActivityHistoryCollection: Sendable {
     private var snapshots: [ActivityHistorySnapshotKey: ActivityHistorySnapshot]
 
     init(
         orderedSegments: [StateSegment],
-        appUsage: [AppUsageSegment],
-        inputActivity: [InputActivityBucket],
+        orderedAppUsage: [AppUsageSegment],
+        orderedInputActivity: [InputActivityBucket],
         now: Date = Date()
     ) {
         snapshots = Dictionary(
@@ -6058,8 +6251,8 @@ private struct ActivityHistoryCollection {
                             range: range,
                             skipsWeekends: skipsWeekends,
                             orderedSegments: orderedSegments,
-                            appUsage: appUsage,
-                            inputActivity: inputActivity,
+                            orderedAppUsage: orderedAppUsage,
+                            orderedInputActivity: orderedInputActivity,
                             now: now
                         )
                     )
@@ -6074,12 +6267,12 @@ private struct ActivityHistoryCollection {
     }
 }
 
-private struct ActivityHistorySnapshotKey: Hashable {
+private struct ActivityHistorySnapshotKey: Hashable, Sendable {
     var range: ActivityHistoryRange
     var skipsWeekends: Bool
 }
 
-private struct ActivityHistorySnapshot {
+private struct ActivityHistorySnapshot: Sendable {
     var range: ActivityHistoryRange
     var skipsWeekends: Bool
     var start: Date
@@ -6146,8 +6339,8 @@ private struct ActivityHistorySnapshot {
         range: ActivityHistoryRange,
         skipsWeekends: Bool,
         orderedSegments: [StateSegment],
-        appUsage: [AppUsageSegment],
-        inputActivity: [InputActivityBucket],
+        orderedAppUsage: [AppUsageSegment],
+        orderedInputActivity: [InputActivityBucket],
         now: Date = Date()
     ) {
         var calendar = Calendar(identifier: .gregorian)
@@ -6232,15 +6425,15 @@ private struct ActivityHistorySnapshot {
         self.focusSeconds = focusSeconds
         self.distractedSeconds = distractedSeconds
         self.inputSummary = Self.inputSummary(
-            inputActivity: inputActivity,
+            orderedInputActivity: orderedInputActivity,
             start: bounds.start,
             end: bounds.end,
             calendar: calendar,
             includedDate: includedDate
         )
         self.appItems = AppUsageDisplayItem.windowed(
-            from: orderedSegments,
-            appUsage: appUsage,
+            fromOrdered: orderedSegments,
+            orderedAppUsage: orderedAppUsage,
             bounds: bounds,
             calendar: calendar,
             includedDate: includedDate
@@ -6301,7 +6494,7 @@ private struct ActivityHistorySnapshot {
     }
 
     private static func inputSummary(
-        inputActivity: [InputActivityBucket],
+        orderedInputActivity: [InputActivityBucket],
         start: Date,
         end: Date,
         calendar: Calendar,
@@ -6313,7 +6506,9 @@ private struct ActivityHistorySnapshot {
         var activeSeconds = 0
         let boundedEnd = max(end, start)
 
-        for bucket in inputActivity where bucket.end > start && bucket.start < boundedEnd {
+        for bucket in orderedInputActivity.reversed() {
+            if bucket.end <= start { break }
+            guard bucket.start < boundedEnd else { continue }
             let clippedStart = max(bucket.start, start)
             let clippedEnd = min(bucket.end, boundedEnd)
             guard clippedEnd > clippedStart else { continue }
@@ -6351,7 +6546,7 @@ private struct ActivityHistorySnapshot {
     }
 }
 
-private struct ActivityHourBucket: Identifiable, Hashable {
+private struct ActivityHourBucket: Identifiable, Hashable, Sendable {
     var hour: Int
     var focusSeconds: Int
     var distractedSeconds: Int
@@ -6494,7 +6689,7 @@ private struct ActivityHistoryPanel: View {
     private func titleBlock(snapshot: ActivityHistorySnapshot) -> some View {
         HStack(alignment: .center, spacing: 10) {
             Label("活跃统计", systemImage: "chart.bar.xaxis")
-                .font(.headline.weight(.semibold))
+                .font(FPTypography.headlineFont(weight: .semibold))
             StatusPill(snapshot.rangeLabel, symbol: "calendar")
         }
         .lineLimit(1)
@@ -6517,7 +6712,7 @@ private struct ActivityWeekendFilterToggle: View {
                 Image(systemName: isOn ? "checkmark.circle.fill" : "calendar.badge.minus")
                     .font(.system(size: 11, weight: .bold))
                 Text("跳过周末")
-                    .font(.caption2.weight(.bold))
+                    .font(FPTypography.caption2Font(weight: .bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
             }
@@ -6546,7 +6741,7 @@ private struct ActivityRangePicker: View {
                     selection = range
                 } label: {
                     Text(range.title)
-                        .font(.caption2.monospacedDigit().weight(.bold))
+                        .font(FPTypography.caption2Font(weight: .bold).monospacedDigit())
                         .foregroundStyle(selected ? DashboardPalette.focusBlue : DashboardPalette.secondaryText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 5)
@@ -6593,16 +6788,16 @@ private struct ActivityMetricTile: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .foregroundStyle(DashboardPalette.secondaryText)
                     .lineLimit(1)
                 Text(value)
-                    .font(.title3.monospacedDigit().weight(.semibold))
+                    .font(FPTypography.title3Font(weight: .semibold).monospacedDigit())
                     .foregroundStyle(DashboardPalette.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.70)
                 Text(detail)
-                    .font(.caption2.weight(.semibold))
+                    .font(FPTypography.caption2Font(weight: .semibold))
                     .foregroundStyle(DashboardPalette.secondaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.76)
@@ -6626,7 +6821,7 @@ private struct ActivityHourlyChartPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
                 Label("全天每小时活跃", systemImage: "chart.bar.fill")
-                    .font(.subheadline.weight(.semibold))
+                    .font(FPTypography.subheadlineFont(weight: .semibold))
                 Spacer(minLength: 8)
                 ActivityLegendDot(title: "专注", tint: FocusPetCore.FocusState.focus.timelineColor)
                 ActivityLegendDot(title: "走神", tint: FocusPetCore.FocusState.distracted.timelineColor)
@@ -6813,7 +7008,7 @@ private struct ActivityHourHoverCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("\(bucket.label):00-\(String(format: "%02d", (bucket.hour + 1) % 24)):00")
-                .font(.caption.weight(.bold))
+                .font(FPTypography.captionFont(weight: .bold))
                 .foregroundStyle(DashboardPalette.primaryText)
             HeatmapHoverLine(title: "日均活跃", value: String(format: "%.1f分钟", bucket.averageTotalMinutes), tint: DashboardPalette.focusBlue)
             HeatmapHoverLine(title: "专注累计", value: FocusPetFormatters.duration(bucket.focusSeconds), tint: FocusPetCore.FocusState.focus.timelineColor)
@@ -6852,7 +7047,7 @@ private struct ActivityAppSummaryPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 8) {
                 Label("日均应用活跃", systemImage: "square.stack.3d.up.fill")
-                    .font(.subheadline.weight(.semibold))
+                    .font(FPTypography.subheadlineFont(weight: .semibold))
                 Spacer(minLength: 8)
                 StatusPill("日均", symbol: "clock")
             }
@@ -6925,7 +7120,7 @@ private struct ActivityAppUsageRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text("\(rank)")
-                .font(.caption2.monospacedDigit().weight(.bold))
+                .font(FPTypography.caption2Font(weight: .bold).monospacedDigit())
                 .foregroundStyle(DashboardPalette.secondaryText)
                 .frame(width: 16, alignment: .leading)
 
@@ -6934,12 +7129,12 @@ private struct ActivityAppUsageRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(item.appName)
-                        .font(.caption.weight(.semibold))
+                        .font(FPTypography.captionFont(weight: .semibold))
                         .foregroundStyle(DashboardPalette.primaryText)
                         .lineLimit(1)
                     Spacer(minLength: 6)
                     Text(FocusPetFormatters.duration(averageSeconds))
-                        .font(.caption2.monospacedDigit().weight(.semibold))
+                        .font(FPTypography.caption2Font(weight: .semibold).monospacedDigit())
                         .foregroundStyle(DashboardPalette.primaryText)
                         .lineLimit(1)
                 }
@@ -6966,16 +7161,16 @@ private struct ActivityInputMiniRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: symbol)
-                .font(.caption.weight(.bold))
+                .font(FPTypography.captionFont(weight: .bold))
                 .foregroundStyle(tint)
                 .frame(width: 22, height: 22)
                 .background(tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             Text(title)
-                .font(.caption2.weight(.semibold))
+                .font(FPTypography.caption2Font(weight: .semibold))
                 .foregroundStyle(DashboardPalette.secondaryText)
             Spacer(minLength: 8)
             Text(value)
-                .font(.caption2.monospacedDigit().weight(.bold))
+                .font(FPTypography.caption2Font(weight: .bold).monospacedDigit())
                 .foregroundStyle(DashboardPalette.primaryText)
         }
     }
@@ -6991,7 +7186,7 @@ private struct ActivityLegendDot: View {
                 .fill(tint)
                 .frame(width: 7, height: 7)
             Text(title)
-                .font(.caption2.weight(.semibold))
+                .font(FPTypography.caption2Font(weight: .semibold))
                 .foregroundStyle(DashboardPalette.secondaryText)
         }
     }
@@ -7007,10 +7202,10 @@ private struct ActivityEmptyState: View {
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(DashboardPalette.focusBlue.opacity(0.82))
             Text(title)
-                .font(.subheadline.weight(.semibold))
+                .font(FPTypography.subheadlineFont(weight: .semibold))
                 .foregroundStyle(DashboardPalette.primaryText)
             Text(detail)
-                .font(.caption.weight(.medium))
+                .font(FPTypography.captionFont(weight: .medium))
                 .foregroundStyle(DashboardPalette.secondaryText)
                 .multilineTextAlignment(.center)
         }
@@ -7048,9 +7243,9 @@ private struct RestControlPanel: View {
     private var breakTile: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("休息计时", systemImage: "cup.and.saucer.fill")
-                .font(.headline)
+                .font(FPTypography.headlineFont())
             Text("休息由用户手动指定。休息结束后，系统自动回到专注/走神判断。")
-                .font(.caption)
+                .font(FPTypography.captionFont())
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             NumberStepperControl(
@@ -7076,13 +7271,13 @@ private struct RestControlPanel: View {
     private var autoJudgeTile: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("自动判定", systemImage: "sparkles")
-                .font(.headline)
+                .font(FPTypography.headlineFont())
             HStack(spacing: 10) {
                 SessionStatPill(title: "今日专注", value: FocusPetFormatters.duration(model.summary.focusSeconds), symbol: "checkmark.circle.fill", tint: FPChartPalette.focus)
                 SessionStatPill(title: "今日走神", value: FocusPetFormatters.duration(model.summary.distractedSeconds), symbol: "eye.trianglebadge.exclamationmark", tint: FPChartPalette.distracted)
             }
             Text("无输入 \(FocusPetFormatters.duration(model.settings.judgment.inputIdleDistractedSeconds)) 后显示走神；持续到 \(FocusPetFormatters.duration(model.settings.judgment.idleAwaySeconds)) 会回填为暂离。")
-                .font(.caption)
+                .font(FPTypography.captionFont())
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -7108,10 +7303,10 @@ struct SessionStatPill: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(value)
-                    .font(.caption.weight(.medium))
+                    .font(FPTypography.captionFont(weight: .medium))
                     .lineLimit(1)
                 Text(title)
-                    .font(.caption2)
+                    .font(FPTypography.caption2Font())
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
@@ -7244,15 +7439,15 @@ private struct SettingsAccordionCard<Content: View>: View {
                         .background(module.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(module.title)
-                            .font(.headline)
+                            .font(FPTypography.headlineFont())
                             .foregroundStyle(DashboardPalette.primaryText)
                         Text(module.subtitle)
-                            .font(.caption2.weight(.medium))
+                            .font(FPTypography.caption2Font(weight: .medium))
                             .foregroundStyle(DashboardPalette.secondaryText)
                     }
                     Spacer(minLength: 0)
                     Image(systemName: "chevron.down")
-                        .font(.caption.weight(.bold))
+                        .font(FPTypography.captionFont(weight: .bold))
                         .foregroundStyle(DashboardPalette.secondaryText)
                         .rotationEffect(.degrees(isExpanded ? 0 : -90))
                         .animation(SettingsAccordionMotion.expandCollapse, value: isExpanded)
@@ -7328,7 +7523,7 @@ private struct DesktopWidgetSettingsPanel: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("最近节奏范围")
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .foregroundStyle(.secondary)
                 SlidingSegmentedPicker(
                     options: recentRhythmWindowOptions(),
@@ -7342,7 +7537,7 @@ private struct DesktopWidgetSettingsPanel: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("位置模式")
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .foregroundStyle(.secondary)
                 SlidingSegmentedPicker(
                     options: movementModeOptions(),
@@ -7586,7 +7781,7 @@ private struct RecognitionDiagnosticsPanel: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .center, spacing: 8) {
                 Label("识别状态", systemImage: "waveform.path.ecg.rectangle")
-                    .font(.headline.weight(.semibold))
+                    .font(FPTypography.headlineFont(weight: .semibold))
                 Spacer(minLength: 8)
                 Button {
                     model.refreshRecognitionDiagnostics()
@@ -7625,7 +7820,7 @@ private struct RecognitionDiagnosticsPanel: View {
 
             if let windowTitle = diagnostic.windowTitle, !windowTitle.isEmpty {
                 Text(windowTitle)
-                    .font(.caption2)
+                    .font(FPTypography.caption2Font())
                     .foregroundStyle(DashboardPalette.secondaryText)
                     .lineLimit(2)
                     .padding(8)
@@ -7635,7 +7830,7 @@ private struct RecognitionDiagnosticsPanel: View {
 
             if diagnostic.recordingPaused {
                 Label("本地记录已暂停", systemImage: "pause.circle.fill")
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .foregroundStyle(DashboardPalette.distractedRed)
             }
 
@@ -7712,7 +7907,7 @@ private struct RecognitionDiagnosticSummaryRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(diagnostic.appName)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .foregroundStyle(DashboardPalette.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.76)
@@ -7720,7 +7915,7 @@ private struct RecognitionDiagnosticSummaryRow: View {
                     Text(diagnostic.category.title)
                     Text(diagnostic.catalogStatus)
                 }
-                .font(.caption2.weight(.medium))
+                .font(FPTypography.caption2Font(weight: .medium))
                 .foregroundStyle(DashboardPalette.secondaryText)
                 .lineLimit(1)
             }
@@ -7733,7 +7928,7 @@ private struct RecognitionDiagnosticSummaryRow: View {
                 Text(statusTitle)
                     .lineLimit(1)
             }
-            .font(.caption.weight(.semibold))
+            .font(FPTypography.captionFont(weight: .semibold))
             .foregroundStyle(statusTint)
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
@@ -7767,10 +7962,10 @@ private struct RecognitionDiagnosticTile: View {
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.caption2.weight(.semibold))
+                    .font(FPTypography.caption2Font(weight: .semibold))
                     .foregroundStyle(DashboardPalette.secondaryText)
                 Text(value)
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .foregroundStyle(DashboardPalette.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
@@ -7820,12 +8015,12 @@ private struct PetSettingsPanel: View {
 
                 if let message = model.petImportMessage {
                     Text(message)
-                        .font(.caption)
+                        .font(FPTypography.captionFont())
                         .foregroundStyle(.secondary)
                 }
                 if let message = model.petImportErrorMessage {
                     Text(message)
-                        .font(.caption)
+                        .font(FPTypography.captionFont())
                         .foregroundStyle(FPColor.error)
                 }
             }
@@ -7900,7 +8095,7 @@ private struct PetSettingsPanel: View {
     private var header: some View {
         HStack(spacing: 10) {
             Label("桌宠设置", systemImage: "pawprint.fill")
-                .font(.headline)
+                .font(FPTypography.headlineFont())
             Spacer(minLength: 8)
             Button {
                 model.chooseAndImportPetPack()
@@ -7927,7 +8122,7 @@ private struct PetSettingsPanel: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             Label(title, systemImage: symbol)
-                .font(.caption.weight(.bold))
+                .font(FPTypography.captionFont(weight: .bold))
                 .foregroundStyle(status.strongText)
             content()
         }
@@ -7976,11 +8171,11 @@ private struct RandomActionSwitchPanel: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Label("切换间隔", systemImage: "timer")
-                    .font(.caption.weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold))
                     .foregroundStyle(model.settings.pet.randomActionSwitchEnabled ? FPColor.textSecondary : FPColor.textTertiary)
                 Spacer(minLength: 0)
                 Text(randomActionIntervalTitle)
-                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .font(FPTypography.captionFont(weight: .semibold).monospacedDigit())
                     .foregroundStyle(model.settings.pet.randomActionSwitchEnabled ? DashboardPalette.primaryText : FPColor.textTertiary)
             }
             SlidingSegmentedPicker(
@@ -8061,13 +8256,13 @@ private struct IntentActionMappingPanel: View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Label("意图映射台", systemImage: "link")
-                    .font(.caption.weight(.bold))
+                    .font(FPTypography.captionFont(weight: .bold))
                     .foregroundStyle(FPColor.textSecondary)
             }
             FPBadge(title: "\(selectedIntent.title) -> \(selectedAction?.title ?? "未选择")", systemImage: selectedIntent.symbolName, status: selectedIntent.fpStatus)
             Spacer(minLength: 0)
             Label(mappingStatusText, systemImage: isCurrentMapping ? "checkmark.circle.fill" : "link")
-                .font(.caption2.weight(.bold))
+                .font(FPTypography.caption2Font(weight: .bold))
                 .foregroundStyle(isCurrentMapping ? selectedIntent.fpStatus.strongText : FPColor.textSecondary)
                 .lineLimit(1)
                 .padding(.horizontal, 9)
@@ -8099,7 +8294,7 @@ private struct IntentActionMappingPanel: View {
                         }
                     } label: {
                         Label(showsAdvancedIntents ? "收起进阶动作" : "显示进阶动作", systemImage: showsAdvancedIntents ? "chevron.up" : "wand.and.stars")
-                            .font(.caption.weight(.semibold))
+                            .font(FPTypography.captionFont(weight: .semibold))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(FPColor.textSecondary)
@@ -8139,11 +8334,11 @@ private struct IntentActionMappingPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Label(title, systemImage: symbol)
-                    .font(.caption.weight(.bold))
+                    .font(FPTypography.captionFont(weight: .bold))
                     .foregroundStyle(status.strongText)
                 if let detail {
                     Text(detail)
-                        .font(.caption2.weight(.medium))
+                        .font(FPTypography.caption2Font(weight: .medium))
                         .foregroundStyle(FPColor.textTertiary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
@@ -8368,12 +8563,12 @@ private struct SourceActionStageCard: View {
                 Spacer()
                 HStack {
                     Text(action?.title ?? "未选择")
-                        .font(.caption.weight(.semibold))
+                        .font(FPTypography.captionFont(weight: .semibold))
                         .lineLimit(1)
                     Spacer()
                     if let action {
                         Text("\(Int(min(action.fps, previewFPS).rounded())) fps")
-                            .font(.caption2.monospacedDigit().weight(.medium))
+                            .font(FPTypography.caption2Font(weight: .medium).monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -8685,7 +8880,7 @@ private struct ReminderSettingsPanel: View {
                         .onChange(of: model.settings.reminder.pauseMinutes) { _, _ in model.saveSettings() }
                     HStack {
                         Text(model.reminderPauseTitle)
-                            .font(.caption)
+                            .font(FPTypography.captionFont())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         Spacer()
@@ -8709,7 +8904,7 @@ private struct ReminderSettingsPanel: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: symbol)
-                .font(.caption.weight(.bold))
+                .font(FPTypography.captionFont(weight: .bold))
                 .foregroundStyle(status.strongText)
             content()
         }
@@ -8761,9 +8956,9 @@ private struct TriggerExplanationCard: View {
                 .background(status.softBackground.opacity(0.52), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.caption.weight(.bold))
+                    .font(FPTypography.captionFont(weight: .bold))
                 Text(detail)
-                    .font(.caption2.weight(.medium))
+                    .font(FPTypography.caption2Font(weight: .medium))
                     .foregroundStyle(FPColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -8793,14 +8988,14 @@ private struct PrivacyDataSettingsPanel: View {
                     .background(FPColor.systemCyan100, in: RoundedRectangle(cornerRadius: 7))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("本机数据")
-                        .font(.caption.weight(.semibold))
+                        .font(FPTypography.captionFont(weight: .semibold))
                     Text(model.recordingStatusTitle)
-                        .font(.caption2)
+                        .font(FPTypography.caption2Font())
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
                 Text(model.dataSizeTitle)
-                    .font(.headline.monospacedDigit())
+                    .font(FPTypography.headlineFont().monospacedDigit())
                     .foregroundStyle(DashboardPalette.primaryText)
             }
             .padding(10)
@@ -8840,7 +9035,7 @@ private struct PrivacyDataSettingsPanel: View {
             }
             if let exportURL = model.exportURL {
                 Text(exportURL.path)
-                    .font(.caption)
+                    .font(FPTypography.captionFont())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -8862,7 +9057,7 @@ private struct AboutSettingsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Focus Pet 使用前台 App、窗口标题、输入空闲和专注/休息会话判断状态。所有统计保存在本机。")
-                .font(.caption)
+                .font(FPTypography.captionFont())
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -8880,7 +9075,7 @@ private struct PetPackSelectionGrid: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("资源包")
-                .font(.caption.weight(.semibold))
+                .font(FPTypography.captionFont(weight: .semibold))
                 .foregroundStyle(.secondary)
             LazyVGrid(columns: columns, spacing: 8) {
                 if model.availablePetPacks.isEmpty {
@@ -8892,9 +9087,9 @@ private struct PetPackSelectionGrid: View {
                             .background(DashboardPalette.controlFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         VStack(alignment: .leading, spacing: 3) {
                             Text("暂无桌宠资源包")
-                                .font(.caption.weight(.semibold))
+                                .font(FPTypography.captionFont(weight: .semibold))
                             Text("导入单个 .zip 或包含 pet.json 的文件夹后再显示桌宠")
-                                .font(.caption2)
+                                .font(FPTypography.caption2Font())
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }
@@ -8954,10 +9149,10 @@ private struct PetPackSelectionCard: View {
                     PetPackThumbnail(record: record)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(record.pack.name)
-                            .font(.caption.weight(.semibold))
+                            .font(FPTypography.captionFont(weight: .semibold))
                             .lineLimit(1)
                         Text(record.pack.style)
-                            .font(.caption2)
+                            .font(FPTypography.caption2Font())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -9071,7 +9266,7 @@ struct PetPackSummaryView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(record.pack.name)
-                        .font(.headline)
+                        .font(FPTypography.headlineFont())
                     StatusPill(
                         record.validation.isValid ? "可用" : "需修复",
                         symbol: record.validation.isValid ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
@@ -9079,20 +9274,20 @@ struct PetPackSummaryView: View {
                     )
                 }
                 Text("作者 \(record.pack.author) · \(record.pack.style)")
-                    .font(.caption)
+                    .font(FPTypography.captionFont())
                     .foregroundStyle(.secondary)
                 Text("动作 \(record.playableSourceActions.count) 个 · 音效 \(record.pack.audio.count) 个")
-                    .font(.caption)
+                    .font(FPTypography.captionFont())
                     .foregroundStyle(.secondary)
                 if !record.validation.errors.isEmpty {
                     Text("错误：\(record.validation.errors.map(\.title).joined(separator: "、"))")
-                        .font(.caption)
+                        .font(FPTypography.captionFont())
                         .foregroundStyle(FPColor.error)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !record.validation.warnings.isEmpty {
                     Text("提示：\(record.validation.warnings.map(\.title).joined(separator: "、"))")
-                        .font(.caption)
+                        .font(FPTypography.captionFont())
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -9111,9 +9306,9 @@ struct MetricTile: View {
         VStack(alignment: .leading, spacing: 8) {
             Image(systemName: symbol)
                 .foregroundStyle(tint)
-                .font(.title2)
+                .font(FPTypography.title2Font())
             Text(value)
-                .font(.title2.weight(.semibold))
+                .font(FPTypography.title2Font(weight: .semibold))
             Text(title)
                 .foregroundStyle(.secondary)
         }
@@ -9131,7 +9326,7 @@ struct RatioTile: View {
         let ratio = total == 0 ? 0 : Double(seconds) / Double(total)
         VStack(alignment: .leading, spacing: 8) {
             Label(state.title, systemImage: state.symbolName)
-                .font(.headline)
+                .font(FPTypography.headlineFont())
             ProgressView(value: ratio)
             Text("\(FocusPetFormatters.duration(seconds)) · \(Int((ratio * 100).rounded()))%")
                 .foregroundStyle(.secondary)
@@ -9149,7 +9344,7 @@ struct CategoryUsageTile: View {
         let ratio = total == 0 ? 0 : Double(seconds) / Double(total)
         VStack(alignment: .leading, spacing: 8) {
             Label(category.title, systemImage: symbolName)
-                .font(.headline)
+                .font(FPTypography.headlineFont())
                 .foregroundStyle(tint)
             ProgressView(value: ratio)
             Text("\(FocusPetFormatters.duration(seconds)) · \(FocusPetFormatters.percentage(ratio))")
@@ -9182,7 +9377,7 @@ struct SectionTitle: View {
     init(_ text: String) { self.text = text }
     var body: some View {
         Text(text)
-            .font(.title2.weight(.semibold))
+            .font(FPTypography.title2Font(weight: .semibold))
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

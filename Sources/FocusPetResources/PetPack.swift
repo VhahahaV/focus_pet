@@ -430,6 +430,12 @@ public struct PetPackRecord: Identifiable, Codable, Hashable, Sendable {
         return deduplicated.isEmpty ? [defaultSourceAction(for: intent)].compactMap { $0 } : deduplicated
     }
 
+    public func globallyRandomizableSourceActions() -> [PetSourceActionSpec] {
+        deduplicatedSourceActions(playableSourceActions.filter {
+            !frameURLs(forSourceActionID: $0.id).isEmpty
+        })
+    }
+
     public func sourceAction(
         for intent: PetIntentKind,
         mappedSourceActionID: String?

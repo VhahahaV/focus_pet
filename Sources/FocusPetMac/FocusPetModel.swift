@@ -764,7 +764,7 @@ final class FocusPetModel: ObservableObject {
     }
 
     func presentPetForDashboard(tab: DashboardTab) {
-        guard !settings.pet.hidden, selectedPetPackRecord() != nil else { return }
+        guard !settings.pet.hidden, let record = selectedPetPackRecord() else { return }
         let plan = dashboardPetPresentationPlan(for: tab)
         let now = Date()
         let expiresAt = now.addingTimeInterval(plan.duration)
@@ -774,6 +774,9 @@ final class FocusPetModel: ObservableObject {
         transientPetIntent = plan.intent
         transientPetIntentSource = .interaction
         transientPetIntentExpiresAt = expiresAt
+        if plan.intent == .dashboardGuide {
+            startRandomDashboardGuideAction(in: record)
+        }
         petAnimationIdentity = nil
         transientPetMessage = plan.message
         transientPetMessageExpiresAt = plan.message == nil ? nil : expiresAt
@@ -857,7 +860,7 @@ final class FocusPetModel: ObservableObject {
             anchor: .sidebarPetDock,
             fallbackAnchors: [.dashboardPanel],
             edge: .insetBottomLeft,
-            intent: tab == .sessions ? .focusRestHint : .dashboardGuide,
+            intent: .dashboardGuide,
             message: nil,
             duration: 8
         )
@@ -1462,7 +1465,7 @@ final class FocusPetModel: ObservableObject {
         }
 
         settings.pet.setSourceActionID(sourceActionID, for: intent, packID: record.id)
-        resetRandomSourceActionTimer(for: intent, in: record, sourceActionID: sourceActionID)
+        resetRandomSourceActionTimer(in: record, sourceActionID: sourceActionID)
         transientPetIntent = intent
         transientPetIntentSource = .interaction
         transientPetIntentExpiresAt = Date().addingTimeInterval(2.4)
@@ -1490,6 +1493,10 @@ final class FocusPetModel: ObservableObject {
             for: intent,
             mappedSourceActionID: settings.pet.sourceActionID(for: intent, packID: record.id)
         )
+    }
+
+    func globallyRandomizableSourceActions(in record: PetPackRecord) -> [PetSourceActionSpec] {
+        record.globallyRandomizableSourceActions()
     }
 
     func isCustomSourceAction(_ sourceActionID: String, for intent: PetIntentKind, in record: PetPackRecord) -> Bool {
@@ -2362,13 +2369,13 @@ final class FocusPetModel: ObservableObject {
             return fallback
         }
 
-        let candidates = randomizableSourceActions(for: intent.kind, in: record)
+        let candidates = globallyRandomizableSourceActions(in: record)
         guard candidates.count > 1 else {
-            clearRandomSourceAction(for: intent.kind, in: record)
+            clearRandomSourceAction(in: record)
             return fallback
         }
 
-        let key = randomSourceActionKey(intent: intent.kind, record: record)
+        let key = randomSourceActionKey(record: record)
         let interval = TimeInterval(settings.pet.randomActionSwitchSeconds)
         let currentID = randomSourceActionIDByKey[key]
         let currentIndex = currentID.flatMap { id in
@@ -2400,19 +2407,42 @@ final class FocusPetModel: ObservableObject {
         return next
     }
 
-    private func randomSourceActionKey(intent: PetIntentKind, record: PetPackRecord) -> String {
-        "\(record.id)|\(intent.rawValue)"
+    private func randomSourceActionKey(record: PetPackRecord) -> String {
+        "\(record.id)|global"
     }
 
-    private func clearRandomSourceAction(for intent: PetIntentKind, in record: PetPackRecord) {
-        let key = randomSourceActionKey(intent: intent, record: record)
+    private func clearRandomSourceAction(in record: PetPackRecord) {
+        let key = randomSourceActionKey(record: record)
         randomSourceActionIDByKey[key] = nil
         randomSourceActionSwitchedAtByKey[key] = nil
     }
 
-    private func resetRandomSourceActionTimer(for intent: PetIntentKind, in record: PetPackRecord, sourceActionID: String?) {
-        let key = randomSourceActionKey(intent: intent, record: record)
+    private func resetRandomSourceActionTimer(in record: PetPackRecord, sourceActionID: String?) {
+        let key = randomSourceActionKey(record: record)
         randomSourceActionIDByKey[key] = sourceActionID
+        randomSourceActionSwitchedAtByKey[key] = Date()
+    }
+
+    private func startRandomDashboardGuideAction(in record: PetPackRecord) {
+        guard settings.pet.randomActionSwitchEnabled else { return }
+        let actions = globallyRandomizableSourceActions(in: record)
+        guard !actions.isEmpty else { return }
+        let key = randomSourceActionKey(record: record)
+        let currentID = randomSourceActionIDByKey[key]
+        let next: PetSourceActionSpec
+        if actions.count == 1 {
+            next = actions[0]
+        } else {
+            let currentIndex = currentID.flatMap { id in
+                actions.firstIndex { $0.id == id }
+            } ?? -1
+            var nextIndex = Int.random(in: 0..<actions.count)
+            if nextIndex == currentIndex {
+                nextIndex = (nextIndex + 1) % actions.count
+            }
+            next = actions[nextIndex]
+        }
+        randomSourceActionIDByKey[key] = next.id
         randomSourceActionSwitchedAtByKey[key] = Date()
     }
 
@@ -2896,26 +2926,25 @@ final class FocusPetModel: ObservableObject {
         }
 
         let intent = currentPetIntentKind
-        let actions = randomizableSourceActions(for: intent, in: record)
+        let actions = globallyRandomizableSourceActions(in: record)
         guard actions.count > 1 else {
             return
         }
 
-        let currentID = randomSourceActionIDByKey[randomSourceActionKey(intent: intent, record: record)]
-            ?? settings.pet.sourceActionID(for: intent, packID: record.id)
+        let key = randomSourceActionKey(record: record)
+        let currentID = randomSourceActionIDByKey[key]
             ?? resolvedSourceAction(for: intent, in: record)?.id
         let currentIndex = currentID.flatMap { id in
             actions.firstIndex { $0.id == id }
         } ?? -1
         let next = actions[(currentIndex + 1) % actions.count]
-        settings.pet.setSourceActionID(next.id, for: intent, packID: record.id)
-        resetRandomSourceActionTimer(for: intent, in: record, sourceActionID: next.id)
+        randomSourceActionIDByKey[key] = next.id
+        resetRandomSourceActionTimer(in: record, sourceActionID: next.id)
         transientPetIntent = intent
         transientPetIntentSource = .interaction
         transientPetIntentExpiresAt = Date().addingTimeInterval(2.4)
         petAnimationIdentity = nil
         showTransientPetMessage("\(intent.title)：\(next.title)", seconds: 2.4)
-        save()
         clearTransientPetIntent(after: 2.4)
     }
 

@@ -56,8 +56,7 @@ public enum PetIntentKind: String, Codable, Hashable, Sendable, CaseIterable, Id
         .moveLeft,
         .moveRight,
         .moveUp,
-        .moveDown,
-        .dashboardGuide
+        .moveDown
     ]
 
     public var title: String {
